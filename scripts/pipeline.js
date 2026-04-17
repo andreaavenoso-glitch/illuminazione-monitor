@@ -1,214 +1,127 @@
 /**
  * PIPELINE MONITORAGGIO PROCUREMENT – ILLUMINAZIONE PUBBLICA
- * v2.2 – Fix TED body, ANAC endpoint, web search fallback
+ * v3.0 – Web search come fonte primaria (API ufficiali inaffidabili)
+ * Costo stimato: ~$0.01/run · ~$0.30/mese
  */
 
-import fetch   from "node-fetch";
-import fs      from "fs";
-import path    from "path";
+import fetch  from "node-fetch";
+import fs     from "fs";
+import path   from "path";
 import { fileURLToPath } from "url";
 
 const __dir = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.resolve(__dir, "..");
-const ISO   = new Date().toISOString().slice(0, 10);
-const DT    = new Date().toLocaleDateString("it-IT", { day:"numeric", month:"long", year:"numeric" });
+const ISO   = new Date().toISOString().slice(0,10);
+const DT    = new Date().toLocaleDateString("it-IT",{day:"numeric",month:"long",year:"numeric"});
 const KEY   = process.env.ANTHROPIC_API_KEY || "";
 
 if (!KEY) { console.error("❌ ANTHROPIC_API_KEY mancante"); process.exit(1); }
 
-const log = (msg) => console.log(`[${new Date().toTimeString().slice(0,8)}] ${msg}`);
+const log = m => console.log(`[${new Date().toTimeString().slice(0,8)}] ${m}`);
 const slp = ms => new Promise(r => setTimeout(r, ms));
-function ensureDir(p) { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
-function parseDate(s) {
-  if (!s || s === "n.d.") return null;
-  const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (m) return new Date(+m[3], +m[2]-1, +m[1]);
-  const d = new Date(s); return isNaN(d) ? null : d;
+function ensureDir(p){ if(!fs.existsSync(p)) fs.mkdirSync(p,{recursive:true}); }
+function parseDate(s){
+  if(!s||s==="n.d.")return null;
+  const m=s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m)return new Date(+m[3],+m[2]-1,+m[1]);
+  const d=new Date(s); return isNaN(d)?null:d;
 }
-function daysUntil(s) { const d=parseDate(s); return d?Math.ceil((d-new Date(ISO))/86400000):null; }
+function daysUntil(s){ const d=parseDate(s); return d?Math.ceil((d-new Date(ISO))/864e5):null; }
 
-// ─── FASE 1: Connettori ufficiali ─────────────────────────────────────────────
+// ── API Anthropic ─────────────────────────────────────────────────────────────
 
-async function fetchANAC() {
-  log("→ ANAC …");
-  const results = [];
-  const kws = ["illuminazione pubblica","relamping LED","telegestione illuminazione","pubblica illuminazione"];
+async function anthropic(messages, ws=false){
+  const hdrs = {
+    "Content-Type":      "application/json",
+    "x-api-key":         KEY,
+    "anthropic-version": "2023-06-01",
+  };
+  if(ws) hdrs["anthropic-beta"] = "web-search-2025-03-05";
 
-  // Endpoint ANAC corretti – più varianti
-  const makeUrls = (kw) => [
-    `https://api.anticorruzione.it/api/v1/ricercaLotti?q=${encodeURIComponent(kw)}&pageSize=10`,
-    `https://api.anticorruzione.it/api/v1/ricercaLotti?denominazione=${encodeURIComponent(kw)}&pageSize=10`,
-    `https://dati.anticorruzione.it/opendata/api/3/action/datastore_search?q=${encodeURIComponent(kw)}&limit=10`,
-    `https://api.anticorruzione.it/api/v1/bandi?oggetto=${encodeURIComponent(kw)}&page=0&size=10`,
-  ];
+  const body = {
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 1000,
+    messages,
+  };
+  if(ws) body.tools = [{type:"web_search_20250305", name:"web_search"}];
 
-  for (const kw of kws) {
-    for (const url of makeUrls(kw)) {
-      try {
-        const r = await fetch(url, {
-          headers: { Accept:"application/json", "User-Agent":"IlluminazioneMonitor/2.2" },
-          timeout: 10000,
-        });
-        if (!r.ok) continue;
-        const d = await r.json();
-        const items = d.lotti||d.data||d.results||d.records||d.content||[];
-        if (items.length) {
-          log(`  ✓ ANAC "${kw}": ${items.length} record`);
-          results.push(...items.map(x => ({
-            ente:          x.denominazioneStazioneAppaltante||x.ente||x.buyer||"n.d.",
-            oggetto_raw:   x.oggetto||x.descrizione||x.object||x.title||"n.d.",
-            importo_raw:   String(x.importoTotale||x.importo||x.value||0),
-            cig_raw:       x.cig||"n.d.",
-            scadenza_raw:  x.dataScadenzaOfferta||x.deadline||"n.d.",
-            procedura_raw: x.modalitaRealizzazione||x.procedure||"n.d.",
-            link_bando:    x.cig ? `https://www.anticorruzione.it/-/bandi-e-contratti-detail?id=${x.cig}` : "n.d.",
-            fonte_id:      "ANAC",
-            regione:       x.regione||"n.d.",
-            data_pub:      x.dataPubblicazione||ISO,
-          })));
-          break;
-        }
-      } catch {}
-    }
-    await slp(600);
-  }
-  log(`✓ ANAC totale: ${results.length}`);
-  return results;
-}
-
-async function fetchTED() {
-  log("→ TED …");
-  const results = [];
-
-  // TED v3 – body corretto (country non countryOfBuyer, scope ALL, no fields)
-  const bodies = [
-    { q:"illuminazione pubblica", scope:"ALL", filters:{ country:["IT"] }, limit:20, page:1 },
-    { q:"pubblica illuminazione", scope:"ALL", filters:{ country:["IT"] }, limit:20, page:1 },
-    { q:"street lighting Italy", scope:"ALL", filters:{ country:["IT"] }, limit:10, page:1 },
-  ];
-
-  for (const body of bodies) {
-    try {
-      const r = await fetch("https://api.ted.europa.eu/v3/notices/search", {
-        method: "POST",
-        headers: { "Content-Type":"application/json", Accept:"application/json" },
-        body: JSON.stringify(body),
-        timeout: 15000,
-      });
-      if (!r.ok) { log(`  ⚠ TED: HTTP ${r.status}`); continue; }
-      const d = await r.json();
-      const items = d.notices||d.results||d.data||[];
-      if (items.length) {
-        log(`✓ TED: ${items.length} notice`);
-        results.push(...items.map(x => ({
-          ente:          (x.buyer||{}).officialName||(x.buyer||{}).name||"n.d.",
-          oggetto_raw:   (x.title||{}).text||x.subject||x.title||"n.d.",
-          importo_raw:   String(x.estimatedValue||x.totalValue||0),
-          cig_raw:       "n.d.",
-          scadenza_raw:  x.deadlineForTender||x.deadline||"n.d.",
-          procedura_raw: x.procedureType||"n.d.",
-          link_bando:    x.noticeId ? `https://ted.europa.eu/udl?uri=TED:NOTICE:${x.noticeId}:TEXT:IT:HTML` : "n.d.",
-          fonte_id:      "TED",
-          regione:       "n.d.",
-          data_pub:      x.publicationDate||ISO,
-        })));
-        break;
-      }
-    } catch (e) { log(`  ⚠ TED: ${e.message}`); }
-    await slp(500);
-  }
-  log(`✓ TED totale: ${results.length}`);
-  return results;
-}
-
-async function fetchGURI() {
-  log("→ GURI …");
-  const results = [];
-  const KW = ["illuminazione pubblica","relamping","telegestione","smart lighting"];
-
-  const feeds = [
-    `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent("https://www.gazzettaufficiale.it/rss/contratti.xml")}`,
-    `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent("https://www.gazzettaufficiale.it/rss/avvisi.xml")}`,
-    `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent("https://www.gazzettaufficiale.it/rss/serie5.xml")}`,
-  ];
-
-  for (const feed of feeds) {
-    try {
-      const r = await fetch(feed, { timeout: 12000 });
-      if (!r.ok) continue;
-      const d = await r.json();
-      if (!d.items) continue;
-      const items = d.items.filter(x => KW.some(k => (x.title||"").toLowerCase().includes(k)));
-      if (items.length) {
-        log(`✓ GURI: ${items.length} atti`);
-        results.push(...items.map(x => ({
-          ente:"n.d.", oggetto_raw:x.title||"n.d.", importo_raw:"n.d.",
-          cig_raw:"n.d.", scadenza_raw:"n.d.", procedura_raw:"n.d.",
-          link_bando:x.link||"n.d.", fonte_id:"GURI", regione:"n.d.",
-          data_pub:(x.pubDate||"").slice(0,10)||ISO,
-          note_estrazione:(x.description||"").replace(/<[^>]+>/g,"").slice(0,150),
-        })));
-        break;
-      }
-    } catch (e) { log(`  ⚠ GURI feed: ${e.message}`); }
-  }
-  log(`✓ GURI totale: ${results.length}`);
-  return results;
-}
-
-// ─── FALLBACK: Claude con web search ─────────────────────────────────────────
-// Usato solo quando tutte le API tornano 0 record.
-// 1 chiamata con web search (~2000 token) – garantisce dati reali.
-
-async function fetchWebSearch() {
-  log("→ Fallback web search (API ufficiali vuote) …");
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type":      "application/json",
-      "x-api-key":         KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta":    "web-search-2025-03-05",
-    },
-    body: JSON.stringify({
-      model:      "claude-haiku-4-5-20251001",
-      max_tokens: 1000,
-      tools:      [{ type:"web_search_20250305", name:"web_search" }],
-      messages: [{
-        role:    "user",
-        content: `Cerca su ANAC (anac.gov.it) e sui portali e-procurement italiani le gare d'appalto pubblicate negli ultimi 30 giorni per: illuminazione pubblica, relamping LED, telegestione illuminazione pubblica, pubblica illuminazione. Trova almeno 5 gare reali con ente, oggetto, importo e link. Rispondi SOLO con JSON array:
-[{"ente":"nome","oggetto_raw":"oggetto","importo_raw":"numero","cig_raw":"CIG o n.d.","scadenza_raw":"dd/mm/yyyy o n.d.","procedura_raw":"aperta|negoziata|n.d.","link_bando":"url","fonte_id":"ANAC|eproc|Albo","regione":"regione","data_pub":"${ISO}"}]`,
-      }],
-    }),
-    timeout: 45000,
+  const r = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST", headers:hdrs,
+    body:JSON.stringify(body),
+    timeout:45000,
   });
   const d = await r.json();
-  if (d.error) throw new Error(d.error.message);
-  const txt = (d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
-  const wsUsed = (d.content||[]).some(b=>b.type==="tool_use");
-  log(`  web search usata: ${wsUsed ? "sì" : "no"}`);
-  // parse JSON dalla risposta
-  let items = null;
-  const ai = txt.indexOf("["), aj = txt.lastIndexOf("]");
-  if (ai>-1&&aj>ai) { try { items=JSON.parse(txt.slice(ai,aj+1)); } catch {} }
-  if (!items) { const oi=txt.indexOf("{"),oj=txt.lastIndexOf("}"); if(oi>-1&&oj>oi){try{items=[JSON.parse(txt.slice(oi,oj+1))];}catch{}} }
-  if (Array.isArray(items) && items.length) {
-    log(`✓ Web search: ${items.length} gare trovate`);
-    return items;
-  }
-  log("  ⚠ Web search: nessun JSON valido estratto");
-  return [];
+  if(d.error) throw new Error(d.error.message);
+  const blocks = d.content||[];
+  const wsUsed = blocks.some(b=>b.type==="tool_use");
+  const text   = blocks.filter(b=>b.type==="text").map(b=>b.text).join("\n");
+  return {text, wsUsed};
 }
 
-// ─── FASE 2: Pipeline deterministica ─────────────────────────────────────────
+function pj(txt){
+  if(!txt)return null;
+  txt=txt.replace(/```[\w]*\n?|```/g,"").trim();
+  try{return JSON.parse(txt);}catch{}
+  const ai=txt.indexOf("["),aj=txt.lastIndexOf("]");
+  if(ai>-1&&aj>ai){try{return JSON.parse(txt.slice(ai,aj+1));}catch{}}
+  return null;
+}
 
-const KW_IN = ["illuminazione pubblica","pubblica illuminazione","relamping","telegestione","telecontrollo","smart lighting","riqualificazione illuminazione","pali illuminazione","global service illuminazione","accordo quadro illuminazione"];
-const KW_EX = ["illuminazione interna","impianto elettrico generico","facility management","climatizzazione"];
+// ── FASE 1: raccolta via web search ───────────────────────────────────────────
 
-function normalize(r, i) {
+const RECORD_SCHEMA = `[{"ente":"nome ente","oggetto_raw":"oggetto gara","importo_raw":"numero senza €","cig_raw":"CIG o n.d.","scadenza_raw":"dd/mm/yyyy o n.d.","procedura_raw":"aperta|negoziata|n.d.","link_bando":"url","fonte_id":"ANAC|TED|eproc|Albo","regione":"regione italiana","data_pub":"${ISO}","note_estrazione":"brevi note"}]`;
+
+async function cercaGare(){
+  log("→ [WS1] Cerca gare pubblicata su ANAC e portali e-procurement …");
+  const {text, wsUsed} = await anthropic([{role:"user",content:
+    `Cerca su ANAC (anticorruzione.it), portali e-procurement italiani (Sintel, STELLA, MEPA, siti comuni) le gare d'appalto per ILLUMINAZIONE PUBBLICA pubblicate negli ultimi 60 giorni. Keyword: "pubblica illuminazione" OR "relamping LED" OR "telegestione illuminazione" OR "illuminazione pubblica" OR "smart lighting". Trova almeno 5 gare reali con tutti i dettagli. Rispondi SOLO con JSON array valido:
+${RECORD_SCHEMA}`
+  }], true);
+  log(`  web search: ${wsUsed?"attiva":"non attiva"}`);
+  const j = pj(text);
+  const arr = Array.isArray(j)?j:(j?[j]:[]);
+  log(`✓ Gare ANAC/eproc: ${arr.length} record`);
+  if(!arr.length) log(`  Preview risposta: ${text.slice(0,120)}`);
+  return arr;
+}
+
+async function cercaTED(){
+  log("→ [WS2] Cerca bandi sopra soglia UE su TED/GUUE …");
+  await slp(3000);
+  const {text, wsUsed} = await anthropic([{role:"user",content:
+    `Cerca su TED (ted.europa.eu) i bandi europei italiani per illuminazione pubblica pubblicati negli ultimi 60 giorni. Cerca "pubblica illuminazione" e "street lighting" con paese Italia. Trova 3-4 bandi reali. Rispondi SOLO con JSON array valido:
+${RECORD_SCHEMA}`
+  }], true);
+  log(`  web search: ${wsUsed?"attiva":"non attiva"}`);
+  const j = pj(text);
+  const arr = Array.isArray(j)?j:(j?[j]:[]);
+  log(`✓ TED: ${arr.length} record`);
+  return arr;
+}
+
+async function cercaPreGara(){
+  log("→ [WS3] Cerca segnali pre-gara su albi pretori e stampa …");
+  await slp(3000);
+  const {text, wsUsed} = await anthropic([{role:"user",content:
+    `Cerca delibere di Giunta, determine dirigenziali, programmi triennali LL.PP. 2024-2026 di comuni e province italiani su illuminazione pubblica, relamping LED, smart city lighting. Cerca anche notizie recenti su Infobuildenergia, Quotidiano Energia. Trova 2-3 segnali pre-gara reali. Rispondi SOLO con JSON array valido (aggiungi "atto_tipo":"delibera|determina|ptlp" e "pre_gara_forza":"forte|debole"):
+${RECORD_SCHEMA}`
+  }], true);
+  log(`  web search: ${wsUsed?"attiva":"non attiva"}`);
+  const j = pj(text);
+  const arr = Array.isArray(j)?j:(j?[j]:[]);
+  log(`✓ Pre-gara: ${arr.length} segnali`);
+  return arr;
+}
+
+// ── FASE 2: elaborazione deterministica ───────────────────────────────────────
+
+const KW_IN=["illuminazione pubblica","pubblica illuminazione","relamping","telegestione","telecontrollo","smart lighting","riqualificazione illuminazione","pali illuminazione","global service illuminazione","accordo quadro illuminazione"];
+const KW_EX=["illuminazione interna","impianto elettrico generico","facility management","climatizzazione"];
+
+function normalize(r,i){
   const obj=(r.oggetto_raw||r.oggetto||"").toLowerCase(), all=JSON.stringify(r).toLowerCase();
-  if (!KW_IN.some(k=>obj.includes(k))) return null;
-  if (KW_EX.some(k=>obj.includes(k))) return null;
+  if(!KW_IN.some(k=>obj.includes(k)))return null;
+  if(KW_EX.some(k=>obj.includes(k)))return null;
   const pnrr=/pnrr|pnc|react[\s.-]?eu/.test(all);
   const ppp=/ppp|concessione|project[\s.-]?fin/.test(obj+" "+(r.procedura_raw||""));
   const imp=parseFloat(String(r.importo_raw||0).replace(/[€\s]/g,"").replace(/\.(?=\d{3})/g,"").replace(",","."))||0;
@@ -243,12 +156,11 @@ function normalize(r, i) {
     livello_validazione:cigOk?"L3":"L2",
     confidence_score:cigOk?.85:.65,
     last_updated_at:new Date().toISOString(),
-    note_operative:r.note_estrazione||"",
-    storico_eventi:[],
+    note_operative:r.note_estrazione||"", storico_eventi:[],
   };
 }
 
-function dedup(arr) {
+function dedup(arr){
   const seen=new Map(),out=[];let rm=0;
   for(const r of arr){
     const ib=typeof r.importo_iva_escl==="number"?Math.round(r.importo_iva_escl/50000)*50000:"x";
@@ -258,7 +170,7 @@ function dedup(arr) {
   return{out,rm};
 }
 
-function classifyDet(r) {
+function classifyDet(r){
   const a=(r.oggetto||"").toLowerCase()+" "+(r.note_operative||"").toLowerCase();
   if(r.atto_tipo)return{s:"PRE-GARA",t:"segnale_pre_gara"};
   if(/esito|aggiudic|revoca|deserta|annullat/.test(a))return{s:"ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA",t:"nuovo_oggi"};
@@ -268,7 +180,7 @@ function classifyDet(r) {
   return null;
 }
 
-function scoreRecord(r) {
+function scoreRecord(r){
   let s=0;
   const imp=typeof r.importo_iva_escl==="number"?r.importo_iva_escl:0;
   if(imp>10e6)s+=35;else if(imp>5e6)s+=28;else if(imp>2e6)s+=20;
@@ -288,56 +200,10 @@ function scoreRecord(r) {
   return{...r,score_commerciale:s,priorita_commerciale:p};
 }
 
-// ─── FASE 3: AI ───────────────────────────────────────────────────────────────
+// ── FASE 3: report ────────────────────────────────────────────────────────────
 
-async function aiCall(prompt) {
-  const r = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",
-    headers:{
-      "Content-Type":      "application/json",
-      "x-api-key":         KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body:JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:1000, messages:[{role:"user",content:prompt}] }),
-    timeout:30000,
-  });
-  const d=await r.json();
-  if(d.error)throw new Error(d.error.message);
-  return(d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
-}
-
-function parseJson(txt) {
-  if(!txt)return null;
-  txt=txt.replace(/```[\w]*\n?|```/g,"").trim();
-  try{return JSON.parse(txt);}catch{}
-  const ai=txt.indexOf("["),aj=txt.lastIndexOf("]");
-  if(ai>-1&&aj>ai){try{return JSON.parse(txt.slice(ai,aj+1));}catch{}}
-  return null;
-}
-
-async function aiClassify(amb) {
-  if(!amb.length){log("  ▷ Nessun ambiguo – call classificazione saltata");return[];}
-  log(`→ AI call classificazione: ${amb.length} record …`);
-  const out=[];
-  for(let i=0;i<amb.length;i+=8){
-    const batch=amb.slice(i,i+8);
-    const pay=batch.map(r=>({id:r.record_id,e:r.ente.slice(0,20),o:r.oggetto.slice(0,55),c:r.cig}));
-    try{
-      const txt=await aiCall(`Classifica procurement illuminazione pubblica italiana.
-STATI: GARA PUBBLICATA|PRE-GARA|RETTIFICA-PROROGA-CHIARIMENTI|ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA
-TIPI: nuovo_oggi|segnale_pre_gara|aggiornamento_gara_nota|evidenza_debole
-Input: ${JSON.stringify(pay)}
-Output JSON solo: [{"record_id":"...","stato_procedurale":"...","tipo_novita":"..."}]`);
-      const j=parseJson(txt);if(Array.isArray(j))out.push(...j);
-    }catch(e){log(`  ⚠ Batch err: ${e.message}`);}
-    await slp(1500);
-  }
-  log(`  ✓ Classificati: ${out.length}/${amb.length}`);
-  return out;
-}
-
-async function aiReport(scored, usedWebSearch) {
-  log("→ AI call report …");
+async function generateReport(scored){
+  log("→ [WS4] Generazione report …");
   const fE=v=>v&&v!=="n.d."?"€"+Number(v).toLocaleString("it-IT"):"n.d.";
   const top=scored.slice().sort((a,b)=>b.score_commerciale-a.score_commerciale).slice(0,8);
   const nG=scored.filter(r=>r.stato_procedurale==="GARA PUBBLICATA").length;
@@ -347,9 +213,9 @@ async function aiReport(scored, usedWebSearch) {
   const gareStr=top.length
     ?top.map(r=>`[${r.priorita_commerciale}] ${r.ente} | ${r.oggetto.slice(0,50)} | ${fE(r.importo_iva_escl)} | ${r.stato_procedurale} | scad:${r.data_scadenza} | fonte:${r.fonte_principale}`).join("\n")
     :"Nessuna gara trovata oggi.";
-  const fonteNote=usedWebSearch?" (dati via web search – API ufficiali non disponibili oggi)":"";
-  const txt=await aiCall(`Scrivi report giornaliero Markdown procurement illuminazione pubblica italiana.
-Gare${fonteNote}:
+  const {text} = await anthropic([{role:"user",content:
+    `Scrivi report giornaliero Markdown per monitoraggio procurement illuminazione pubblica italiana.
+Gare trovate:
 ${gareStr}
 KPI: gare=${nG}, pre=${nPr}, P1=${nP1}, tot=${scored.length}, €${(totV/1e6).toFixed(1)}M, data=${DT}
 Struttura (max 320 parole):
@@ -364,84 +230,98 @@ Struttura (max 320 parole):
 |Pre-gara|${nPr}|
 |Priorità P1|${nP1}|
 |Record totali|${scored.length}|
-|Valore monitorato|€${(totV/1e6).toFixed(1)}M|`);
-  log(`  ✓ Report: ${txt.length} char`);
-  return txt;
+|Valore monitorato|€${(totV/1e6).toFixed(1)}M|`
+  }]);
+  log(`  ✓ Report: ${text.length} char`);
+  return text;
 }
 
-// ─── MAIN ─────────────────────────────────────────────────────────────────────
+// ── MAIN ──────────────────────────────────────────────────────────────────────
 
-async function main() {
+async function main(){
   const t0=Date.now();
   log("═══════════════════════════════════════════════");
-  log(` PIPELINE ILLUMINAZIONE v2.2 – ${ISO}`);
+  log(` PIPELINE ILLUMINAZIONE v3.0 – ${ISO}`);
   log("═══════════════════════════════════════════════");
+  log(" Fonte dati: Claude web search (API ufficiali inaffidabili)");
 
-  // FASE 1 – Raccolta
-  log("\n▶ FASE 1 — Raccolta");
-  const [anacData,tedData,guriData]=await Promise.all([fetchANAC(),fetchTED(),fetchGURI()]);
-  let raw=[...anacData,...tedData,...guriData];
-  let usedWebSearch=false;
-  log(`\n▷ Grezzi: ${raw.length} (ANAC:${anacData.length} TED:${tedData.length} GURI:${guriData.length})`);
+  // FASE 1
+  log("\n▶ FASE 1 — Raccolta via web search (3 chiamate)");
+  const [gareData, tedData, pregaraData] = await Promise.all([
+    cercaGare(),
+    cercaTED(),
+    cercaPreGara(),
+  ]);
+  const raw=[...gareData,...tedData,...pregaraData];
+  log(`\n▷ Totale grezzi: ${raw.length}`);
 
-  // Fallback web search se API vuote
-  if(raw.length===0){
-    log("▷ API ufficiali vuote – attivo fallback web search …");
-    try{
-      const wsData=await fetchWebSearch();
-      raw=[...wsData];
-      usedWebSearch=true;
-    }catch(e){log(`  ⚠ Web search fallback err: ${e.message}`);}
-    log(`▷ Dopo web search: ${raw.length} record`);
-  }
-
-  // FASE 2 – Elaborazione
+  // FASE 2
   log("\n▶ FASE 2 — Elaborazione deterministica");
   const normed=raw.map((r,i)=>normalize(r,i)).filter(Boolean);
-  log(`✓ Normalizzazione: ${normed.length}/${raw.length}`);
-  const{out,rm}=dedup(normed);if(rm)log(`✓ Deduplica: rimossi ${rm}`);log(`✓ Unici: ${out.length}`);
+  log(`✓ Nel perimetro: ${normed.length}/${raw.length}`);
+  const{out,rm}=dedup(normed);
+  if(rm)log(`✓ Deduplica: rimossi ${rm}`);
+  log(`✓ Unici: ${out.length}`);
+
   const pre=[],amb=[];
   out.forEach(r=>{const c=classifyDet(r);c?pre.push({...r,stato_procedurale:c.s,tipo_novita:c.t}):amb.push(r);});
-  const detPct=out.length>0?Math.round(pre.length/out.length*100):0;
-  log(`✓ Classificazione det: ${pre.length} (${detPct}%) | AI: ${amb.length}`);
+  log(`✓ Classificazione det: ${pre.length} | ambigui: ${amb.length}`);
 
-  // FASE 3 – AI
-  log("\n▶ FASE 3 — AI");
-  let aiCalls=0, classified=[...pre];
-  if(amb.length){
-    const aiRes=await aiClassify(amb);aiCalls++;
-    const mp=new Map(aiRes.map(c=>[c.record_id,c]));
-    amb.forEach(r=>{const c=mp.get(r.record_id);if(!c)classified.push({...r,stato_procedurale:"GARA PUBBLICATA",tipo_novita:"nuovo_oggi"});else classified.push({...r,stato_procedurale:c.stato_procedurale,tipo_novita:c.tipo_novita});});
+  // Classificazione AI solo se ci sono ambigui
+  let classified=[...pre];
+  let aiClassCalls=0;
+  if(amb.length>0){
+    log("→ Classificazione AI ambigui …");
+    await slp(2000);
+    try{
+      const pay=amb.map(r=>({id:r.record_id,e:r.ente.slice(0,20),o:r.oggetto.slice(0,55),c:r.cig}));
+      const {text}=await anthropic([{role:"user",content:
+        `Classifica questi record procurement illuminazione pubblica.
+STATI: GARA PUBBLICATA|PRE-GARA|RETTIFICA-PROROGA-CHIARIMENTI|ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA
+TIPI: nuovo_oggi|segnale_pre_gara|aggiornamento_gara_nota|evidenza_debole
+Input: ${JSON.stringify(pay)}
+Output JSON solo: [{"record_id":"...","stato_procedurale":"...","tipo_novita":"..."}]`
+      }]);
+      aiClassCalls++;
+      const j=pj(text);
+      const mp=new Map((Array.isArray(j)?j:[]).map(c=>[c.record_id,c]));
+      amb.forEach(r=>{const c=mp.get(r.record_id);classified.push(c?{...r,stato_procedurale:c.stato_procedurale,tipo_novita:c.tipo_novita}:{...r,stato_procedurale:"GARA PUBBLICATA",tipo_novita:"nuovo_oggi"});});
+      log(`  ✓ Classificati: ${j?.length||0}/${amb.length}`);
+    }catch(e){
+      log(`  ⚠ Classificazione AI err: ${e.message} — fallback deterministico`);
+      amb.forEach(r=>classified.push({...r,stato_procedurale:"GARA PUBBLICATA",tipo_novita:"nuovo_oggi"}));
+    }
   }
+
   const scored=classified.map(scoreRecord);
   const nP1=scored.filter(r=>r.priorita_commerciale==="P1").length;
-  if(scored.length>0)log(`✓ Scoring: P1=${nP1} P2=${scored.filter(r=>r.priorita_commerciale==="P2").length} P3=${scored.filter(r=>r.priorita_commerciale==="P3").length}`);
-  else log("▷ 0 record – scoring saltato");
+  log(`✓ Scoring: P1=${nP1} P2=${scored.filter(r=>r.priorita_commerciale==="P2").length} P3=${scored.filter(r=>r.priorita_commerciale==="P3").length}`);
 
-  let report=`# Report · Illuminazione pubblica · ${DT}\n\nNessuna gara trovata oggi.`;
-  try{report=await aiReport(scored,usedWebSearch);aiCalls++;}
-  catch(e){log(`⚠ Report saltato: ${e.message}`);}
+  // FASE 3
+  log("\n▶ FASE 3 — Report");
+  let report=`# Report · Illuminazione pubblica · ${DT}\n\n${scored.length===0?"Nessuna gara trovata oggi.":"Run completato."}`;
+  try{ report=await generateReport(scored); }
+  catch(e){ log(`⚠ Report err: ${e.message}`); }
 
-  // FASE 4 – Output
+  // FASE 4
   log("\n▶ FASE 4 — Output");
   const elapsed=Math.floor((Date.now()-t0)/1000);
   const perSt={},perRg={};
   scored.forEach(r=>{perSt[r.stato_procedurale||"n.d."]=(perSt[r.stato_procedurale||"n.d."]||0)+1;if(r.regione&&r.regione!=="n.d.")perRg[r.regione]=(perRg[r.regione]||0)+1;});
   const totVal=scored.reduce((a,r)=>a+(typeof r.importo_iva_escl==="number"?r.importo_iva_escl:0),0);
   const json={
-    last_updated:new Date().toISOString(),schema_version:"2.2",records:scored,
-    kpi_oggi:{record_totali:scored.length,gare_attive:scored.filter(r=>r.stato_procedurale==="GARA PUBBLICATA").length,pre_gara:scored.filter(r=>r.stato_procedurale==="PRE-GARA").length,priorita_p1:nP1,anomalie_aperte:0,valore_totale_eur:totVal,durata_run_s:elapsed,ai_calls:aiCalls,web_search_usata:usedWebSearch},
+    last_updated:new Date().toISOString(), schema_version:"3.0", records:scored,
+    kpi_oggi:{record_totali:scored.length,gare_attive:scored.filter(r=>r.stato_procedurale==="GARA PUBBLICATA").length,pre_gara:scored.filter(r=>r.stato_procedurale==="PRE-GARA").length,priorita_p1:nP1,valore_totale_eur:totVal,durata_run_s:elapsed,ai_calls:3+aiClassCalls+1,fonte:"web_search"},
     gare_scadenza_imminente:scored.filter(r=>{const d=daysUntil(r.data_scadenza);return d!==null&&d>=0&&d<=7;}),
     anomalie_aperte:[],per_stato:perSt,per_regione:perRg,
   };
-  ensureDir(path.join(ROOT,"docs"));ensureDir(path.join(ROOT,"reports"));
+  ensureDir(path.join(ROOT,"docs")); ensureDir(path.join(ROOT,"reports"));
   fs.writeFileSync(path.join(ROOT,"docs","illuminazione.json"),JSON.stringify(json,null,2),"utf8");
   fs.writeFileSync(path.join(ROOT,"reports",`report-${ISO}.md`),report,"utf8");
-  log(`✓ JSON: docs/illuminazione.json (${scored.length} record)`);
-  log(`✓ Report: reports/report-${ISO}.md`);
+  log(`✓ docs/illuminazione.json (${scored.length} record)`);
+  log(`✓ reports/report-${ISO}.md`);
   log(`\n════════════════════════════════════════`);
   log(` COMPLETATA — ${elapsed}s — ${scored.length} record — €${(totVal/1e6).toFixed(1)}M`);
-  log(` AI calls: ${aiCalls} | web search: ${usedWebSearch?"sì":"no"}`);
   log("════════════════════════════════════════\n");
 }
 
