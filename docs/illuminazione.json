@@ -1,17 +1,16 @@
 {
-  "last_updated": "2026-04-17T11:16:38.112Z",
-  "schema_version": "2.2",
+  "last_updated": "2026-04-17T11:25:34.640Z",
+  "schema_version": "3.0",
   "records": [],
   "kpi_oggi": {
     "record_totali": 0,
     "gare_attive": 0,
     "pre_gara": 0,
     "priorita_p1": 0,
-    "anomalie_aperte": 0,
     "valore_totale_eur": 0,
-    "durata_run_s": 14,
-    "ai_calls": 1,
-    "web_search_usata": true
+    "durata_run_s": 11,
+    "ai_calls": 4,
+    "fonte": "web_search"
   },
   "gare_scadenza_imminente": [],
   "anomalie_aperte": [],
