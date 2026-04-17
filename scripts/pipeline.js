@@ -2,20 +2,20 @@
  * PIPELINE MONITORAGGIO PROCUREMENT – ILLUMINAZIONE PUBBLICA
  * v2.1 – Fix: x-api-key header, ANAC/TED corretti, guard 0 record
  */
- 
+
 import fetch   from "node-fetch";
 import fs      from "fs";
 import path    from "path";
 import { fileURLToPath } from "url";
- 
+
 const __dir = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.resolve(__dir, "..");
 const ISO   = new Date().toISOString().slice(0, 10);
 const DT    = new Date().toLocaleDateString("it-IT", { day:"numeric", month:"long", year:"numeric" });
 const KEY   = process.env.ANTHROPIC_API_KEY || "";
- 
+
 if (!KEY) { console.error("❌ ANTHROPIC_API_KEY mancante"); process.exit(1); }
- 
+
 const log = (msg) => console.log(`[${new Date().toTimeString().slice(0,8)}] ${msg}`);
 const slp = ms => new Promise(r => setTimeout(r, ms));
 function ensureDir(p) { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
@@ -26,9 +26,9 @@ function parseDate(s) {
   const d = new Date(s); return isNaN(d) ? null : d;
 }
 function daysUntil(s) { const d=parseDate(s); return d?Math.ceil((d-new Date(ISO))/86400000):null; }
- 
+
 // FASE 1: Connettori
- 
+
 async function fetchANAC() {
   log("→ ANAC …");
   const results = [];
@@ -65,7 +65,7 @@ async function fetchANAC() {
   log(`✓ ANAC totale: ${results.length}`);
   return results;
 }
- 
+
 async function fetchTED() {
   log("→ TED …");
   const results = [];
@@ -100,7 +100,7 @@ async function fetchTED() {
   log(`✓ TED totale: ${results.length}`);
   return results;
 }
- 
+
 async function fetchGURI() {
   log("→ GURI …");
   const results = [];
@@ -126,12 +126,12 @@ async function fetchGURI() {
   log(`✓ GURI totale: ${results.length}`);
   return results;
 }
- 
+
 // FASE 2: Pipeline deterministica
- 
+
 const KW_IN = ["illuminazione pubblica","pubblica illuminazione","relamping","telegestione","telecontrollo","smart lighting","riqualificazione illuminazione","pali illuminazione","global service illuminazione","accordo quadro illuminazione"];
 const KW_EX = ["illuminazione interna","impianto elettrico generico","facility management","climatizzazione"];
- 
+
 function normalize(r,i) {
   const obj=(r.oggetto_raw||r.oggetto||"").toLowerCase(),all=JSON.stringify(r).toLowerCase();
   if(!KW_IN.some(k=>obj.includes(k)))return null;
@@ -158,13 +158,13 @@ function normalize(r,i) {
     last_updated_at:new Date().toISOString(),note_operative:r.note_estrazione||"",storico_eventi:[],
   };
 }
- 
+
 function dedup(arr) {
   const seen=new Map(),out=[];let rm=0;
   for(const r of arr){const ib=typeof r.importo_iva_escl==="number"?Math.round(r.importo_iva_escl/50000)*50000:"x";const k=r.cig&&r.cig!=="n.d."?"cig:"+r.cig:"eo:"+r.ente.slice(0,28).toLowerCase()+"|"+r.oggetto.slice(0,38).toLowerCase()+"|"+ib;if(seen.has(k))rm++;else{seen.set(k,1);out.push(r);}}
   return{out,rm};
 }
- 
+
 function classifyDet(r) {
   const a=(r.oggetto||"").toLowerCase()+" "+(r.note_operative||"").toLowerCase();
   if(r.atto_tipo)return{s:"PRE-GARA",t:"segnale_pre_gara"};
@@ -174,7 +174,7 @@ function classifyDet(r) {
   if(r.confidence_score<.70)return{s:"GARA PUBBLICATA",t:"evidenza_debole"};
   return null;
 }
- 
+
 function scoreRecord(r) {
   let s=0;const imp=typeof r.importo_iva_escl==="number"?r.importo_iva_escl:0;
   if(imp>10e6)s+=35;else if(imp>5e6)s+=28;else if(imp>2e6)s+=20;else if(imp>1e6)s+=14;else if(imp>5e5)s+=8;else s+=3;
@@ -189,9 +189,9 @@ function scoreRecord(r) {
   else if(s>=50)p="P2";else if(s>=30)p="P3";
   return{...r,score_commerciale:s,priorita_commerciale:p};
 }
- 
+
 // FASE 3: AI – FIX CRITICO: aggiunto x-api-key header
- 
+
 async function aiCall(prompt) {
   const r = await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",
@@ -207,7 +207,7 @@ async function aiCall(prompt) {
   if(d.error)throw new Error(d.error.message);
   return(d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
 }
- 
+
 function parseJson(txt) {
   if(!txt)return null;txt=txt.replace(/```[\w]*\n?|```/g,"").trim();
   try{return JSON.parse(txt);}catch{}
@@ -215,7 +215,7 @@ function parseJson(txt) {
   if(ai>-1&&aj>ai){try{return JSON.parse(txt.slice(ai,aj+1));}catch{}}
   return null;
 }
- 
+
 async function aiClassify(amb) {
   if(!amb.length){log("  ▷ Nessun ambiguo – call #1 saltata");return[];}
   log(`→ AI call #1: classifica ${amb.length} record …`);
@@ -228,7 +228,7 @@ async function aiClassify(amb) {
   log(`  ✓ AI classify: ${out.length}/${amb.length}`);
   return out;
 }
- 
+
 async function aiReport(scored) {
   log("→ AI call #2: report …");
   const fE=v=>v&&v!=="n.d."?"€"+Number(v).toLocaleString("it-IT"):"n.d.";
@@ -242,20 +242,20 @@ async function aiReport(scored) {
   log(`  ✓ Report: ${txt.length} char`);
   return txt;
 }
- 
+
 // MAIN
- 
+
 async function main() {
   const t0=Date.now();
   log("═══════════════════════════════════════════════");
   log(` PIPELINE ILLUMINAZIONE v2.1 – ${ISO}`);
   log("═══════════════════════════════════════════════");
- 
+
   log("\n▶ FASE 1 — Raccolta");
   const [anacData,tedData,guriData]=await Promise.all([fetchANAC(),fetchTED(),fetchGURI()]);
   const raw=[...anacData,...tedData,...guriData];
   log(`\n▷ Grezzi: ${raw.length} (ANAC:${anacData.length} TED:${tedData.length} GURI:${guriData.length})`);
- 
+
   log("\n▶ FASE 2 — Elaborazione");
   const normed=raw.map((r,i)=>normalize(r,i)).filter(Boolean);
   log(`✓ Normalizzazione: ${normed.length}/${raw.length}`);
@@ -263,7 +263,7 @@ async function main() {
   const pre=[],amb=[];out.forEach(r=>{const c=classifyDet(r);c?pre.push({...r,stato_procedurale:c.s,tipo_novita:c.t}):amb.push(r);});
   const detPct=out.length>0?Math.round(pre.length/out.length*100):0;
   log(`✓ Classificazione det: ${pre.length} (${detPct}%) | AI: ${amb.length}`);
- 
+
   log("\n▶ FASE 3 — AI Haiku");
   let aiCalls=0,classified=[...pre];
   if(amb.length){const aiRes=await aiClassify(amb);aiCalls++;const mp=new Map(aiRes.map(c=>[c.record_id,c]));amb.forEach(r=>{const c=mp.get(r.record_id);if(!c)classified.push({...r,stato_procedurale:"GARA PUBBLICATA",tipo_novita:"nuovo_oggi"});else classified.push({...r,stato_procedurale:c.stato_procedurale,tipo_novita:c.tipo_novita});});}
@@ -272,7 +272,7 @@ async function main() {
   if(scored.length>0)log(`✓ Scoring: P1=${nP1} P2=${scored.filter(r=>r.priorita_commerciale==="P2").length} P3=${scored.filter(r=>r.priorita_commerciale==="P3").length}`);
   else log("▷ 0 record – scoring saltato");
   const report=await aiReport(scored);aiCalls++;
- 
+
   log("\n▶ FASE 4 — Output");
   const elapsed=Math.floor((Date.now()-t0)/1000);
   const perSt={},perRg={};scored.forEach(r=>{perSt[r.stato_procedurale||"n.d."]=(perSt[r.stato_procedurale||"n.d."]||0)+1;if(r.regione&&r.regione!=="n.d.")perRg[r.regione]=(perRg[r.regione]||0)+1;});
@@ -287,5 +287,5 @@ async function main() {
   log(` COMPLETATA — ${elapsed}s — ${scored.length} record — €${(totVal/1e6).toFixed(1)}M`);
   log(`════════════════════════════════════════\n`);
 }
- 
+
 main().catch(e=>{console.error("❌ Errore critico:",e);process.exit(1);});
