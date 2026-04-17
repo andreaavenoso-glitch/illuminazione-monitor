@@ -1,0 +1,19 @@
+{
+  "last_updated": "2026-04-17T11:03:39.794Z",
+  "schema_version": "2.1",
+  "records": [],
+  "kpi_oggi": {
+    "record_totali": 0,
+    "gare_attive": 0,
+    "pre_gara": 0,
+    "priorita_p1": 0,
+    "anomalie_aperte": 0,
+    "valore_totale_eur": 0,
+    "durata_run_s": 10,
+    "ai_calls": 1
+  },
+  "gare_scadenza_imminente": [],
+  "anomalie_aperte": [],
+  "per_stato": {},
+  "per_regione": {}
+}
