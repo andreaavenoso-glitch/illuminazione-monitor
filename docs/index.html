@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monitoraggio Procurement · Illuminazione Pubblica</title>
+<style>
+:root{--bg:#fff;--bg2:#f5f4ef;--bg3:#eeedea;--txt:#1a1a18;--txt2:#6b6a65;--txt3:#9b9a95;--brd:rgba(0,0,0,.1);--brd2:rgba(0,0,0,.2);--blue:#185FA5;--blue-bg:#E6F1FB;--blue-txt:#0C447C;--green:#3B6D11;--green-bg:#EAF3DE;--green-txt:#27500A;--amber:#854F0B;--amber-bg:#FAEEDA;--amber-txt:#633806;--red:#A32D2D;--red-bg:#FCEBEB;--red-txt:#791F1F;--purple:#534AB7;--purple-bg:#EEEDFE;--purple-txt:#3C3489;--gray-bg:#F1EFE8;--gray-txt:#444441}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1a18;--bg2:#232320;--bg3:#2a2a27;--txt:#e8e6de;--txt2:#9b9a95;--txt3:#6b6a65;--brd:rgba(255,255,255,.1);--brd2:rgba(255,255,255,.2);--blue-bg:#042C53;--blue-txt:#B5D4F4;--green-bg:#173404;--green-txt:#C0DD97;--amber-bg:#412402;--amber-txt:#FAC775;--red-bg:#501313;--red-txt:#F7C1C1;--purple-bg:#26215C;--purple-txt:#CECBF6;--gray-bg:#2C2C2A;--gray-txt:#D3D1C7}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:var(--txt);background:var(--bg);min-height:100vh}
+.container{max-width:1100px;margin:0 auto;padding:20px 16px}
+header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+.logo{font-size:18px;font-weight:600;letter-spacing:-.02em}
+.logo span{color:var(--blue)}
+.updated{font-size:11px;color:var(--txt3);margin-top:3px}
+.refresh-btn{font-size:12px;padding:6px 14px;border:0.5px solid var(--brd2);border-radius:8px;background:var(--bg2);color:var(--txt);cursor:pointer}
+.refresh-btn:hover{background:var(--bg3)}
+.alert-bar{background:var(--red-bg);border:0.5px solid var(--red);border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:12px;color:var(--red-txt);display:none;align-items:center;gap:8px}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:16px}
+.kpi-card{background:var(--bg2);border-radius:8px;padding:11px 13px}
+.kpi-label{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--txt3);margin-bottom:4px}
+.kpi-value{font-size:22px;font-weight:600;line-height:1}
+.kpi-sub{font-size:10px;color:var(--txt3);margin-top:3px}
+.filters{display:flex;gap:7px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+.filters select,.filters input{font-size:11px;padding:5px 8px;border:0.5px solid var(--brd2);border-radius:7px;background:var(--bg);color:var(--txt);height:29px}
+.filters input{width:180px}
+.tab-row{display:flex;gap:0;border-bottom:0.5px solid var(--brd);margin-bottom:14px}
+.tab-btn{padding:7px 14px;font-size:12px;font-weight:400;cursor:pointer;background:none;border:none;border-bottom:2px solid transparent;color:var(--txt2)}
+.tab-btn.active{font-weight:500;border-bottom-color:var(--blue);color:var(--blue)}
+.card{border:0.5px solid var(--brd);border-radius:10px;overflow:hidden;margin-bottom:14px}
+.card-hdr{padding:8px 13px;background:var(--bg2);border-bottom:0.5px solid var(--brd);font-size:11px;font-weight:500;display:flex;justify-content:space-between;align-items:center}
+.card-hdr span:last-child{font-weight:400;color:var(--txt3);font-size:10px}
+table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+thead th{background:var(--bg2);padding:6px 9px;text-align:left;font-size:9px;font-weight:500;color:var(--txt2);border-bottom:0.5px solid var(--brd);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+thead th.r{text-align:right}
+tbody td{padding:7px 9px;border-bottom:0.5px solid var(--brd);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+tbody td.r{text-align:right}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--bg2)}
+.b{display:inline-block;font-size:9px;padding:2px 6px;border-radius:8px;font-weight:500;white-space:nowrap}
+.bGP{background:var(--blue-bg);color:var(--blue-txt)}
+.bPR{background:var(--amber-bg);color:var(--amber-txt)}
+.bES{background:var(--green-bg);color:var(--green-txt)}
+.bRT{background:var(--purple-bg);color:var(--purple-txt)}
+.bP1{background:var(--red-bg);color:var(--red-txt)}
+.bP2{background:var(--amber-bg);color:var(--amber-txt)}
+.bP3{background:var(--green-bg);color:var(--green-txt)}
+.bP4{background:var(--gray-bg);color:var(--gray-txt)}
+.bANAC{background:var(--blue-bg);color:var(--blue-txt)}
+.bTED{background:var(--purple-bg);color:var(--purple-txt)}
+.bGURI{background:var(--green-bg);color:var(--green-txt)}
+.bAlbo{background:var(--amber-bg);color:var(--amber-txt)}
+.report-box{padding:14px;font-size:11px;line-height:1.85;white-space:pre-wrap;max-height:380px;overflow-y:auto}
+.empty{text-align:center;padding:30px;color:var(--txt3);font-size:12px}
+.detail-panel{border:0.5px solid var(--brd);border-radius:10px;padding:14px;margin-top:12px;display:none}
+.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}
+.df label{font-size:10px;color:var(--txt3);display:block;margin-bottom:2px}
+.df span{font-size:12px}
+.tag{display:inline-block;font-size:9px;padding:1px 6px;border-radius:4px;background:var(--bg2);border:0.5px solid var(--brd);color:var(--txt2);margin:2px}
+.scad-alert{color:var(--red-txt);font-weight:500}
+footer{margin-top:24px;padding-top:14px;border-top:0.5px solid var(--brd);display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--txt3);flex-wrap:wrap;gap:8px}
+.dl-btn{font-size:11px;padding:5px 12px;border:0.5px solid var(--brd2);border-radius:7px;background:var(--bg2);color:var(--txt);cursor:pointer}
+.dl-btn:hover{background:var(--bg3)}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div>
+    <div class="logo">Illuminazione<span>Monitor</span></div>
+    <div class="updated" id="updated">Caricamento in corso…</div>
+  </div>
+  <button class="refresh-btn" onclick="load()">↻ Aggiorna</button>
+</header>
+
+<div class="alert-bar" id="alert-bar">
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1L13 12H1Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><line x1="7" y1="5.5" x2="7" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="7" cy="10.5" r=".6" fill="currentColor"/></svg>
+  <span id="alert-text"></span>
+</div>
+
+<div class="kpi-grid" id="kpi-grid"></div>
+
+<div class="tab-row">
+  <button class="tab-btn active" id="tab-gare" onclick="setTab('gare')">Gare attive</button>
+  <button class="tab-btn" id="tab-preg" onclick="setTab('preg')">Pre-gara</button>
+  <button class="tab-btn" id="tab-all" onclick="setTab('all')">Tutti i record</button>
+  <button class="tab-btn" id="tab-report" onclick="setTab('report')">Report</button>
+</div>
+
+<div class="filters" id="filters">
+  <input type="text" id="q" placeholder="Cerca ente, oggetto, CIG…" oninput="renderTable()">
+  <select id="f-reg" onchange="renderTable()"><option value="">Tutte le regioni</option></select>
+  <select id="f-prio" onchange="renderTable()">
+    <option value="">Tutte le priorità</option>
+    <option value="P1">P1 – Alta</option>
+    <option value="P2">P2 – Media-alta</option>
+    <option value="P3">P3 – Media</option>
+    <option value="P4">P4 – Bassa</option>
+  </select>
+  <select id="f-flag" onchange="renderTable()">
+    <option value="">Tutti</option>
+    <option value="pnrr">PNRR</option>
+    <option value="ppp">PPP / concessione</option>
+    <option value="sopra">Sopra soglia UE</option>
+  </select>
+</div>
+
+<div class="card" id="main-card">
+  <div class="card-hdr"><span id="card-title">Gare attive</span><span id="card-count"></span></div>
+  <table><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+</div>
+
+<div class="detail-panel" id="detail-panel"></div>
+
+</div>
+
+<footer>
+  <span id="footer-info">Illuminazione Pubblica Monitor · Pipeline automatica</span>
+  <div style="display:flex;gap:7px">
+    <button class="dl-btn" onclick="dlJson()">↓ JSON</button>
+    <button class="dl-btn" onclick="dlReport()">↓ Report .md</button>
+  </div>
+</footer>
+
+<script>
+let DATA=null, REPORT="", curTab="gare", selId=null;
+
+const STATE_BADGE={"GARA PUBBLICATA":"bGP","PRE-GARA":"bPR","ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA":"bES","RETTIFICA-PROROGA-CHIARIMENTI":"bRT"};
+const STATE_LABEL={"GARA PUBBLICATA":"Gara","PRE-GARA":"Pre-gara","ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA":"Esito","RETTIFICA-PROROGA-CHIARIMENTI":"Rettifica"};
+const FONTE_BADGE={"ANAC":"bANAC","TED":"bTED","GURI":"bGURI","Albo Pretorio":"bAlbo"};
+const PRIO_BADGE={"P1":"bP1","P2":"bP2","P3":"bP3","P4":"bP4"};
+
+function fE(v){return v&&v!=="n.d."?"€"+Number(v).toLocaleString("it-IT"):"n.d.";}
+function sb(s){return`<span class="b ${STATE_BADGE[s]||''}">${STATE_LABEL[s]||s||"n.d."}</span>`;}
+function pb(p){return`<span class="b ${PRIO_BADGE[p]||'bP4'}">${p||"–"}</span>`;}
+function fb(f){return`<span class="b ${FONTE_BADGE[f]||''}" style="font-size:9px">${f}</span>`;}
+function daysUntil(s){
+  if(!s||s==="n.d.")return null;
+  const m=s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const d=m?new Date(+m[3],+m[2]-1,+m[1]):new Date(s);
+  return isNaN(d)?null:Math.ceil((d-new Date())/864e5);
+}
+
+async function load(){
+  document.getElementById("updated").textContent="Caricamento…";
+  try{
+    const r=await fetch("illuminazione.json?v="+Date.now());
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const d=await r.json();
+    DATA=d;
+
+    // Popola filtro regioni
+    const regs=[...new Set((d.records||[]).map(r=>r.regione).filter(x=>x&&x!=="n.d."))].sort();
+    const sel=document.getElementById("f-reg");
+    sel.innerHTML=`<option value="">Tutte le regioni</option>`+regs.map(r=>`<option value="${r}">${r}</option>`).join("");
+
+    // Carica report
+    try{const rr=await fetch("../reports/report-"+new Date().toISOString().slice(0,10)+".md");if(rr.ok)REPORT=await rr.text();}catch{}
+
+    renderKPI();
+    renderAlerts();
+    renderTable();
+    document.getElementById("updated").textContent=
+      "Aggiornato: "+new Date(d.last_updated).toLocaleString("it-IT")+
+      " · "+d.records.length+" record · "+
+      (d.kpi_oggi.ai_calls||"–")+" call AI · "+
+      "~"+(d.kpi_oggi.token_stimati||"–")+" token";
+    document.getElementById("footer-info").textContent=
+      `Illuminazione Pubblica Monitor · Pipeline automatica · ${d.records.length} record · schema v${d.schema_version}`;
+  }catch(e){
+    document.getElementById("updated").textContent="Errore caricamento: "+e.message+". Verifica che illuminazione.json sia presente.";
+  }
+}
+
+function renderKPI(){
+  const d=DATA,k=d.kpi_oggi||{};
+  const alerts=d.gare_scadenza_imminente||[];
+  document.getElementById("kpi-grid").innerHTML=[
+    {l:"Record validi",     v:(d.records||[]).filter(r=>r.tipo_novita!=="evidenza_debole").length, s:k.priorita_p1+" P1"},
+    {l:"Gare attive",       v:k.gare_attive||0},
+    {l:"Pre-gara",          v:k.pre_gara||0},
+    {l:"Scadenza ≤7gg",     v:alerts.length, s:alerts.length?"⚠ Verificare":"OK"},
+    {l:"Valore monitorato", v:"€"+(((k.valore_totale_eur||0)/1e6).toFixed(1))+"M"},
+    {l:"Anomalie",          v:k.anomalie_aperte||0},
+  ].map(x=>`<div class="kpi-card"><div class="kpi-label">${x.l}</div><div class="kpi-value">${x.v}</div>${x.s?`<div class="kpi-sub">${x.s}</div>`:""}</div>`).join("");
+}
+
+function renderAlerts(){
+  const d=DATA;
+  const alerts=[];
+  const imm=d.gare_scadenza_imminente||[];
+  if(imm.length)alerts.push(`${imm.length} gara/e con scadenza entro 7 giorni`);
+  if((d.kpi_oggi||{}).anomalie_aperte>0)alerts.push(`${d.kpi_oggi.anomalie_aperte} anomalie aperte da verificare`);
+  const bar=document.getElementById("alert-bar");
+  if(alerts.length){bar.style.display="flex";document.getElementById("alert-text").textContent=alerts.join(" · ");}
+  else bar.style.display="none";
+}
+
+function getRows(){
+  if(!DATA)return[];
+  const q=(document.getElementById("q").value||"").toLowerCase();
+  const fr=document.getElementById("f-reg").value;
+  const fp=document.getElementById("f-prio").value;
+  const ff=document.getElementById("f-flag").value;
+  let rows=DATA.records||[];
+
+  if(curTab==="gare")  rows=rows.filter(r=>r.stato_procedurale==="GARA PUBBLICATA");
+  if(curTab==="preg")  rows=rows.filter(r=>r.stato_procedurale==="PRE-GARA");
+  if(curTab!=="report") rows=rows.filter(r=>r.tipo_novita!=="evidenza_debole");
+
+  if(q)  rows=rows.filter(r=>JSON.stringify(r).toLowerCase().includes(q));
+  if(fr) rows=rows.filter(r=>r.regione===fr);
+  if(fp) rows=rows.filter(r=>r.priorita_commerciale===fp);
+  if(ff==="pnrr")  rows=rows.filter(r=>r.flag_pnrr);
+  if(ff==="ppp")   rows=rows.filter(r=>r.flag_ppp);
+  if(ff==="sopra") rows=rows.filter(r=>r.flag_sopra_soglia_ue);
+
+  return rows.slice().sort((a,b)=>({P1:0,P2:1,P3:2,P4:3}[a.priorita_commerciale]||3)-({P1:0,P2:1,P3:2,P4:3}[b.priorita_commerciale]||3));
+}
+
+function renderTable(){
+  if(curTab==="report"){
+    document.getElementById("main-card").style.display="none";
+    document.getElementById("filters").style.display="none";
+    document.getElementById("detail-panel").style.display="none";
+    const rp=document.getElementById("main-card");
+    rp.style.display="block";
+    rp.innerHTML=`<div class="card-hdr"><span>Report giornaliero</span></div><div class="report-box">${REPORT||"Nessun report disponibile per oggi."}</div>`;
+    return;
+  }
+  document.getElementById("filters").style.display="flex";
+  document.getElementById("main-card").style.display="block";
+
+  const rows=getRows();
+  const titles={gare:"Gare attive",preg:"Segnali pre-gara",all:"Tutti i record"};
+  document.getElementById("card-title").textContent=titles[curTab]||"Record";
+  document.getElementById("card-count").textContent=rows.length+" record";
+
+  document.getElementById("thead").innerHTML=`<tr>
+    <th style="width:17%">Ente</th>
+    <th style="width:22%">Oggetto</th>
+    <th class="r" style="width:11%">Importo</th>
+    <th style="width:11%">Stato</th>
+    <th style="width:7%">Prio.</th>
+    <th style="width:10%">Scadenza</th>
+    <th style="width:9%;font-size:9px">CIG</th>
+    <th style="width:8%">Fonte</th>
+    <th style="width:5%">+</th>
+  </tr>`;
+
+  if(!rows.length){document.getElementById("tbody").innerHTML=`<tr><td colspan="9" class="empty">Nessun record con i filtri selezionati.</td></tr>`;return;}
+
+  document.getElementById("tbody").innerHTML=rows.map(r=>{
+    const d=daysUntil(r.data_scadenza);
+    const scadClass=d!==null&&d>=0&&d<=3?"scad-alert":"";
+    return`<tr onclick="showDetail('${r.record_id}')" style="cursor:pointer">
+      <td title="${r.ente}">${r.ente}</td>
+      <td title="${r.oggetto}">${r.oggetto.slice(0,46)}</td>
+      <td class="r">${fE(r.importo_iva_escl)}</td>
+      <td>${sb(r.stato_procedurale)}</td>
+      <td>${pb(r.priorita_commerciale)}</td>
+      <td class="${scadClass}">${r.data_scadenza}${d!==null&&d>=0&&d<=7?` <span style="font-size:9px">(${d}gg)</span>`:""}</td>
+      <td style="font-family:monospace;font-size:9px">${r.cig!=="n.d."?r.cig.slice(0,8)+"…":"n.d."}</td>
+      <td>${fb(r.fonte_principale)}</td>
+      <td style="font-size:10px;color:var(--txt3)">▸</td>
+    </tr>`;
+  }).join("");
+}
+
+function showDetail(id){
+  const r=(DATA.records||[]).find(x=>x.record_id===id);
+  if(!r)return;
+  if(selId===id){document.getElementById("detail-panel").style.display="none";selId=null;return;}
+  selId=id;
+  const dp=document.getElementById("detail-panel");
+  dp.style.display="block";
+  const pnrr=r.flag_pnrr?`<span class="tag" style="background:var(--blue-bg);color:var(--blue-txt);border-color:#85B7EB">PNRR</span>`:"";
+  const ppp=r.flag_ppp?`<span class="tag" style="background:var(--amber-bg);color:var(--amber-txt);border-color:#EF9F27">PPP</span>`:"";
+  const sopra=r.flag_sopra_soglia_ue?`<span class="tag" style="background:var(--purple-bg);color:var(--purple-txt);border-color:#AFA9EC">sopra soglia UE</span>`:"";
+  dp.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <div>
+        <div style="font-size:13px;font-weight:500;margin-bottom:3px">${r.ente}</div>
+        <div style="font-size:11px;color:var(--txt2)">${r.oggetto}</div>
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">${sb(r.stato_procedurale)} ${pb(r.priorita_commerciale)} ${pnrr}${ppp}${sopra}</div>
+    </div>
+    <div class="detail-grid">
+      <div class="df"><label>CIG</label><span style="font-family:monospace;font-size:11px">${r.cig}</span></div>
+      <div class="df"><label>Importo (IVA esclusa)</label><span>${fE(r.importo_iva_escl)}${r.importo_stimato?" (stimato)":""}</span></div>
+      <div class="df"><label>Scadenza</label><span>${r.data_scadenza}</span></div>
+      <div class="df"><label>Procedura</label><span>${r.procedura}</span></div>
+      <div class="df"><label>Regione</label><span>${r.regione}</span></div>
+      <div class="df"><label>Fonte</label><span>${r.fonte_principale}</span></div>
+      <div class="df"><label>Validazione</label><span>${r.livello_validazione}</span></div>
+      <div class="df"><label>Confidence</label><span>${Math.round(r.confidence_score*100)}%</span></div>
+      <div class="df"><label>Score commerciale</label><span>${r.score_commerciale}/100</span></div>
+    </div>
+    <div style="margin-top:10px;border-top:0.5px solid var(--brd);padding-top:8px">
+      <div style="font-size:10px;color:var(--txt3);margin-bottom:5px">Tag tecnici</div>
+      <div>${(r.tag_tecnico||[]).map(t=>`<span class="tag">${t}</span>`).join("")||"–"}</div>
+    </div>
+    ${r.note_operative?`<div style="margin-top:8px;border-top:0.5px solid var(--brd);padding-top:8px;font-size:11px;color:var(--txt2)">${r.note_operative}</div>`:""}
+    <div style="margin-top:10px">
+      <a href="${r.link_bando}" target="_blank" style="font-size:11px;color:var(--blue)">→ Apri bando/atto</a>
+      <span style="font-size:10px;color:var(--txt3);margin-left:12px">Aggiornato: ${new Date(r.last_updated_at).toLocaleString("it-IT")}</span>
+    </div>`;
+  dp.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+
+function setTab(t){
+  curTab=t;selId=null;
+  document.getElementById("detail-panel").style.display="none";
+  ["gare","preg","all","report"].forEach(k=>document.getElementById("tab-"+k).classList.toggle("active",k===t));
+  renderTable();
+}
+
+function dlJson(){
+  if(!DATA)return;
+  const b=new Blob([JSON.stringify(DATA,null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="illuminazione.json";a.click();
+}
+function dlReport(){
+  if(!REPORT)return;
+  const b=new Blob([REPORT],{type:"text/markdown"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="report.md";a.click();
+}
+
+load();
+</script>
+</body>
+</html>
