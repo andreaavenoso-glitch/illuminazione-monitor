@@ -1,6 +1,6 @@
 {
-  "last_updated": "2026-04-17T11:03:39.794Z",
-  "schema_version": "2.1",
+  "last_updated": "2026-04-17T11:16:38.112Z",
+  "schema_version": "2.2",
   "records": [],
   "kpi_oggi": {
     "record_totali": 0,
@@ -9,8 +9,9 @@
     "priorita_p1": 0,
     "anomalie_aperte": 0,
     "valore_totale_eur": 0,
-    "durata_run_s": 10,
-    "ai_calls": 1
+    "durata_run_s": 14,
+    "ai_calls": 1,
+    "web_search_usata": true
   },
   "gare_scadenza_imminente": [],
   "anomalie_aperte": [],
