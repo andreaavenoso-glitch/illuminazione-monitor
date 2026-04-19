@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-04-18T08:05:33.043Z",
+  "last_updated": "2026-04-19T08:15:20.562Z",
   "schema_version": "3.1",
   "records": [],
   "kpi_oggi": {
@@ -8,7 +8,7 @@
     "pre_gara": 0,
     "priorita_p1": 0,
     "valore_totale_eur": 0,
-    "durata_run_s": 14,
+    "durata_run_s": 16,
     "fonte": "sonnet_web_search"
   },
   "gare_scadenza_imminente": [],
