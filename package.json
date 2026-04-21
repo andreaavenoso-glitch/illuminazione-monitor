@@ -1,10 +1,10 @@
 {
   "name": "illuminazione-pubblica-monitor",
-  "version": "1.0.0",
-  "description": "Monitoraggio procurement illuminazione pubblica – pipeline automatica",
+  "version": "3.1.0",
+  "description": "Monitoraggio procurement illuminazione pubblica",
   "type": "module",
   "scripts": {
-    "run": "node scripts/pipeline.js",
+    "start": "node scripts/pipeline.js",
     "dev": "node scripts/pipeline.js --dev"
   },
   "dependencies": {
