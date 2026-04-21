@@ -75,7 +75,15 @@ function pj(txt){
   txt = txt.replace(/```[\w]*\n?|```/g,"").trim();
   try{ return JSON.parse(txt); }catch{}
   const ai=txt.indexOf("["), aj=txt.lastIndexOf("]");
-  if(ai>-1 && aj>ai){ try{ return JSON.parse(txt.slice(ai,aj+1)); }catch{} }
+  if(ai>-1 && aj>ai){
+    try{ return JSON.parse(txt.slice(ai,aj+1)); }catch{}
+    let p=aj;
+    while(true){
+      p=txt.lastIndexOf("]",p-1);
+      if(p<=ai)break;
+      try{ return JSON.parse(txt.slice(ai,p+1)); }catch{}
+    }
+  }
   return null;
 }
 
