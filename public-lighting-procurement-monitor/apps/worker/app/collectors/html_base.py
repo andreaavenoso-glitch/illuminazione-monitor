@@ -29,6 +29,7 @@ from typing import ClassVar
 from urllib.parse import urljoin
 
 import httpx
+from app.collectors.base import BaseCollector, CollectorError, RawRecordDraft
 from bs4 import BeautifulSoup, Tag
 from parsing_rules import (
     days_until,
@@ -36,8 +37,6 @@ from parsing_rules import (
     parse_importo,
     parse_italian_date,
 )
-
-from app.collectors.base import BaseCollector, CollectorError, RawRecordDraft
 
 
 @dataclass

@@ -1,10 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.watchlist_item import WatchlistItem
 from app.schemas.watchlist import WatchlistItemCreate, WatchlistItemUpdate
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class WatchlistRepository:

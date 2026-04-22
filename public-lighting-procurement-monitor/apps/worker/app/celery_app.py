@@ -1,7 +1,6 @@
+from app.config import get_worker_settings
 from celery import Celery
 from celery.schedules import crontab
-
-from app.config import get_worker_settings
 
 settings = get_worker_settings()
 
@@ -11,6 +10,7 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=[
         "app.tasks.collect_sources",
+        "app.tasks.normalize_records",
     ],
 )
 
@@ -34,5 +34,9 @@ celery_app.conf.beat_schedule = {
     "collect-eproc-portals-daily": {
         "task": "app.tasks.collect_sources.collect_eproc_portals",
         "schedule": crontab(hour=5, minute=30),
+    },
+    "normalize-records-daily": {
+        "task": "app.tasks.normalize_records.normalize_records",
+        "schedule": crontab(hour=6, minute=0),
     },
 }

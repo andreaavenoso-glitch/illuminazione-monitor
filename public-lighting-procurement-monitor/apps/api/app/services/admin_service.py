@@ -1,8 +1,7 @@
 from uuid import UUID
 
-from celery import Celery
-
 from app.core.config import get_settings
+from celery import Celery
 
 
 def _celery_app() -> Celery:
@@ -27,4 +26,10 @@ def dispatch_collect_single_source(source_id: UUID) -> str | None:
         "app.tasks.collect_sources.collect_single_source",
         kwargs={"source_id": str(source_id)},
     )
+    return str(result.id)
+
+
+def dispatch_normalize_records() -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.normalize_records.normalize_records")
     return str(result.id)

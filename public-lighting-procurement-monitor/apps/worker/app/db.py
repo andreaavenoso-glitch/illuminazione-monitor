@@ -1,12 +1,11 @@
 from collections.abc import AsyncIterator
 
+from app.config import get_worker_settings
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-
-from app.config import get_worker_settings
 
 _settings = get_worker_settings()
 

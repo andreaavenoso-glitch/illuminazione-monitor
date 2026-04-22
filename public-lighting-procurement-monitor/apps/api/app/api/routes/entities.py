@@ -1,11 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.database import get_session
 from app.repositories.entity_repository import EntityRepository
 from app.schemas.entity import EntityCreate, EntityRead, EntityUpdate
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 

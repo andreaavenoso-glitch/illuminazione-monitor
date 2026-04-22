@@ -23,3 +23,12 @@ async def retry_source(source_id: UUID) -> dict:
     if task_id is None:
         raise HTTPException(status_code=404, detail="Source not found or inactive")
     return {"status": "dispatched", "task_id": task_id, "source_id": str(source_id)}
+
+
+@router.post("/normalize-records")
+async def run_normalize_records() -> dict:
+    """Trigger the raw → procurement normalization task."""
+    from app.services.admin_service import dispatch_normalize_records
+
+    task_id = dispatch_normalize_records()
+    return {"status": "dispatched", "task_id": task_id}

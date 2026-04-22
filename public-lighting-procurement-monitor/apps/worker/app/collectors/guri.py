@@ -6,9 +6,8 @@ from typing import Any
 
 import feedparser
 import httpx
-from parsing_rules import is_in_lighting_perimeter
-
 from app.collectors.base import BaseCollector, CollectorError, RawRecordDraft
+from parsing_rules import is_in_lighting_perimeter
 
 
 class GURICollector(BaseCollector):

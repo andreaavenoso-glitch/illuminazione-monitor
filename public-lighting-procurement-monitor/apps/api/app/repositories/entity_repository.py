@@ -1,10 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.entity import Entity
 from app.schemas.entity import EntityCreate, EntityUpdate
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class EntityRepository:

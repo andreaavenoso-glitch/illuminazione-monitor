@@ -5,14 +5,13 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from shared_models import JobRun, Source
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.celery_app import celery_app
 from app.collectors import COLLECTOR_REGISTRY, CollectorResult
 from app.collectors.base import BaseCollector
 from app.db import SessionLocal
+from shared_models import JobRun, Source
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 

@@ -39,7 +39,7 @@ jobs:
           pip install httpx beautifulsoup4 lxml feedparser pytest pytest-asyncio pytest-httpx
 
       - name: Run unit tests
-        run: PYTHONPATH=apps/worker pytest tests/unit -v
+        run: PYTHONPATH=apps/worker:apps/api pytest tests/unit -v
 
   python-lint:
     name: Python lint (ruff)

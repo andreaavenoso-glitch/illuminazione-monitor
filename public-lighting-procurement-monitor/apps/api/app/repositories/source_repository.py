@@ -1,10 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.source import Source
 from app.schemas.source import SourceCreate, SourceUpdate
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class SourceRepository:

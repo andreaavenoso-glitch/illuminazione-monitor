@@ -4,9 +4,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from parsing_rules import CPV_LIGHTING_CODES
-
 from app.collectors.base import BaseCollector, CollectorError, RawRecordDraft
+from parsing_rules import CPV_LIGHTING_CODES
 
 
 class TEDCollector(BaseCollector):

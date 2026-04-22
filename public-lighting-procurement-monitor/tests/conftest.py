@@ -15,4 +15,8 @@ worker_root = ROOT / "apps" / "worker"
 if worker_root.exists() and str(worker_root) not in sys.path:
     sys.path.insert(0, str(worker_root))
 
+api_root = ROOT / "apps" / "api"
+if api_root.exists() and str(api_root) not in sys.path:
+    sys.path.insert(0, str(api_root))
+
 os.environ.setdefault("APP_ENV", "test")

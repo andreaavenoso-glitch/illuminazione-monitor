@@ -1,10 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.procurement_record import ProcurementRecord
 from app.schemas.procurement import RecordFilters
+from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ProcurementRepository:

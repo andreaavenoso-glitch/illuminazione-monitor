@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-
 from app.collectors.base import BaseCollector, CollectorError, RawRecordDraft
 
 

@@ -1,7 +1,6 @@
 import boto3
-from botocore.client import Config as BotoConfig
-
 from app.core.config import get_settings
+from botocore.client import Config as BotoConfig
 
 
 def get_s3_client():

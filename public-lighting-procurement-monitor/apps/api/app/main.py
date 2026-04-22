@@ -1,9 +1,8 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
 from app.api.routes import admin, entities, health, records, sources, watchlist
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 configure_logging()
 log = get_logger("app")
