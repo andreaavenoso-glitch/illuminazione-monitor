@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import feedparser
 import httpx
+from parsing_rules import is_in_lighting_perimeter
 
 from app.collectors.base import BaseCollector, CollectorError, RawRecordDraft
-from parsing_rules import is_in_lighting_perimeter
 
 
 class GURICollector(BaseCollector):
@@ -74,6 +74,6 @@ def _entry_date(entry: Any) -> datetime | None:
     if parsed is None:
         return None
     try:
-        return datetime(*parsed[:6], tzinfo=timezone.utc)
+        return datetime(*parsed[:6], tzinfo=UTC)
     except (TypeError, ValueError):
         return None

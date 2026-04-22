@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+from parsing_rules import CPV_LIGHTING_CODES
 
 from app.collectors.base import BaseCollector, CollectorError, RawRecordDraft
-from parsing_rules import CPV_LIGHTING_CODES
 
 
 class TEDCollector(BaseCollector):
@@ -22,7 +22,7 @@ class TEDCollector(BaseCollector):
     MAX_RESULTS = 50
 
     async def fetch(self, *, since: datetime | None = None) -> list[RawRecordDraft]:
-        lookback = since or (datetime.now(tz=timezone.utc) - timedelta(days=7))
+        lookback = since or (datetime.now(tz=UTC) - timedelta(days=7))
         from_date = lookback.strftime("%Y%m%d")
 
         cpv_clause = " OR ".join(f"CPV={c}" for c in sorted(CPV_LIGHTING_CODES))
@@ -115,7 +115,7 @@ def _parse_ted_date(raw: Any) -> datetime | None:
     if not raw:
         return None
     try:
-        return datetime.strptime(str(raw), "%Y%m%d").replace(tzinfo=timezone.utc)
+        return datetime.strptime(str(raw), "%Y%m%d").replace(tzinfo=UTC)
     except ValueError:
         return None
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -21,7 +21,7 @@ class ANACCollector(BaseCollector):
     DEFAULT_LIMIT = 100
 
     async def fetch(self, *, since: datetime | None = None) -> list[RawRecordDraft]:
-        lookback = since or (datetime.now(tz=timezone.utc) - timedelta(days=14))
+        lookback = since or (datetime.now(tz=UTC) - timedelta(days=14))
 
         endpoint = self._endpoint()
         params = {
@@ -105,7 +105,7 @@ def _parse_iso(raw: str | None) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.replace(tzinfo=UTC)
         return parsed
     except ValueError:
         return None

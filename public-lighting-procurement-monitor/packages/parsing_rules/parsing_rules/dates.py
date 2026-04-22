@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 _IT_DATE = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?$")
@@ -20,7 +20,7 @@ def parse_italian_date(raw: str | None) -> datetime | None:
     if m:
         day, month, year = map(int, m.groups())
         try:
-            return datetime(year, month, day, tzinfo=timezone.utc)
+            return datetime(year, month, day, tzinfo=UTC)
         except ValueError:
             return None
 
@@ -28,7 +28,7 @@ def parse_italian_date(raw: str | None) -> datetime | None:
         try:
             parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
+                parsed = parsed.replace(tzinfo=UTC)
             return parsed
         except ValueError:
             return None
@@ -43,15 +43,15 @@ def days_until(target: str | datetime | date | None, *, now: datetime | None = N
     if isinstance(target, str):
         parsed = parse_italian_date(target)
     elif isinstance(target, datetime):
-        parsed = target if target.tzinfo else target.replace(tzinfo=timezone.utc)
+        parsed = target if target.tzinfo else target.replace(tzinfo=UTC)
     elif isinstance(target, date):
-        parsed = datetime(target.year, target.month, target.day, tzinfo=timezone.utc)
+        parsed = datetime(target.year, target.month, target.day, tzinfo=UTC)
     else:
         return None
 
     if parsed is None:
         return None
 
-    reference = now or datetime.now(tz=timezone.utc)
+    reference = now or datetime.now(tz=UTC)
     delta = parsed.date() - reference.date()
     return delta.days

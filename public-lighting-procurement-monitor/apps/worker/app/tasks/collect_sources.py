@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
+from shared_models import JobRun, Source
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,6 @@ from app.celery_app import celery_app
 from app.collectors import COLLECTOR_REGISTRY, CollectorResult
 from app.collectors.base import BaseCollector
 from app.db import SessionLocal
-from shared_models import JobRun, Source
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def _run_single(session: AsyncSession, source: Source) -> CollectorResult:
     await session.flush()
 
     result = await collector.run(session)
-    job.ended_at = datetime.now(tz=timezone.utc)
+    job.ended_at = datetime.now(tz=UTC)
     job.records_found = result.found
     job.records_valid = result.valid
     job.records_weak = result.weak

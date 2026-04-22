@@ -1,13 +1,12 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-
 from parsing_rules import (
     days_until,
     is_in_lighting_perimeter,
-    parse_italian_date,
     parse_importo,
+    parse_italian_date,
     score_perimeter,
     valid_cig,
 )
@@ -60,15 +59,15 @@ class TestImporto:
 class TestDates:
     def test_italian_date(self) -> None:
         result = parse_italian_date("15/03/2026")
-        assert result == datetime(2026, 3, 15, tzinfo=timezone.utc)
+        assert result == datetime(2026, 3, 15, tzinfo=UTC)
 
     def test_iso_date(self) -> None:
         result = parse_italian_date("2026-03-15")
-        assert result == datetime(2026, 3, 15, tzinfo=timezone.utc)
+        assert result == datetime(2026, 3, 15, tzinfo=UTC)
 
     def test_iso_datetime_utc(self) -> None:
         result = parse_italian_date("2026-03-15T10:30:00Z")
-        assert result == datetime(2026, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2026, 3, 15, 10, 30, 0, tzinfo=UTC)
 
     def test_none_inputs(self) -> None:
         assert parse_italian_date(None) is None
@@ -76,7 +75,7 @@ class TestDates:
         assert parse_italian_date("garbage") is None
 
     def test_days_until(self) -> None:
-        now = datetime(2026, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 3, 15, 12, 0, 0, tzinfo=UTC)
         assert days_until("20/03/2026", now=now) == 5
         assert days_until("10/03/2026", now=now) == -5
         assert days_until(None, now=now) is None

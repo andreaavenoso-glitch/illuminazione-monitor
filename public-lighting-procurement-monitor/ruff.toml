@@ -1,0 +1,21 @@
+line-length = 110
+target-version = "py312"
+extend-exclude = ["alembic/versions", ".venv", "node_modules", ".next"]
+
+[lint]
+select = [
+    "E", "F", "W", # pycodestyle + pyflakes
+    "I",           # isort
+    "B",           # flake8-bugbear
+    "UP",          # pyupgrade
+]
+ignore = [
+    "E501", # line length handled by formatter
+    "B008", # function calls in defaults (FastAPI Depends)
+    "UP040", # type alias syntax — keep compatibility with py3.11
+    "UP042", # keep (str, enum.Enum) pattern for FastAPI/Pydantic compatibility
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["E402"]
+"**/__init__.py" = ["F401", "F403"]

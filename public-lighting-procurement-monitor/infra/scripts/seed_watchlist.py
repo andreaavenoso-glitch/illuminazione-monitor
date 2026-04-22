@@ -8,16 +8,14 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
-from pathlib import Path
 from uuid import UUID
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import SessionLocal
 from app.models.entity import Entity
 from app.models.source import Source
 from app.models.watchlist_item import WatchlistItem
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Ported 1:1 from scripts/watchlist.json (38 entries).
 # Layout: (ente, url, regione, entity_type).

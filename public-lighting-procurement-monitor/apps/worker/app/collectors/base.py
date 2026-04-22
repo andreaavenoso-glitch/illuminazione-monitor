@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -74,7 +74,7 @@ class BaseCollector(ABC):
                     raw_body=draft.raw_body,
                     raw_html=draft.raw_html,
                     raw_url=draft.raw_url,
-                    raw_date=draft.raw_date or datetime.now(tz=timezone.utc),
+                    raw_date=draft.raw_date or datetime.now(tz=UTC),
                     extracted_json=draft.extracted or None,
                     checksum=checksum,
                 )
