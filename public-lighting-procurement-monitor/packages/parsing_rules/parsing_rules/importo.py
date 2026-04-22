@@ -18,7 +18,7 @@ _DOT_THOUSANDS = re.compile(r"\.(?=\d{3}(?:\D|$))")
 def parse_importo(raw: str | float | int | None) -> Decimal | None:
     if raw is None:
         return None
-    if isinstance(raw, (int, float)):
+    if isinstance(raw, int | float):
         try:
             return Decimal(str(raw))
         except InvalidOperation:

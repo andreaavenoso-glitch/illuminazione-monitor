@@ -23,3 +23,4 @@ build/
 
 playwright-report/
 test-results/
+tsconfig.tsbuildinfo
