@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scoring-engine"
+version = "0.1.0"
+description = "Commercial scoring engine for lighting procurement records"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["scoring_engine"]
+package-dir = {"scoring_engine" = "scoring_engine"}

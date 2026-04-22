@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shared-schemas"
+version = "0.1.0"
+description = "Shared pydantic schemas used by api and worker"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.8"]
+
+[tool.setuptools]
+packages = ["shared_schemas"]
+package-dir = {"shared_schemas" = "shared_schemas"}
