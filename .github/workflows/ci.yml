@@ -34,11 +34,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e packages/parsing_rules
           pip install -e packages/sector_dictionaries
+          pip install -e packages/shared_models
           pip install -e packages/shared_schemas
-          pip install pytest
+          pip install httpx beautifulsoup4 lxml feedparser pytest pytest-asyncio pytest-httpx
 
       - name: Run unit tests
-        run: pytest tests/unit -v
+        run: PYTHONPATH=apps/worker pytest tests/unit -v
 
   python-lint:
     name: Python lint (ruff)

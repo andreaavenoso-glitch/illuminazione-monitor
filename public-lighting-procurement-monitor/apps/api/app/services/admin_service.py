@@ -14,10 +14,11 @@ def _celery_app() -> Celery:
     )
 
 
-def dispatch_daily_monitor() -> str:
+def dispatch_daily_monitor() -> dict[str, str]:
     app = _celery_app()
-    result = app.send_task("app.tasks.collect_sources.collect_official_sources")
-    return str(result.id)
+    official = app.send_task("app.tasks.collect_sources.collect_official_sources")
+    eproc = app.send_task("app.tasks.collect_sources.collect_eproc_portals")
+    return {"official_task_id": str(official.id), "eproc_task_id": str(eproc.id)}
 
 
 def dispatch_collect_single_source(source_id: UUID) -> str | None:

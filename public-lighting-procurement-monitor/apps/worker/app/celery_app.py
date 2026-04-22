@@ -31,4 +31,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.collect_sources.collect_official_sources",
         "schedule": crontab(hour=5, minute=0),
     },
+    "collect-eproc-portals-daily": {
+        "task": "app.tasks.collect_sources.collect_eproc_portals",
+        "schedule": crontab(hour=5, minute=30),
+    },
 }

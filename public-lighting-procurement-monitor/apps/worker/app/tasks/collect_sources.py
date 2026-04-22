@@ -47,12 +47,12 @@ async def _run_single(session: AsyncSession, source: Source) -> CollectorResult:
     return result
 
 
-async def _collect_official() -> dict[str, int]:
+async def _collect_by_type(source_type: str) -> dict[str, int]:
     totals = {"sources_run": 0, "records_valid": 0, "errors": 0}
     async with SessionLocal() as session:
         stmt = (
             select(Source)
-            .where(Source.active.is_(True), Source.source_type == "official")
+            .where(Source.active.is_(True), Source.source_type == source_type)
             .order_by(Source.source_priority_rank, Source.name)
         )
         sources = (await session.execute(stmt)).scalars().all()
@@ -88,7 +88,12 @@ async def _collect_one(source_id: UUID) -> dict[str, int]:
 
 @celery_app.task(name="app.tasks.collect_sources.collect_official_sources")
 def collect_official_sources() -> dict[str, int]:
-    return asyncio.run(_collect_official())
+    return asyncio.run(_collect_by_type("official"))
+
+
+@celery_app.task(name="app.tasks.collect_sources.collect_eproc_portals")
+def collect_eproc_portals() -> dict[str, int]:
+    return asyncio.run(_collect_by_type("eproc_portal"))
 
 
 @celery_app.task(name="app.tasks.collect_sources.collect_single_source")
