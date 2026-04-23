@@ -22,6 +22,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 <li><a href="/records" className="hover:underline">Records</a></li>
                 <li><a href="/reports" className="hover:underline">Reports</a></li>
                 <li><a href="/alerts" className="hover:underline">Alerts</a></li>
+                <li><a href="/weak-evidence" className="hover:underline">Weak evidence</a></li>
                 <li><a href="/admin/watchlist" className="hover:underline">Watchlist</a></li>
               </ul>
             </nav>
