@@ -45,3 +45,16 @@ def dispatch_generate_daily_report() -> str:
     app = _celery_app()
     result = app.send_task("app.tasks.generate_daily_report.generate_daily_report")
     return str(result.id)
+
+
+def dispatch_ingest_document(*, record_id: UUID, url: str, filename: str | None) -> str:
+    app = _celery_app()
+    result = app.send_task(
+        "app.tasks.ingest_documents.ingest_document",
+        kwargs={
+            "record_id": str(record_id),
+            "url": url,
+            "filename": filename,
+        },
+    )
+    return str(result.id)

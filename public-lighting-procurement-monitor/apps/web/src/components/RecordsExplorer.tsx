@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { ProcurementRecord } from "@/types";
+import { ExportButtons } from "./ExportButtons";
 import { RecordsTable } from "./RecordsTable";
 import { EMPTY_FILTERS, FiltersPanel, type RecordFilters } from "./FiltersPanel";
 
@@ -67,9 +68,10 @@ export function RecordsExplorer() {
         </div>
       ) : (
         <>
-          <p className="text-xs text-neutral-500">
-            {query.data?.length ?? 0} record
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-neutral-500">{query.data?.length ?? 0} record</p>
+            <ExportButtons queryString={buildQueryString(filters)} />
+          </div>
           <RecordsTable records={query.data ?? []} />
         </>
       )}

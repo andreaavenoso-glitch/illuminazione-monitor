@@ -2,6 +2,7 @@ from app.api.routes import (
     admin,
     alerts,
     dashboard,
+    documents,
     entities,
     health,
     records,
@@ -40,6 +41,7 @@ app.include_router(watchlist.router, prefix="/watchlist", tags=["watchlist"])
 app.include_router(records.router, prefix="/records", tags=["records"])
 app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
+app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 

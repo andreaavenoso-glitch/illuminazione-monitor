@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { fmtDate, fmtDateLong, fmtEur, daysUntil } from "@/lib/format";
 import type { ProcurementRecord } from "@/types";
 import { PriorityBadge, StatoBadge } from "./Badge";
+import { DocumentsList } from "./DocumentsList";
 
 type FieldItem = { label: string; value: string | null };
 
@@ -156,6 +157,8 @@ export function RecordDetail({ id }: { id: string }) {
           )}
         </div>
       </section>
+
+      <DocumentsList recordId={r.id} defaultUrl={r.link_bando} />
     </div>
   );
 }

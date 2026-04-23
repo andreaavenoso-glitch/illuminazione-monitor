@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.tasks.normalize_records",
         "app.tasks.score_and_dedupe",
         "app.tasks.generate_daily_report",
+        "app.tasks.ingest_documents",
     ],
 )
 
