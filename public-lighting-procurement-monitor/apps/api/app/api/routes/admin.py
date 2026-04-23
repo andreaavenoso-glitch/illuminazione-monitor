@@ -41,3 +41,12 @@ async def run_score_and_dedupe() -> dict:
 
     task_id = dispatch_score_and_dedupe()
     return {"status": "dispatched", "task_id": task_id}
+
+
+@router.post("/rebuild-report/{report_date}")
+async def rebuild_report(report_date: str) -> dict:
+    """Trigger a regeneration of today's daily report (report_date is informational)."""
+    from app.services.admin_service import dispatch_generate_daily_report
+
+    task_id = dispatch_generate_daily_report()
+    return {"status": "dispatched", "task_id": task_id, "report_date": report_date}

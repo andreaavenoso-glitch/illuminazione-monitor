@@ -1,4 +1,4 @@
-from app.api.routes import admin, entities, health, records, sources, watchlist
+from app.api.routes import admin, entities, health, records, reports, sources, watchlist
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from fastapi import FastAPI
@@ -28,6 +28,7 @@ app.include_router(sources.router, prefix="/sources", tags=["sources"])
 app.include_router(entities.router, prefix="/entities", tags=["entities"])
 app.include_router(watchlist.router, prefix="/watchlist", tags=["watchlist"])
 app.include_router(records.router, prefix="/records", tags=["records"])
+app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 

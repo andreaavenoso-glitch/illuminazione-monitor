@@ -39,3 +39,9 @@ def dispatch_score_and_dedupe() -> str:
     app = _celery_app()
     result = app.send_task("app.tasks.score_and_dedupe.score_and_dedupe")
     return str(result.id)
+
+
+def dispatch_generate_daily_report() -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.generate_daily_report.generate_daily_report")
+    return str(result.id)

@@ -12,6 +12,7 @@ celery_app = Celery(
         "app.tasks.collect_sources",
         "app.tasks.normalize_records",
         "app.tasks.score_and_dedupe",
+        "app.tasks.generate_daily_report",
     ],
 )
 
@@ -43,5 +44,9 @@ celery_app.conf.beat_schedule = {
     "score-and-dedupe-daily": {
         "task": "app.tasks.score_and_dedupe.score_and_dedupe",
         "schedule": crontab(hour=6, minute=30),
+    },
+    "generate-daily-report": {
+        "task": "app.tasks.generate_daily_report.generate_daily_report",
+        "schedule": crontab(hour=7, minute=0),
     },
 }
