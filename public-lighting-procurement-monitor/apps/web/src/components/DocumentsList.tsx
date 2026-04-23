@@ -25,7 +25,10 @@ export function DocumentsList({ recordId, defaultUrl }: { recordId: string; defa
 
   const ingest = useMutation({
     mutationFn: (payload: { url: string }) =>
-      api.post("/documents/ingest", { procurement_record_id: recordId, url: payload.url }),
+      api.post<{ status: string; task_id: string }>("/documents/ingest", {
+        procurement_record_id: recordId,
+        url: payload.url,
+      }),
     onSuccess: () => {
       setUrl("");
       // documents may take a moment to appear (Celery task) — refetch after short delay
