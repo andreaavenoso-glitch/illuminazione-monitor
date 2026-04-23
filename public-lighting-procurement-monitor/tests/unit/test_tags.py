@@ -37,3 +37,8 @@ def test_accordo_quadro() -> None:
 def test_empty_input() -> None:
     assert extract_tags(None) == []
     assert extract_tags("") == []
+
+
+def test_semafori_accorpati() -> None:
+    tags = extract_tags("Servizio illuminazione e impianti semaforici accorpati")
+    assert "semafori accorpati" in tags

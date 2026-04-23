@@ -39,6 +39,9 @@ class ProcurementRecordRead(BaseModel):
     validation_level: str | None = None
     reliability_index: str | None = None
     is_weak_evidence: bool
+    score_commerciale: int | None = None
+    priorita_commerciale: str | None = None
+    dedup_key: str | None = None
     master_record_id: UUID | None = None
     first_seen_at: datetime
     last_seen_at: datetime
@@ -59,3 +62,5 @@ class RecordFilters:
     q: str | None = None
     date_from: datetime | None = None
     date_to: datetime | None = None
+    priorita: str | None = None
+    only_masters: bool = False

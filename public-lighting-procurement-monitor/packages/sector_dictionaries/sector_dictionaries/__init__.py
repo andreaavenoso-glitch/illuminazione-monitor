@@ -12,6 +12,7 @@ _TAG_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("accordo quadro", re.compile(r"accordo[\s-]?quad", re.IGNORECASE)),
     ("manutenzione", re.compile(r"manuten|gestione", re.IGNORECASE)),
     ("proroga", re.compile(r"proroga", re.IGNORECASE)),
+    ("semafori accorpati", re.compile(r"semafor[ioci]|impianti\s+semaforic", re.IGNORECASE)),
 )
 
 _PNRR = re.compile(r"pnrr|pnc|react[\s.\-]?eu", re.IGNORECASE)

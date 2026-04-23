@@ -1,6 +1,17 @@
-"""Commercial scoring — to be implemented in Sprint 6.
+"""Commercial scoring + priority engine.
 
 Reference: scripts/pipeline.js:222-240 in the legacy prototype.
 """
+from scoring_engine.scorer import (
+    ScoringInput,
+    ScoringOutput,
+    compute_priority,
+    score_record,
+)
 
-__all__: list[str] = []
+__all__ = [
+    "ScoringInput",
+    "ScoringOutput",
+    "compute_priority",
+    "score_record",
+]

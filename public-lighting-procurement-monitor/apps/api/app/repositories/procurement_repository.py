@@ -61,6 +61,10 @@ class ProcurementRepository:
                     ProcurementRecord.cig.ilike(like),
                 )
             )
+        if filters.priorita:
+            conditions.append(ProcurementRecord.priorita_commerciale == filters.priorita)
+        if filters.only_masters:
+            conditions.append(ProcurementRecord.master_record_id.is_(None))
 
         if conditions:
             stmt = stmt.where(and_(*conditions))

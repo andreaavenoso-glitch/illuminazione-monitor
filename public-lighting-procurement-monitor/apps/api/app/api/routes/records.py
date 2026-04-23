@@ -25,6 +25,8 @@ async def list_records(
     q: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    priorita: str | None = None,
+    only_masters: bool = False,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
@@ -43,6 +45,8 @@ async def list_records(
         q=q,
         date_from=date_from,
         date_to=date_to,
+        priorita=priorita,
+        only_masters=only_masters,
     )
     repo = ProcurementRepository(session)
     items = await repo.list(filters=filters, limit=limit, offset=offset)

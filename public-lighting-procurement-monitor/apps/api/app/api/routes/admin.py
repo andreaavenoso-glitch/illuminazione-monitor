@@ -32,3 +32,12 @@ async def run_normalize_records() -> dict:
 
     task_id = dispatch_normalize_records()
     return {"status": "dispatched", "task_id": task_id}
+
+
+@router.post("/score-and-dedupe")
+async def run_score_and_dedupe() -> dict:
+    """Trigger the dedup + commercial scoring pass."""
+    from app.services.admin_service import dispatch_score_and_dedupe
+
+    task_id = dispatch_score_and_dedupe()
+    return {"status": "dispatched", "task_id": task_id}

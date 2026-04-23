@@ -33,3 +33,9 @@ def dispatch_normalize_records() -> str:
     app = _celery_app()
     result = app.send_task("app.tasks.normalize_records.normalize_records")
     return str(result.id)
+
+
+def dispatch_score_and_dedupe() -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.score_and_dedupe.score_and_dedupe")
+    return str(result.id)

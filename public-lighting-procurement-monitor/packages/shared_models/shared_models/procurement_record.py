@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -47,6 +47,9 @@ class ProcurementRecord(Base):
     validation_level: Mapped[str | None] = mapped_column(String, nullable=True)
     reliability_index: Mapped[str | None] = mapped_column(String, nullable=True)
     is_weak_evidence: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    score_commerciale: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    priorita_commerciale: Mapped[str | None] = mapped_column(String, nullable=True)
+    dedup_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     master_record_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
