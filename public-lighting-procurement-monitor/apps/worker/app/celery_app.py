@@ -14,6 +14,8 @@ celery_app = Celery(
         "app.tasks.score_and_dedupe",
         "app.tasks.generate_daily_report",
         "app.tasks.ingest_documents",
+        "app.tasks.detect_anomalies",
+        "app.tasks.backfill",
     ],
 )
 
@@ -49,5 +51,9 @@ celery_app.conf.beat_schedule = {
     "generate-daily-report": {
         "task": "app.tasks.generate_daily_report.generate_daily_report",
         "schedule": crontab(hour=7, minute=0),
+    },
+    "detect-anomalies-daily": {
+        "task": "app.tasks.detect_anomalies.detect_anomalies",
+        "schedule": crontab(hour=7, minute=30),
     },
 }

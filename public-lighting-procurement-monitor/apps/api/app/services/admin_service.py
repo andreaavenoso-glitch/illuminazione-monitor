@@ -58,3 +58,15 @@ def dispatch_ingest_document(*, record_id: UUID, url: str, filename: str | None)
         },
     )
     return str(result.id)
+
+
+def dispatch_detect_anomalies() -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.detect_anomalies.detect_anomalies")
+    return str(result.id)
+
+
+def dispatch_backfill(days: int) -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.backfill.run_backfill", kwargs={"days": days})
+    return str(result.id)

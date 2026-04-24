@@ -50,3 +50,23 @@ async def rebuild_report(report_date: str) -> dict:
 
     task_id = dispatch_generate_daily_report()
     return {"status": "dispatched", "task_id": task_id, "report_date": report_date}
+
+
+@router.post("/detect-anomalies")
+async def run_detect_anomalies() -> dict:
+    """Trigger anomaly detection pass."""
+    from app.services.admin_service import dispatch_detect_anomalies
+
+    task_id = dispatch_detect_anomalies()
+    return {"status": "dispatched", "task_id": task_id}
+
+
+@router.post("/run-backfill")
+async def run_backfill(days: int = 7) -> dict:
+    """Trigger a historical backfill (days must be one of 7, 14, 30)."""
+    if days not in (7, 14, 30):
+        raise HTTPException(status_code=400, detail="days must be 7, 14 or 30")
+    from app.services.admin_service import dispatch_backfill
+
+    task_id = dispatch_backfill(days)
+    return {"status": "dispatched", "task_id": task_id, "window_days": days}
