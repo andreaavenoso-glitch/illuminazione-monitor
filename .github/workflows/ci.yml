@@ -1,0 +1,98 @@
+name: CI — Public Lighting Procurement Monitor
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "public-lighting-procurement-monitor/**"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "public-lighting-procurement-monitor/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+jobs:
+  python-tests:
+    name: Python unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: public-lighting-procurement-monitor
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages (editable)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e packages/parsing_rules
+          pip install -e packages/sector_dictionaries
+          pip install -e packages/scoring_engine
+          pip install -e packages/shared_models
+          pip install -e packages/shared_schemas
+          pip install httpx beautifulsoup4 lxml feedparser openpyxl pytest pytest-asyncio pytest-httpx
+
+      - name: Run unit tests
+        run: PYTHONPATH=apps/worker:apps/api pytest tests/unit -v
+
+  python-lint:
+    name: Python lint (ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: public-lighting-procurement-monitor
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff==0.8.2
+
+      - name: Ruff check
+        run: ruff check apps packages tests infra
+
+  compose-lint:
+    name: docker-compose validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: public-lighting-procurement-monitor
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose file
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+  web-typecheck:
+    name: Next.js typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: public-lighting-procurement-monitor/apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: public-lighting-procurement-monitor/apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck

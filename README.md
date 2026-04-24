@@ -1,5 +1,9 @@
 # Illuminazione Pubblica Monitor
 
+> **Nota — transizione in corso**: il prototipo Node descritto in questo README è stato **archiviato**. Il workflow giornaliero `.github/workflows/daily-run.yml` è disabilitato (`.yml.disabled`) a partire da Sprint 1 del nuovo sistema. Il nuovo stack full-stack (FastAPI + Celery + Postgres + Redis + MinIO + Next.js) vive in [`public-lighting-procurement-monitor/`](./public-lighting-procurement-monitor) ed è pensato per essere migrato in un repository separato (`git subtree split --prefix=public-lighting-procurement-monitor`). Sotto viene documentato il prototipo solo come riferimento storico.
+
+---
+
 Sistema automatico di monitoraggio procurement illuminazione pubblica italiana.
 **Architettura token-efficiente**: connettori diretti API ufficiali + solo 2 chiamate AI Haiku per run.
 

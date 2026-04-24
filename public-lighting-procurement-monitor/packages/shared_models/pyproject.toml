@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shared-models"
+version = "0.1.0"
+description = "Shared SQLAlchemy ORM models (Base + table definitions)"
+requires-python = ">=3.11"
+dependencies = ["sqlalchemy>=2.0"]
+
+[tool.setuptools]
+packages = ["shared_models"]
+package-dir = {"shared_models" = "shared_models"}

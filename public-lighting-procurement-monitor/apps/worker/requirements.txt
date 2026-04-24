@@ -1,0 +1,16 @@
+celery[redis]==5.4.0
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+pydantic==2.10.3
+pydantic-settings==2.6.1
+structlog==24.4.0
+httpx==0.28.0
+beautifulsoup4==4.12.3
+lxml==5.3.0
+feedparser==6.0.11
+boto3==1.35.71
+redis==5.2.0
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-httpx==0.34.0

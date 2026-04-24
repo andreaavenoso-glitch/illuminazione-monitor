@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sector-dictionaries"
+version = "0.1.0"
+description = "Technical tag dictionaries for lighting sector"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["sector_dictionaries"]
+package-dir = {"sector_dictionaries" = "sector_dictionaries"}
