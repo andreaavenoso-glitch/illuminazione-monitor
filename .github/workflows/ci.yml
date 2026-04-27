@@ -1,5 +1,6 @@
 name: CI
 
+# Pipeline: pytest + ruff + docker-compose validate + Next.js typecheck.
 on:
   pull_request:
     branches: [main]
