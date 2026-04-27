@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parsing-rules"
+version = "0.1.0"
+description = "Domain parsing rules for Italian public lighting procurement"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["parsing_rules"]
+package-dir = {"parsing_rules" = "parsing_rules"}
