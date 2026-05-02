@@ -1,9 +1,11 @@
 from uuid import UUID
 
+from app.auth import current_user, require_role
 from app.core.database import get_session
 from app.repositories.watchlist_repository import WatchlistRepository
 from app.schemas.watchlist import WatchlistItemCreate, WatchlistItemRead, WatchlistItemUpdate
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from shared_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -12,6 +14,7 @@ router = APIRouter()
 @router.get("", response_model=list[WatchlistItemRead])
 async def list_watchlist(
     active: bool | None = None,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[WatchlistItemRead]:
     repo = WatchlistRepository(session)
@@ -22,6 +25,7 @@ async def list_watchlist(
 @router.post("", response_model=WatchlistItemRead, status_code=status.HTTP_201_CREATED)
 async def create_watchlist_item(
     payload: WatchlistItemCreate,
+    _: User = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> WatchlistItemRead:
     repo = WatchlistRepository(session)
@@ -35,6 +39,7 @@ async def create_watchlist_item(
 async def update_watchlist_item(
     item_id: UUID,
     payload: WatchlistItemUpdate,
+    _: User = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> WatchlistItemRead:
     repo = WatchlistRepository(session)
@@ -49,6 +54,7 @@ async def update_watchlist_item(
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_watchlist_item(
     item_id: UUID,
+    _: User = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     repo = WatchlistRepository(session)

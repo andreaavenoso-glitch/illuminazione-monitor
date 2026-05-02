@@ -1,9 +1,11 @@
 from uuid import UUID
 
+from app.auth import current_user, require_role
 from app.core.database import get_session
 from app.repositories.entity_repository import EntityRepository
 from app.schemas.entity import EntityCreate, EntityRead, EntityUpdate
 from fastapi import APIRouter, Depends, HTTPException, status
+from shared_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -12,6 +14,7 @@ router = APIRouter()
 @router.get("", response_model=list[EntityRead])
 async def list_entities(
     region: str | None = None,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[EntityRead]:
     repo = EntityRepository(session)
@@ -22,6 +25,7 @@ async def list_entities(
 @router.post("", response_model=EntityRead, status_code=status.HTTP_201_CREATED)
 async def create_entity(
     payload: EntityCreate,
+    _: User = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> EntityRead:
     repo = EntityRepository(session)
@@ -34,6 +38,7 @@ async def create_entity(
 @router.get("/{entity_id}", response_model=EntityRead)
 async def get_entity(
     entity_id: UUID,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> EntityRead:
     repo = EntityRepository(session)
@@ -47,6 +52,7 @@ async def get_entity(
 async def update_entity(
     entity_id: UUID,
     payload: EntityUpdate,
+    _: User = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> EntityRead:
     repo = EntityRepository(session)

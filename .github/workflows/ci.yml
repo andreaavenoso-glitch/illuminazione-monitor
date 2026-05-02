@@ -29,7 +29,10 @@ jobs:
           pip install -e packages/scoring_engine
           pip install -e packages/shared_models
           pip install -e packages/shared_schemas
-          pip install httpx beautifulsoup4 lxml feedparser openpyxl pytest pytest-asyncio pytest-httpx
+          pip install httpx beautifulsoup4 lxml feedparser openpyxl \
+            fastapi sqlalchemy asyncpg \
+            "passlib[bcrypt]==1.7.4" "bcrypt==4.0.1" pyjwt slowapi email-validator \
+            pytest pytest-asyncio pytest-httpx
 
       - name: Run unit tests
         run: PYTHONPATH=apps/worker:apps/api pytest tests/unit -v

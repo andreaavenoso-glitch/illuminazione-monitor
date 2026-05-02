@@ -29,6 +29,15 @@ class Settings(BaseSettings):
 
     cors_origins: str = Field(default="http://localhost:3000")
 
+    jwt_secret: str = Field(
+        default="dev-only-secret-change-in-production-with-32-plus-chars!!"
+    )
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_minutes: int = 60 * 12  # 12h
+
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
+
     @property
     def database_url(self) -> str:
         return (
