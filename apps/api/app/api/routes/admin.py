@@ -1,12 +1,14 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from app.auth import require_role
+from fastapi import APIRouter, Depends, HTTPException
+from shared_models import User
 
 router = APIRouter()
 
 
 @router.post("/run-daily-monitor")
-async def run_daily_monitor() -> dict:
+async def run_daily_monitor(_: User = Depends(require_role("admin"))) -> dict:
     """Trigger the daily monitor pipeline (dispatches official + eproc tasks)."""
     from app.services.admin_service import dispatch_daily_monitor
 
@@ -15,7 +17,10 @@ async def run_daily_monitor() -> dict:
 
 
 @router.post("/retry-source/{source_id}")
-async def retry_source(source_id: UUID) -> dict:
+async def retry_source(
+    source_id: UUID,
+    _: User = Depends(require_role("admin")),
+) -> dict:
     """Re-run collection for a single source."""
     from app.services.admin_service import dispatch_collect_single_source
 
@@ -26,7 +31,7 @@ async def retry_source(source_id: UUID) -> dict:
 
 
 @router.post("/normalize-records")
-async def run_normalize_records() -> dict:
+async def run_normalize_records(_: User = Depends(require_role("admin"))) -> dict:
     """Trigger the raw → procurement normalization task."""
     from app.services.admin_service import dispatch_normalize_records
 
@@ -35,7 +40,7 @@ async def run_normalize_records() -> dict:
 
 
 @router.post("/score-and-dedupe")
-async def run_score_and_dedupe() -> dict:
+async def run_score_and_dedupe(_: User = Depends(require_role("admin"))) -> dict:
     """Trigger the dedup + commercial scoring pass."""
     from app.services.admin_service import dispatch_score_and_dedupe
 
@@ -44,8 +49,11 @@ async def run_score_and_dedupe() -> dict:
 
 
 @router.post("/rebuild-report/{report_date}")
-async def rebuild_report(report_date: str) -> dict:
-    """Trigger a regeneration of today's daily report (report_date is informational)."""
+async def rebuild_report(
+    report_date: str,
+    _: User = Depends(require_role("admin")),
+) -> dict:
+    """Trigger a regeneration of today's daily report."""
     from app.services.admin_service import dispatch_generate_daily_report
 
     task_id = dispatch_generate_daily_report()
@@ -53,7 +61,7 @@ async def rebuild_report(report_date: str) -> dict:
 
 
 @router.post("/detect-anomalies")
-async def run_detect_anomalies() -> dict:
+async def run_detect_anomalies(_: User = Depends(require_role("admin"))) -> dict:
     """Trigger anomaly detection pass."""
     from app.services.admin_service import dispatch_detect_anomalies
 
@@ -62,7 +70,10 @@ async def run_detect_anomalies() -> dict:
 
 
 @router.post("/run-backfill")
-async def run_backfill(days: int = 7) -> dict:
+async def run_backfill(
+    days: int = 7,
+    _: User = Depends(require_role("admin")),
+) -> dict:
     """Trigger a historical backfill (days must be one of 7, 14, 30)."""
     if days not in (7, 14, 30):
         raise HTTPException(status_code=400, detail="days must be 7, 14 or 30")

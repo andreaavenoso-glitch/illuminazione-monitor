@@ -1,9 +1,11 @@
 from uuid import UUID
 
+from app.auth import current_user, require_role
 from app.core.database import get_session
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.document import DocumentIngestRequest, DocumentRead
 from fastapi import APIRouter, Depends, HTTPException
+from shared_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -12,6 +14,7 @@ router = APIRouter()
 @router.get("/by-record/{record_id}", response_model=list[DocumentRead])
 async def list_documents_for_record(
     record_id: UUID,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[DocumentRead]:
     repo = DocumentRepository(session)
@@ -22,6 +25,7 @@ async def list_documents_for_record(
 @router.get("/{document_id}", response_model=DocumentRead)
 async def get_document(
     document_id: UUID,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentRead:
     repo = DocumentRepository(session)
@@ -32,7 +36,10 @@ async def get_document(
 
 
 @router.post("/ingest", response_model=dict)
-async def ingest_document(payload: DocumentIngestRequest) -> dict:
+async def ingest_document(
+    payload: DocumentIngestRequest,
+    _: User = Depends(require_role("analyst")),
+) -> dict:
     """Schedule a worker task that downloads the document and stores it on MinIO."""
     from app.services.admin_service import dispatch_ingest_document
 

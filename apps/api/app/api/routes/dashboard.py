@@ -1,10 +1,11 @@
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
+from app.auth import current_user
 from app.core.database import get_session
 from app.schemas.dashboard import DashboardKpi
 from fastapi import APIRouter, Depends
-from shared_models import Alert, DailyReport, ProcurementRecord
+from shared_models import Alert, DailyReport, ProcurementRecord, User
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,10 @@ router = APIRouter()
 
 
 @router.get("/kpi", response_model=DashboardKpi)
-async def dashboard_kpi(session: AsyncSession = Depends(get_session)) -> DashboardKpi:
+async def dashboard_kpi(
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DashboardKpi:
     records = list((await session.execute(select(ProcurementRecord))).scalars().all())
     masters = [r for r in records if r.master_record_id is None]
 
