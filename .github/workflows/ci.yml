@@ -30,7 +30,7 @@ jobs:
           pip install -e packages/shared_models
           pip install -e packages/shared_schemas
           pip install httpx beautifulsoup4 lxml feedparser openpyxl \
-            fastapi sqlalchemy asyncpg \
+            fastapi sqlalchemy asyncpg pydantic-settings \
             "bcrypt==4.0.1" pyjwt slowapi email-validator \
             pytest pytest-asyncio pytest-httpx
 
