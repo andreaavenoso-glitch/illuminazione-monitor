@@ -2,6 +2,10 @@
 
 bcrypt for passwords (slow on purpose), HS256 JWT for stateless sessions.
 Tokens carry ``sub`` (user id), ``role``, ``email`` and standard ``exp``.
+
+We use the ``bcrypt`` library directly instead of passlib to avoid the
+``passlib + bcrypt 4.x + Python 3.12`` compatibility issue (passlib 1.7.4
+inspects ``bcrypt.__about__`` which was removed in bcrypt 4.1+).
 """
 from __future__ import annotations
 
@@ -9,21 +13,23 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+import bcrypt
 import jwt
 from app.core.config import get_settings
-from passlib.context import CryptContext
-
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(plaintext: str) -> str:
-    return _pwd_context.hash(plaintext)
+    """Hash with bcrypt cost-12. Returns the encoded $2b$ string."""
+    salted = bcrypt.hashpw(plaintext.encode("utf-8"), bcrypt.gensalt(rounds=12))
+    return salted.decode("utf-8")
 
 
 def verify_password(plaintext: str, hashed: str) -> bool:
+    if not hashed or not isinstance(hashed, str):
+        return False
     try:
-        return _pwd_context.verify(plaintext, hashed)
-    except Exception:  # noqa: BLE001 — passlib raises a few distinct types
+        return bcrypt.checkpw(plaintext.encode("utf-8"), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
         return False
 
 
