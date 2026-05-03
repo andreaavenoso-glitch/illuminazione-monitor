@@ -1,12 +1,14 @@
 from datetime import datetime
 from uuid import UUID
 
+from app.auth import current_user
 from app.core.database import get_session
 from app.repositories.procurement_repository import ProcurementRepository
 from app.schemas.procurement import ProcurementRecordRead, RecordFilters
 from app.services import exports_service
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from shared_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -67,6 +69,7 @@ async def list_records(
     only_masters: bool = False,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[ProcurementRecordRead]:
     filters = RecordFilters(
@@ -120,6 +123,7 @@ async def export_records(
     priorita: str | None = None,
     only_masters: bool = True,
     limit: int = Query(default=10_000, ge=1, le=50_000),
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     if fmt not in EXPORT_FORMATS:
@@ -159,6 +163,7 @@ async def export_records(
 @router.get("/{record_id}", response_model=ProcurementRecordRead)
 async def get_record(
     record_id: UUID,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ProcurementRecordRead:
     repo = ProcurementRepository(session)

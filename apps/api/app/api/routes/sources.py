@@ -1,9 +1,11 @@
 from uuid import UUID
 
+from app.auth import current_user, require_role
 from app.core.database import get_session
 from app.repositories.source_repository import SourceRepository
 from app.schemas.source import SourceCreate, SourceRead, SourceUpdate
 from fastapi import APIRouter, Depends, HTTPException, status
+from shared_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -12,6 +14,7 @@ router = APIRouter()
 @router.get("", response_model=list[SourceRead])
 async def list_sources(
     active: bool | None = None,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[SourceRead]:
     repo = SourceRepository(session)
@@ -22,6 +25,7 @@ async def list_sources(
 @router.post("", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
 async def create_source(
     payload: SourceCreate,
+    _: User = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> SourceRead:
     repo = SourceRepository(session)
@@ -34,6 +38,7 @@ async def create_source(
 @router.get("/{source_id}", response_model=SourceRead)
 async def get_source(
     source_id: UUID,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> SourceRead:
     repo = SourceRepository(session)
@@ -47,6 +52,7 @@ async def get_source(
 async def update_source(
     source_id: UUID,
     payload: SourceUpdate,
+    _: User = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> SourceRead:
     repo = SourceRepository(session)

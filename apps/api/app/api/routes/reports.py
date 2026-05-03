@@ -1,16 +1,21 @@
 from datetime import date
 
+from app.auth import current_user
 from app.core.database import get_session
 from app.repositories.report_repository import ReportRepository
 from app.schemas.report import DailyReportRead, DailyReportSummary
 from fastapi import APIRouter, Depends, HTTPException
+from shared_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
 
 @router.get("/latest", response_model=DailyReportRead)
-async def latest_report(session: AsyncSession = Depends(get_session)) -> DailyReportRead:
+async def latest_report(
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DailyReportRead:
     repo = ReportRepository(session)
     report = await repo.latest()
     if report is None:
@@ -21,6 +26,7 @@ async def latest_report(session: AsyncSession = Depends(get_session)) -> DailyRe
 @router.get("/history", response_model=list[DailyReportSummary])
 async def report_history(
     limit: int = 30,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[DailyReportSummary]:
     repo = ReportRepository(session)
@@ -31,6 +37,7 @@ async def report_history(
 @router.get("/daily/{report_date}", response_model=DailyReportRead)
 async def report_by_date(
     report_date: date,
+    _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> DailyReportRead:
     repo = ReportRepository(session)
