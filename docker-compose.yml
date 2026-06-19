@@ -94,7 +94,7 @@ services:
       PYTHONPATH: /app:/workspace:/packages/parsing_rules:/packages/scoring_engine:/packages/sector_dictionaries:/packages/shared_models:/packages/shared_schemas
     volumes:
       - ./apps/worker:/app
-      - ./apps/api/app/domain:/app/domain
+      - ./apps/api/app/domain:/app/app/domain
       - ./packages:/packages
       - ./infra:/workspace/infra
     command: celery -A app.celery_app worker --beat --loglevel=info
