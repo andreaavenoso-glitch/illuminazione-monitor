@@ -69,10 +69,11 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      PYTHONPATH: /app:/packages/parsing_rules:/packages/scoring_engine:/packages/sector_dictionaries:/packages/shared_models:/packages/shared_schemas
+      PYTHONPATH: /app:/workspace:/packages/parsing_rules:/packages/scoring_engine:/packages/sector_dictionaries:/packages/shared_models:/packages/shared_schemas
     volumes:
       - ./apps/api:/app
       - ./packages:/packages
+      - ./infra:/workspace/infra
     ports:
       - "8000:8000"
     command: >
@@ -90,10 +91,11 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      PYTHONPATH: /app:/packages/parsing_rules:/packages/scoring_engine:/packages/sector_dictionaries:/packages/shared_models:/packages/shared_schemas
+      PYTHONPATH: /app:/workspace:/packages/parsing_rules:/packages/scoring_engine:/packages/sector_dictionaries:/packages/shared_models:/packages/shared_schemas
     volumes:
       - ./apps/worker:/app
       - ./packages:/packages
+      - ./infra:/workspace/infra
     command: celery -A app.celery_app worker --beat --loglevel=info
 
   web:
