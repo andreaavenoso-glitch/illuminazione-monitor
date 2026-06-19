@@ -69,7 +69,7 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      PYTHONPATH: /app:/packages
+      PYTHONPATH: /app:/packages/parsing_rules:/packages/scoring_engine:/packages/sector_dictionaries:/packages/shared_models:/packages/shared_schemas
     volumes:
       - ./apps/api:/app
       - ./packages:/packages
@@ -90,7 +90,7 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      PYTHONPATH: /app:/packages
+      PYTHONPATH: /app:/packages/parsing_rules:/packages/scoring_engine:/packages/sector_dictionaries:/packages/shared_models:/packages/shared_schemas
     volumes:
       - ./apps/worker:/app
       - ./packages:/packages
