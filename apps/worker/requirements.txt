@@ -13,4 +13,4 @@ boto3==1.35.71
 redis==5.2.0
 pytest==8.3.3
 pytest-asyncio==0.24.0
-pytest-httpx==0.34.0
+pytest-httpx==0.35.0
