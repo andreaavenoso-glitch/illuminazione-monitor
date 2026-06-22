@@ -1,44 +1,35 @@
-from app.collectors.anac import ANACCollector
-from app.collectors.asmecomm import ASMECOMMCollector
 from app.collectors.base import BaseCollector, CollectorError, CollectorResult
-from app.collectors.generic_html import GenericHTMLCollector
-from app.collectors.guri import GURICollector
-from app.collectors.html_base import HTMLCollectorBase
-from app.collectors.sater import SATERCollector
-from app.collectors.start_toscana import StartToscanaCollector
-from app.collectors.ted import TEDCollector
-from app.collectors.traspare import TraspareCollector
-from app.collectors.tuttogare import TuttogareCollector
+from app.collectors.smart_llm import SmartLLMCollector
+
+# All platform_types route to the same LLM-based collector.
+# The collector reads PLATFORM_SEARCH_URLS internally to know where to fetch.
+_PLATFORM_TYPES = [
+    "ted",
+    "anac",
+    "bdncp",
+    "guri",
+    "asmecomm",
+    "traspare",
+    "tuttogare",
+    "sater",
+    "start_toscana",
+    "digitalpa",
+    "portale_appalti",
+    "sintel",
+    "net4market",
+    "acquistinrete",
+    "sardegnacat",
+    "generic_html",
+]
 
 COLLECTOR_REGISTRY: dict[str, type[BaseCollector]] = {
-    # Official sources
-    "ted": TEDCollector,
-    "anac": ANACCollector,
-    "bdncp": ANACCollector,
-    "guri": GURICollector,
-    # Tier A e-procurement
-    "asmecomm": ASMECOMMCollector,
-    "traspare": TraspareCollector,
-    "tuttogare": TuttogareCollector,
-    "sater": SATERCollector,
-    "start_toscana": StartToscanaCollector,
-    # Generic HTML fallback (albo, press, others)
-    "generic_html": GenericHTMLCollector,
+    pt: SmartLLMCollector for pt in _PLATFORM_TYPES
 }
 
 __all__ = [
-    "ANACCollector",
-    "ASMECOMMCollector",
     "BaseCollector",
     "COLLECTOR_REGISTRY",
     "CollectorError",
     "CollectorResult",
-    "GURICollector",
-    "GenericHTMLCollector",
-    "HTMLCollectorBase",
-    "SATERCollector",
-    "StartToscanaCollector",
-    "TEDCollector",
-    "TraspareCollector",
-    "TuttogareCollector",
+    "SmartLLMCollector",
 ]

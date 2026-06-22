@@ -42,7 +42,14 @@ class CollectorResult:
 class BaseCollector(ABC):
     name: str = "base"
 
-    def __init__(self, source_id: UUID, base_url: str, *, timeout: float = 45.0):
+    def __init__(
+        self,
+        source_id: UUID,
+        base_url: str,
+        *,
+        timeout: float = 45.0,
+        platform_type: str = "",  # noqa: ARG002 — accepted for subclass use
+    ):
         self.source_id = source_id
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
