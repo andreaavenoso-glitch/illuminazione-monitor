@@ -21,7 +21,9 @@ async def _run_single(session: AsyncSession, source: Source) -> CollectorResult:
     if collector_cls is None:
         return CollectorResult(error=f"no collector registered for platform_type={source.platform_type!r}")
 
-    collector: BaseCollector = collector_cls(source.id, source.base_url)
+    collector: BaseCollector = collector_cls(
+        source.id, source.base_url, platform_type=source.platform_type or ""
+    )
 
     job = JobRun(
         job_name=f"collect_{collector.name}",
