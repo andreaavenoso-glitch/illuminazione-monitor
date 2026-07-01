@@ -1,10 +1,10 @@
 from app.collectors.base import BaseCollector, CollectorError, CollectorResult
 from app.collectors.smart_llm import SmartLLMCollector
+from app.collectors.ted_api import TEDCollector
 
-# All platform_types route to the same LLM-based collector.
+# Most platform_types route to the generic LLM-based collector.
 # The collector reads PLATFORM_SEARCH_URLS internally to know where to fetch.
-_PLATFORM_TYPES = [
-    "ted",
+_LLM_PLATFORM_TYPES = [
     "anac",
     "bdncp",
     "guri",
@@ -23,8 +23,10 @@ _PLATFORM_TYPES = [
 ]
 
 COLLECTOR_REGISTRY: dict[str, type[BaseCollector]] = {
-    pt: SmartLLMCollector for pt in _PLATFORM_TYPES
+    pt: SmartLLMCollector for pt in _LLM_PLATFORM_TYPES
 }
+# TED exposes a real JSON REST API — bypass the LLM entirely for cost/reliability.
+COLLECTOR_REGISTRY["ted"] = TEDCollector
 
 __all__ = [
     "BaseCollector",
@@ -32,4 +34,5 @@ __all__ = [
     "CollectorError",
     "CollectorResult",
     "SmartLLMCollector",
+    "TEDCollector",
 ]
