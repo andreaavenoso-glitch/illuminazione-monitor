@@ -134,6 +134,16 @@ PLATFORM_SEARCH_URLS: dict[str, str] = {
     "sardegnacat": "https://www.sardegnacat.it/esop/guest/go/public/opportunity/current",
 }
 
+# Per-platform Playwright wait override (ms), for sources whose default
+# smart_collector_playwright_wait_ms is too short. ANAC/BDNCP run a Superset
+# analytics dashboard that fires many client-side XHR calls after initial
+# load — a plain browser render at the default 4s wait only captures the
+# empty shell.
+PLATFORM_PLAYWRIGHT_WAIT_MS: dict[str, int] = {
+    "anac": 15000,
+    "bdncp": 15000,
+}
+
 
 def _clean_html(html: str, max_chars: int) -> str:
     """Remove scripts/styles and collapse whitespace; truncate to budget."""
@@ -239,8 +249,11 @@ class SmartLLMCollector(BaseCollector):
                             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         )
                     )
+                    wait_ms = PLATFORM_PLAYWRIGHT_WAIT_MS.get(
+                        self.platform_type, self.settings.smart_collector_playwright_wait_ms
+                    )
                     await page.goto(self.search_url, timeout=int(self.timeout * 1000))
-                    await page.wait_for_timeout(self.settings.smart_collector_playwright_wait_ms)
+                    await page.wait_for_timeout(wait_ms)
                     html = await page.content()
                 finally:
                     await browser.close()
