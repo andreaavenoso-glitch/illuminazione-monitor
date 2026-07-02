@@ -74,6 +74,9 @@ SOURCES: list[dict] = [
     {"name": "Gazzetta Ufficiale (GURI)", "source_type": "official", "platform_type": "guri",
      "base_url": "https://www.gazzettaufficiale.it", "priority": "A",
      "source_priority_rank": 4, "reliability_score": 0.95, "publication_model": "rss"},
+    {"name": "Consip Open Data", "source_type": "official", "platform_type": "consip_opendata",
+     "base_url": "https://dati.consip.it", "priority": "A",
+     "source_priority_rank": 3, "reliability_score": 0.95, "publication_model": "open_data"},
     # Tier A e-procurement
     {"name": "ASMECOMM", "source_type": "eproc_portal", "platform_type": "asmecomm",
      "base_url": "https://piattaforma.asmecomm.it", "priority": "A",
