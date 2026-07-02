@@ -55,9 +55,13 @@ class TestJwt:
 
     def test_tampered_signature_raises(self) -> None:
         token = create_access_token(user_id=uuid4(), role="viewer", email="x@x.it")
-        # Flip a char in the signature segment to invalidate it.
+        # Flip the first char of the signature segment to invalidate it. The
+        # *last* base64url char of a 32-byte HMAC digest only encodes padding
+        # bits that get discarded on decode, so flipping it can leave the
+        # decoded signature bytes unchanged (flaky pass/fail depending on the
+        # random uuid4() token). The first char always maps to real bytes.
         head, payload_seg, sig = token.split(".")
-        tampered = ".".join([head, payload_seg, sig[:-1] + ("A" if sig[-1] != "A" else "B")])
+        tampered = ".".join([head, payload_seg, ("A" if sig[0] != "A" else "B") + sig[1:]])
         with pytest.raises(jwt.InvalidSignatureError):
             decode_access_token(tampered)
 
