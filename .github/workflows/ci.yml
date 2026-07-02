@@ -29,7 +29,7 @@ jobs:
           pip install -e packages/scoring_engine
           pip install -e packages/shared_models
           pip install -e packages/shared_schemas
-          pip install httpx beautifulsoup4 lxml feedparser openpyxl \
+          pip install httpx beautifulsoup4 lxml feedparser openpyxl structlog \
             fastapi sqlalchemy asyncpg pydantic-settings \
             "bcrypt==4.0.1" pyjwt slowapi email-validator anthropic \
             pytest pytest-asyncio pytest-httpx
