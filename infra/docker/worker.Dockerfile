@@ -14,6 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY apps/worker/requirements.txt /tmp/worker-requirements.txt
 RUN pip install -r /tmp/worker-requirements.txt
 
+# Playwright fallback: only used when a portal's plain-HTML fetch comes back
+# too thin to be JS-rendered content. Installs Chromium + its OS deps.
+RUN playwright install --with-deps chromium
+
 COPY packages /packages
 RUN pip install -e /packages/parsing_rules \
     && pip install -e /packages/scoring_engine \

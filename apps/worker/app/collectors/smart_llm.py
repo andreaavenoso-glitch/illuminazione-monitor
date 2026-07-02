@@ -192,9 +192,9 @@ class SmartLLMCollector(BaseCollector):
                     url=self.search_url,
                     error=str(exc),
                 )
-                return []
+                html = ""
 
-        cleaned = _clean_html(html, self.settings.smart_collector_max_html_chars)
+        cleaned = _clean_html(html, self.settings.smart_collector_max_html_chars) if html else ""
         log.info(
             "smart_collector.fetched",
             platform=self.platform_type,
@@ -202,8 +202,58 @@ class SmartLLMCollector(BaseCollector):
             chars=len(cleaned),
         )
 
+        # Tier 3 fallback: the plain HTTP fetch failed or came back too thin
+        # to be real content (typical of JS-rendered listing pages) — retry
+        # with a real headless browser before giving up.
+        if len(cleaned) < self.settings.smart_collector_playwright_min_chars:
+            rendered = await self._fetch_with_playwright()
+            if rendered and len(rendered) > len(cleaned):
+                cleaned = rendered
+                log.info(
+                    "smart_collector.playwright_fetched",
+                    platform=self.platform_type,
+                    url=self.search_url,
+                    chars=len(cleaned),
+                )
+
+        if not cleaned:
+            return []
+
         records = await self._extract_with_claude(cleaned)
         return [self._to_draft(r) for r in records]
+
+    async def _fetch_with_playwright(self) -> str | None:
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            log.warning("smart_collector.playwright_not_installed", platform=self.platform_type)
+            return None
+
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                try:
+                    page = await browser.new_page(
+                        user_agent=(
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        )
+                    )
+                    await page.goto(self.search_url, timeout=int(self.timeout * 1000))
+                    await page.wait_for_timeout(self.settings.smart_collector_playwright_wait_ms)
+                    html = await page.content()
+                finally:
+                    await browser.close()
+        except Exception as exc:  # noqa: BLE001 — browser automation has many failure modes
+            log.warning(
+                "smart_collector.playwright_failed",
+                platform=self.platform_type,
+                url=self.search_url,
+                error=str(exc),
+            )
+            return None
+
+        return _clean_html(html, self.settings.smart_collector_max_html_chars)
 
     async def _extract_with_claude(self, html: str) -> list[dict[str, Any]]:
         client = anthropic.AsyncAnthropic(api_key=self.settings.anthropic_api_key)

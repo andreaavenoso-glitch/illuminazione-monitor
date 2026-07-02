@@ -19,6 +19,8 @@ class WorkerSettings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-4-5"
     smart_collector_max_html_chars: int = 80000
+    smart_collector_playwright_min_chars: int = 3000
+    smart_collector_playwright_wait_ms: int = 4000
 
     @property
     def database_url(self) -> str:
