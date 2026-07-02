@@ -132,6 +132,20 @@ PLATFORM_SEARCH_URLS: dict[str, str] = {
     "net4market": "https://app.albofornitori.it/avvisi",
     "acquistinrete": "https://www.acquistinretepa.it/opencms/opencms/scheda_iniziativa.html?idIniziativa=illuminazione",
     "sardegnacat": "https://www.sardegnacat.it/esop/guest/go/public/opportunity/current",
+    # Regional portals added 2026-07-02 — URLs are each portal's homepage or
+    # closest-known bandi listing; unverified against live sites (this
+    # environment has no outbound web access), expect to need per-portal
+    # search-URL tuning the same way sater/tuttogare/etc. were refined.
+    "empulia": "https://www.empulia.it/tno-p/empulia/HomePage.jsp",
+    "scr_piemonte": "https://pad.scr.piemonte.it/tno-e/scrpiemonte/ricerca_bandi.jsp",
+    "sisgap": "https://sisgap.regione.calabria.it",
+    "stella_lazio": "https://stella.regione.lazio.it",
+    "contracta": "https://www.provincia.tn.it/Contracta",
+    "bandi_altoadige": "https://www.bandi-altoadige.it",
+    "molise": "https://eproc.regione.molise.it",
+    "giada": "https://giada.areacom.eu",
+    "eappalti_fvg": "https://eappalti.regione.fvg.it",
+    "place_vda": "https://place-vda.aflink.it",
 }
 
 # Per-platform Playwright wait override (ms), for sources whose default

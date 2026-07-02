@@ -19,6 +19,16 @@ _LLM_PLATFORM_TYPES = [
     "net4market",
     "acquistinrete",
     "sardegnacat",
+    "empulia",
+    "scr_piemonte",
+    "sisgap",
+    "stella_lazio",
+    "contracta",
+    "bandi_altoadige",
+    "molise",
+    "giada",
+    "eappalti_fvg",
+    "place_vda",
     "generic_html",
 ]
 
