@@ -1,4 +1,7 @@
-FROM python:3.12-slim
+# Pinned to Debian 12 (bookworm) — Playwright's dependency installer doesn't
+# yet recognize Debian 13 (trixie, the current "slim" default) and fails on
+# renamed packages (ttf-unifont -> fonts-unifont, etc).
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
