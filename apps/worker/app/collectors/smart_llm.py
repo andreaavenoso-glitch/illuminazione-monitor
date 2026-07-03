@@ -16,6 +16,7 @@ import json
 import re
 from datetime import UTC, datetime
 from typing import Any, ClassVar
+from urllib.parse import quote
 from uuid import UUID
 
 import anthropic
@@ -333,7 +334,16 @@ class SmartLLMCollector(BaseCollector):
         return records if isinstance(records, list) else []
 
     def _to_draft(self, record: dict[str, Any]) -> RawRecordDraft:
-        url = record.get("url") or self.search_url
+        # normalize_records treats raw_url (-> link_bando) as a tender's
+        # unique identity. If Claude doesn't surface a per-record URL,
+        # falling back to the shared search_url for every record on the
+        # page would collapse them all into one procurement_record on
+        # upsert (confirmed with the same bug in ConsipOpenDataCollector).
+        # Disambiguate with the record's own CIG or title instead.
+        url = record.get("url")
+        if not url:
+            disambiguator = record.get("cig") or record.get("title") or ""
+            url = f"{self.search_url}#record={quote(disambiguator)}" if disambiguator else self.search_url
         date_str = record.get("date")
         raw_date: datetime | None = None
         if date_str:

@@ -91,9 +91,18 @@ class ConsipOpenDataCollector(BaseCollector):
                 body_parts.append(f"Base asta: {base_asta}")
 
             lotto_id = item.get("Identificativo_Lotto", "")
+            # normalize_records treats raw_url (-> link_bando) as the unique
+            # identity of a tender. The Consip feed gives no per-lot detail
+            # page, but every raw_url must still be distinct per lot or all
+            # ~60 regional lots collapse into a single procurement_record on
+            # upsert (confirmed in production: 77 raw_records -> 1 merged
+            # record). Append the lot ID as a fragment to keep the landing
+            # page as the real clickable link while giving each lot its own
+            # identity.
+            lot_url = f"{CONSIP_LANDING_URL}#lotto={lotto_id}" if lotto_id else CONSIP_LANDING_URL
             drafts.append(
                 RawRecordDraft(
-                    raw_url=CONSIP_LANDING_URL,
+                    raw_url=lot_url,
                     raw_title=title,
                     raw_body="; ".join(p for p in body_parts if p),
                     raw_html=None,
