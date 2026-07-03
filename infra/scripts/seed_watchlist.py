@@ -74,6 +74,9 @@ SOURCES: list[dict] = [
     {"name": "Gazzetta Ufficiale (GURI)", "source_type": "official", "platform_type": "guri",
      "base_url": "https://www.gazzettaufficiale.it", "priority": "A",
      "source_priority_rank": 4, "reliability_score": 0.95, "publication_model": "rss"},
+    {"name": "Consip Open Data", "source_type": "official", "platform_type": "consip_opendata",
+     "base_url": "https://dati.consip.it", "priority": "A",
+     "source_priority_rank": 3, "reliability_score": 0.95, "publication_model": "open_data"},
     # Tier A e-procurement
     {"name": "ASMECOMM", "source_type": "eproc_portal", "platform_type": "asmecomm",
      "base_url": "https://piattaforma.asmecomm.it", "priority": "A",
@@ -103,11 +106,42 @@ SOURCES: list[dict] = [
     {"name": "Net4market", "source_type": "eproc_portal", "platform_type": "net4market",
      "base_url": "https://app.albofornitori.it", "priority": "B",
      "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
-    {"name": "Acquisti in Rete / Consip", "source_type": "eproc_portal", "platform_type": "consip",
+    {"name": "Acquisti in Rete / Consip", "source_type": "eproc_portal", "platform_type": "acquistinrete",
      "base_url": "https://www.acquistinretepa.it", "priority": "B",
-     "source_priority_rank": 2, "reliability_score": 0.90, "publication_model": "rest_api"},
+     "source_priority_rank": 2, "reliability_score": 0.90, "publication_model": "html_scraping"},
     {"name": "SardegnaCAT", "source_type": "eproc_portal", "platform_type": "sardegnacat",
      "base_url": "https://www.sardegnacat.it", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    # Regional e-procurement portals not previously covered (§ research 2026-07-02)
+    {"name": "EmPULIA (Puglia)", "source_type": "eproc_portal", "platform_type": "empulia",
+     "base_url": "https://www.empulia.it", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "SCR Piemonte", "source_type": "eproc_portal", "platform_type": "scr_piemonte",
+     "base_url": "https://pad.scr.piemonte.it", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "S.I.S.G.A.P. (Calabria)", "source_type": "eproc_portal", "platform_type": "sisgap",
+     "base_url": "https://sisgap.regione.calabria.it", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "S.TEL.LA (Lazio)", "source_type": "eproc_portal", "platform_type": "stella_lazio",
+     "base_url": "https://stella.regione.lazio.it", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "Contracta (Trentino)", "source_type": "eproc_portal", "platform_type": "contracta",
+     "base_url": "https://www.provincia.tn.it/Contracta", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "Bandi Alto Adige", "source_type": "eproc_portal", "platform_type": "bandi_altoadige",
+     "base_url": "https://www.bandi-altoadige.it", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "Portale Gare Telematiche (Molise)", "source_type": "eproc_portal", "platform_type": "molise",
+     "base_url": "https://eproc.regione.molise.it", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "G.I.A.D.A. (Abruzzo)", "source_type": "eproc_portal", "platform_type": "giada",
+     "base_url": "https://giada.areacom.eu", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "eAppaltiFVG", "source_type": "eproc_portal", "platform_type": "eappalti_fvg",
+     "base_url": "https://eappalti.regione.fvg.it", "priority": "B",
+     "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
+    {"name": "PlaCe-VdA (Valle d'Aosta)", "source_type": "eproc_portal", "platform_type": "place_vda",
+     "base_url": "https://place-vda.aflink.it", "priority": "B",
      "source_priority_rank": 2, "reliability_score": 0.75, "publication_model": "html_scraping"},
 ]
 
@@ -118,6 +152,12 @@ async def seed_sources(session: AsyncSession) -> dict[str, UUID]:
         stmt = select(Source).where(Source.name == payload["name"])
         existing = (await session.execute(stmt)).scalar_one_or_none()
         if existing:
+            # Keep platform_type/base_url in sync — a source's collector
+            # routing key can change across releases, and without this the
+            # already-seeded row would silently keep pointing at a
+            # platform_type no longer in COLLECTOR_REGISTRY.
+            existing.platform_type = payload.get("platform_type")
+            existing.base_url = payload["base_url"]
             out[payload["name"]] = existing.id
             continue
         src = Source(

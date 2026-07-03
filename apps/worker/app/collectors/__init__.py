@@ -1,4 +1,5 @@
 from app.collectors.base import BaseCollector, CollectorError, CollectorResult
+from app.collectors.consip_opendata import ConsipOpenDataCollector
 from app.collectors.smart_llm import SmartLLMCollector
 from app.collectors.ted_api import TEDCollector
 
@@ -19,20 +20,33 @@ _LLM_PLATFORM_TYPES = [
     "net4market",
     "acquistinrete",
     "sardegnacat",
+    "empulia",
+    "scr_piemonte",
+    "sisgap",
+    "stella_lazio",
+    "contracta",
+    "bandi_altoadige",
+    "molise",
+    "giada",
+    "eappalti_fvg",
+    "place_vda",
     "generic_html",
 ]
 
 COLLECTOR_REGISTRY: dict[str, type[BaseCollector]] = {
     pt: SmartLLMCollector for pt in _LLM_PLATFORM_TYPES
 }
-# TED exposes a real JSON REST API — bypass the LLM entirely for cost/reliability.
+# TED and Consip Open Data both expose real JSON feeds — bypass the LLM
+# entirely for cost/reliability on these two.
 COLLECTOR_REGISTRY["ted"] = TEDCollector
+COLLECTOR_REGISTRY["consip_opendata"] = ConsipOpenDataCollector
 
 __all__ = [
     "BaseCollector",
     "COLLECTOR_REGISTRY",
     "CollectorError",
     "CollectorResult",
+    "ConsipOpenDataCollector",
     "SmartLLMCollector",
     "TEDCollector",
 ]
