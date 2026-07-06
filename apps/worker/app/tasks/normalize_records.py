@@ -66,13 +66,15 @@ async def _upsert(
     now: datetime,
 ) -> ProcurementRecord | None:
     source_rank = source.source_priority_rank if source else 999
+    extracted = raw.extracted_json or {}
     payload = NormalizerInput(
         raw_title=raw.raw_title,
         raw_body=raw.raw_body,
         raw_url=raw.raw_url,
         raw_date=raw.raw_date,
-        extracted=raw.extracted_json or {},
+        extracted=extracted,
         source_priority_rank=source_rank,
+        perimeter_prevalidated=bool(extracted.get("perimeter_prevalidated")),
     )
     normalized = normalize(payload)
     if normalized is None:
@@ -113,6 +115,7 @@ async def _upsert(
         provincia=normalized.provincia,
         comune=normalized.comune,
         tipologia_gara_procedura=normalized.tipologia_gara_procedura,
+        tipo_strumento=normalized.tipo_strumento,
         link_bando=normalized.link_bando,
         macrosettore=normalized.macrosettore,
         source_priority_rank=normalized.source_priority_rank,
@@ -167,6 +170,7 @@ def _merge_fields(
         "provincia",
         "comune",
         "tipologia_gara_procedura",
+        "tipo_strumento",
     ):
         new_value = getattr(incoming, attr)
         if new_value and getattr(target, attr) in (None, ""):

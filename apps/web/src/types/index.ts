@@ -62,6 +62,7 @@ export type ProcurementRecord = {
   scadenza: string | null;
   data_pubblicazione: string | null;
   tipologia_gara_procedura: string | null;
+  tipo_strumento: string | null;
   criterio: string | null;
   macrosettore: string;
   flag_concessione_ambito: string;

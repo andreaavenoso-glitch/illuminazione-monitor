@@ -101,6 +101,7 @@ export function RecordDetail({ id }: { id: string }) {
                     : fmtDate(r.scadenza),
               },
               { label: "Procedura", value: r.tipologia_gara_procedura },
+              { label: "Strumento", value: r.tipo_strumento },
               { label: "Criterio aggiudicazione", value: r.criterio },
               { label: "Macrosettore", value: r.macrosettore },
               { label: "Tipo novità", value: r.tipo_novita },

@@ -22,6 +22,7 @@ class ProcurementRecordRead(BaseModel):
     regione: str | None = None
     comune: str | None = None
     tipologia_gara_procedura: str | None = None
+    tipo_strumento: str | None = None
     scadenza: datetime | None = None
     criterio: str | None = None
     cig: str | None = None

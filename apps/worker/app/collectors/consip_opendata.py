@@ -111,10 +111,12 @@ class ConsipOpenDataCollector(BaseCollector):
                         "identificativo_lotto": lotto_id,
                         "categoria_merceologica": item.get("Categoria_Merceologica"),
                         "tipo_strumento": item.get("Tipo_Strumento"),
-                        "base_asta": base_asta,
+                        "procedura": item.get("Tipo_Procedura"),
+                        "importo": base_asta,
                         "data_attivazione": item.get("Data_Attivazione"),
                         "data_termine": item.get("Data_Termine"),
                         "extracted_by": "consip-opendata-direct",
+                        "perimeter_prevalidated": True,
                     },
                 )
             )

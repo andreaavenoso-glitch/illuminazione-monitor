@@ -358,13 +358,14 @@ class SmartLLMCollector(BaseCollector):
             raw_html=None,
             raw_date=raw_date,
             extracted={
-                "importo_eur": record.get("importo_eur"),
+                "importo": record.get("importo_eur"),
                 "cig": record.get("cig"),
                 "scadenza": record.get("scadenza"),
                 "ente": record.get("ente"),
                 "regione": record.get("regione"),
                 "provincia": record.get("provincia"),
                 "extracted_by": "claude-haiku-4-5",
+                "perimeter_prevalidated": True,
             },
         )
 
