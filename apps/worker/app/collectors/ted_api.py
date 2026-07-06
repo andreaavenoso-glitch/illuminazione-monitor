@@ -24,7 +24,17 @@ TED_SEARCH_URL = "https://api.ted.europa.eu/v3/notices/search"
 
 LIGHTING_CPV_CODES = ["34928510", "34993000", "50232000", "45316110"]
 
-FIELDS = ["publication-number", "notice-title", "buyer-name", "publication-date", "links"]
+FIELDS = [
+    "publication-number",
+    "notice-title",
+    "buyer-name",
+    "publication-date",
+    "links",
+    "procedure-type",
+    "total-value",
+    "estimated-value-lot",
+    "deadline-receipt-tender-date-lot",
+]
 
 
 def _pick_lang(field: dict | None, *, prefer: tuple[str, ...] = ("ita", "eng")) -> str | None:
@@ -77,6 +87,20 @@ class TEDCollector(BaseCollector):
                 f"https://ted.europa.eu/en/notice/{pub_number}/html" if pub_number else TED_SEARCH_URL
             )
 
+            procedura = notice.get("procedure-type")
+            total_value = notice.get("total-value")
+            importo = total_value if total_value is not None else notice.get("estimated-value-lot")
+
+            # TED renders lot deadlines as "YYYY-MM-DD+HH:MM" (date + bare
+            # offset, no time component) which parse_italian_date's ISO
+            # regex doesn't match; truncate to the date portion like
+            # publication-date above. Only present on live call-for-tender
+            # notices (cn-*) -- award notices (can-*) have none, correctly.
+            deadline_raw = notice.get("deadline-receipt-tender-date-lot")
+            if isinstance(deadline_raw, list):
+                deadline_raw = deadline_raw[0] if deadline_raw else None
+            scadenza = str(deadline_raw)[:10] if deadline_raw else None
+
             body_parts = [f"Ente: {buyer}"] if buyer else []
             body_parts.append(f"Numero pubblicazione TED: {pub_number}")
             drafts.append(
@@ -89,6 +113,9 @@ class TEDCollector(BaseCollector):
                     extracted={
                         "ente": buyer,
                         "publication_number": pub_number,
+                        "procedura": procedura,
+                        "importo": importo,
+                        "scadenza": scadenza,
                         "extracted_by": "ted-api-direct",
                         "perimeter_prevalidated": True,
                     },
