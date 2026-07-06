@@ -102,6 +102,58 @@ class TestNormalize:
         assert normalize(NormalizerInput(**base, source_priority_rank=4)).reliability_index == "Media"
         assert normalize(NormalizerInput(**base, source_priority_rank=7)).reliability_index == "Bassa"
 
+    def test_perimeter_prevalidated_bypasses_keyword_gate(self) -> None:
+        # No LIGHTING_INCLUDE phrase and no lighting CPV in this text — the
+        # shared keyword/CPV scorer alone would reject it — but a collector
+        # that already scoped it via its own precise signal (e.g. Consip's
+        # explicit AQ-name matcher, TED's CPV filter) marks it prevalidated.
+        payload = NormalizerInput(
+            raw_title="AQ SDA MULTISERVIZIO REGIONALE — LOTTO 12",
+            raw_body="Categoria merceologica generica",
+            raw_url="https://example.test/consip/lotto1",
+            extracted={"procedura": "Accordo Quadro"},
+            source_priority_rank=3,
+            perimeter_prevalidated=True,
+        )
+        result = normalize(payload)
+        assert result is not None
+
+    def test_not_prevalidated_still_applies_keyword_gate(self) -> None:
+        payload = NormalizerInput(
+            raw_title="AQ SDA MULTISERVIZIO REGIONALE — LOTTO 12",
+            raw_body="Categoria merceologica generica",
+            raw_url="https://example.test/consip/lotto2",
+        )
+        assert normalize(payload) is None
+
+    def test_framework_instrument_without_ente_is_not_weak(self) -> None:
+        payload = NormalizerInput(
+            raw_title="AQ Gestione ed efficientamento energetico impianti illuminazione pubblica",
+            raw_body=None,
+            raw_url="https://example.test/consip/lotto3",
+            extracted={"tipo_strumento": "Accordo Quadro", "procedura": "aperta"},
+            source_priority_rank=3,
+            perimeter_prevalidated=True,
+        )
+        result = normalize(payload)
+        assert result is not None
+        assert result.is_weak_evidence is False
+        assert "Accordo Quadro" in result.ente
+        assert result.tipo_strumento == "Accordo Quadro"
+
+    def test_non_framework_without_ente_is_still_weak(self) -> None:
+        payload = NormalizerInput(
+            raw_title="Illuminazione pubblica LED Comune ignoto",
+            raw_body=None,
+            raw_url="https://example.test/bando/5",
+            extracted={"procedura": "aperta"},
+            source_priority_rank=3,
+        )
+        result = normalize(payload)
+        assert result is not None
+        assert result.is_weak_evidence is True
+        assert result.ente == "n.d."
+
     def test_ppp_flag_from_procedura(self) -> None:
         payload = NormalizerInput(
             raw_title="Gara illuminazione pubblica LED",

@@ -9,8 +9,11 @@ LIGHTING_INCLUDE: tuple[str, ...] = (
     "smart lighting",
     "riqualificazione illuminazione",
     "pali illuminazione",
+    "pali di illuminazione",
     "global service illuminazione",
     "accordo quadro illuminazione",
+    "servizio luce",
+    "illuminazione stradale",
 )
 
 LIGHTING_EXCLUDE: tuple[str, ...] = (

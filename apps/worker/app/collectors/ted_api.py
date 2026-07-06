@@ -90,6 +90,7 @@ class TEDCollector(BaseCollector):
                         "ente": buyer,
                         "publication_number": pub_number,
                         "extracted_by": "ted-api-direct",
+                        "perimeter_prevalidated": True,
                     },
                 )
             )

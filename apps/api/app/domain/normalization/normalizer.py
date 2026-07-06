@@ -36,6 +36,15 @@ _PRE_GARA_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Framework/multi-buyer instruments (Accordo Quadro, Convenzione, Sistema
+# Dinamico di Acquisizione) don't have one "ente" by design — a single AQ
+# lot like Consip's "Servizio Luce" is drawn down by many municipalities in
+# a region, not tied to one buyer. Requiring `ente` to consider these
+# "complete" per §9.1 would bury genuinely high-value instruments under
+# "evidenza debole" for a technicality, not because the data is actually
+# incomplete.
+_FRAMEWORK_INSTRUMENT_TYPES = frozenset({"accordo quadro", "convenzione", "sistema dinamico di acquisizione", "sda"})
+
 
 @dataclass
 class NormalizerInput:
@@ -49,6 +58,16 @@ class NormalizerInput:
     provincia_hint: str | None = None
     comune_hint: str | None = None
     ente_hint: str | None = None
+    # Set by collectors that already scope their own results to the lighting
+    # perimeter with a more precise signal than the shared keyword/CPV scorer
+    # (CPV-code filtering for TED, explicit AQ-name matching for Consip,
+    # semantic classification by Claude for the LLM collector). Without this,
+    # the generic keyword gate below silently re-filters already-scoped
+    # records and can drop legitimate ones whose title doesn't happen to
+    # contain an exact phrase from LIGHTING_INCLUDE (e.g. Consip's "AQ
+    # SERVIZIO LUCE" lots, which say nothing containing the word
+    # "illuminazione" at all).
+    perimeter_prevalidated: bool = False
 
 
 @dataclass
@@ -63,6 +82,7 @@ class NormalizedRecord:
     provincia: str | None
     comune: str | None
     tipologia_gara_procedura: str | None
+    tipo_strumento: str | None
     link_bando: str
     macrosettore: str
     source_priority_rank: int
@@ -94,7 +114,7 @@ def normalize(payload: NormalizerInput) -> NormalizedRecord | None:
     text is not within the lighting perimeter (§10.2 score < 1).
     """
     combined = " ".join(filter(None, [payload.raw_title, payload.raw_body]))
-    if not is_in_lighting_perimeter(combined):
+    if not payload.perimeter_prevalidated and not is_in_lighting_perimeter(combined):
         return None
 
     extracted = payload.extracted or {}
@@ -113,6 +133,8 @@ def normalize(payload: NormalizerInput) -> NormalizedRecord | None:
     )
     scadenza = parse_italian_date(_first_str(extracted, "scadenza", "scadenza_raw", "deadline"))
     procedura = _first_str(extracted, "procedura", "procedura_raw", "tipo_procedura")
+    tipo_strumento = _first_str(extracted, "tipo_strumento")
+    is_framework_instrument = bool(tipo_strumento) and tipo_strumento.strip().lower() in _FRAMEWORK_INSTRUMENT_TYPES
 
     flags = derive_flags(combined + " " + (procedura or ""))
     importo_float = float(importo) if importo is not None else None
@@ -125,17 +147,25 @@ def normalize(payload: NormalizerInput) -> NormalizedRecord | None:
 
     # Validation level + weak evidence per §9.1:
     # must have ente + oggetto + stato + link + one of importo/cig/scadenza/procedura.
+    # Framework instruments (Accordo Quadro/Convenzione/SDA) are exempt from
+    # the `ente` requirement — they're legitimately multi-buyer by design,
+    # not missing data (see _FRAMEWORK_INSTRUMENT_TYPES above).
     has_any_identifier = any(v is not None for v in (importo, cig, scadenza, procedura))
-    has_core = bool(ente) and bool(descrizione) and bool(payload.raw_url)
+    has_core = (bool(ente) or is_framework_instrument) and bool(descrizione) and bool(payload.raw_url)
     is_weak = not (has_core and has_any_identifier)
 
     validation_level = "L3" if (cig and importo) else ("L2" if has_any_identifier else "L1")
     reliability_index = _reliability_from_rank(payload.source_priority_rank)
 
     if not ente:
-        # Without an ente the record cannot enter procurement_records.
-        ente = _first_str(extracted, "amministrazione_titolare", "buyer_name_1") or "n.d."
-        is_weak = True
+        ente = _first_str(extracted, "amministrazione_titolare", "buyer_name_1")
+        if not ente and is_framework_instrument:
+            ente = f"Strumento quadro multi-ente ({tipo_strumento})"
+        elif not ente:
+            # Without an ente and without a framework-instrument exemption,
+            # the record cannot enter procurement_records as non-weak.
+            ente = "n.d."
+            is_weak = True
 
     return NormalizedRecord(
         ente=ente,
@@ -148,6 +178,7 @@ def normalize(payload: NormalizerInput) -> NormalizedRecord | None:
         provincia=payload.provincia_hint or _first_str(extracted, "provincia"),
         comune=payload.comune_hint or _first_str(extracted, "comune"),
         tipologia_gara_procedura=procedura,
+        tipo_strumento=tipo_strumento,
         link_bando=payload.raw_url,
         macrosettore="Illuminazione pubblica",
         source_priority_rank=payload.source_priority_rank,

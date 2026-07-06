@@ -26,6 +26,7 @@ class ProcurementRecord(Base):
     comune: Mapped[str | None] = mapped_column(String, nullable=True)
     area_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     tipologia_gara_procedura: Mapped[str | None] = mapped_column(String, nullable=True)
+    tipo_strumento: Mapped[str | None] = mapped_column(String, nullable=True)
     scadenza: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     criterio: Mapped[str | None] = mapped_column(String, nullable=True)
     cig: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
