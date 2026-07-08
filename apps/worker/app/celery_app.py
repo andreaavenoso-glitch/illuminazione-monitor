@@ -10,6 +10,7 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=[
         "app.tasks.collect_sources",
+        "app.tasks.collect_watchlist",
         "app.tasks.normalize_records",
         "app.tasks.score_and_dedupe",
         "app.tasks.generate_daily_report",
@@ -39,6 +40,10 @@ celery_app.conf.beat_schedule = {
     "collect-eproc-portals-daily": {
         "task": "app.tasks.collect_sources.collect_eproc_portals",
         "schedule": crontab(hour=5, minute=30),
+    },
+    "collect-watchlist-albo-daily": {
+        "task": "app.tasks.collect_watchlist.collect_watchlist_albo",
+        "schedule": crontab(hour=5, minute=45),
     },
     "normalize-records-daily": {
         "task": "app.tasks.normalize_records.normalize_records",

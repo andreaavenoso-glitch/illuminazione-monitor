@@ -30,6 +30,15 @@ async def retry_source(
     return {"status": "dispatched", "task_id": task_id, "source_id": str(source_id)}
 
 
+@router.post("/run-watchlist-scan")
+async def run_watchlist_scan(_: User = Depends(require_role("admin"))) -> dict:
+    """Trigger the Albo Pretorio watchlist scan (manifestazioni di interesse)."""
+    from app.services.admin_service import dispatch_watchlist_scan
+
+    task_id = dispatch_watchlist_scan()
+    return {"status": "dispatched", "task_id": task_id}
+
+
 @router.post("/normalize-records")
 async def run_normalize_records(_: User = Depends(require_role("admin"))) -> dict:
     """Trigger the raw → procurement normalization task."""
