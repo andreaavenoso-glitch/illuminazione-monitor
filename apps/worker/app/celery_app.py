@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.tasks.ingest_documents",
         "app.tasks.detect_anomalies",
         "app.tasks.backfill",
+        "app.tasks.daily_pipeline",
     ],
 )
 
@@ -32,33 +33,14 @@ celery_app.conf.update(
     worker_max_tasks_per_child=100,
 )
 
+# A single daily trigger that dispatches the full collect -> normalize ->
+# score -> report -> anomalies chain (see app.tasks.daily_pipeline). Each
+# stage starts only once the previous one has actually finished, instead of
+# independent fixed-time entries that assumed every stage would always
+# complete inside its allotted window.
 celery_app.conf.beat_schedule = {
-    "collect-official-sources-daily": {
-        "task": "app.tasks.collect_sources.collect_official_sources",
+    "daily-pipeline": {
+        "task": "app.tasks.daily_pipeline.run_daily_pipeline",
         "schedule": crontab(hour=5, minute=0),
-    },
-    "collect-eproc-portals-daily": {
-        "task": "app.tasks.collect_sources.collect_eproc_portals",
-        "schedule": crontab(hour=5, minute=30),
-    },
-    "collect-watchlist-albo-daily": {
-        "task": "app.tasks.collect_watchlist.collect_watchlist_albo",
-        "schedule": crontab(hour=5, minute=45),
-    },
-    "normalize-records-daily": {
-        "task": "app.tasks.normalize_records.normalize_records",
-        "schedule": crontab(hour=6, minute=0),
-    },
-    "score-and-dedupe-daily": {
-        "task": "app.tasks.score_and_dedupe.score_and_dedupe",
-        "schedule": crontab(hour=6, minute=30),
-    },
-    "generate-daily-report": {
-        "task": "app.tasks.generate_daily_report.generate_daily_report",
-        "schedule": crontab(hour=7, minute=0),
-    },
-    "detect-anomalies-daily": {
-        "task": "app.tasks.detect_anomalies.detect_anomalies",
-        "schedule": crontab(hour=7, minute=30),
     },
 }
