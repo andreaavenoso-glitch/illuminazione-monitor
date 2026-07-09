@@ -2,7 +2,10 @@
 
 Pipeline stage 2: reads every raw_record that has not yet produced a matching
 procurement_record (lookup by raw_url first, CIG second) and either inserts a
-new row or updates the existing one.
+new row or updates the existing one. ``raw_records.normalized_at`` tracks
+which rows have already gone through this stage -- without it, a backlog
+bigger than BATCH_SIZE would make every run re-select the same oldest rows
+forever and never reach newer ones.
 
 Upsert strategy for Sprint 5 (stronger dedup lands in Sprint 6):
 - primary key: raw_record.raw_url → procurement_records.link_bando
@@ -35,6 +38,7 @@ async def _process_batch(session: AsyncSession, job: JobRun) -> None:
     stmt = (
         select(RawRecord, Source)
         .outerjoin(Source, RawRecord.source_id == Source.id)
+        .where(RawRecord.normalized_at.is_(None))
         .order_by(RawRecord.fetched_at.asc())
         .limit(BATCH_SIZE)
     )
@@ -49,6 +53,8 @@ async def _process_batch(session: AsyncSession, job: JobRun) -> None:
             log.exception("normalize.crashed", extra={"raw_id": str(raw.id), "err": str(exc)})
             job.error_message = f"{type(exc).__name__}: {exc}"
             continue
+
+        raw.normalized_at = now
 
         if processed is None:
             continue
