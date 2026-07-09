@@ -4,7 +4,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from app.collectors.albo_pretorio_llm import build_raw_record_kwargs, find_bandi_link
+from app.collectors.albo_pretorio_llm import (
+    build_raw_record_kwargs,
+    find_bandi_link,
+    merge_detail_into_record,
+)
 
 
 class TestBuildRawRecordKwargs:
@@ -112,3 +116,31 @@ class TestFindBandiLink:
         """
         result = find_bandi_link(html, base_url="https://comune.test/")
         assert result == "https://comune.test/vero-link/"
+
+
+class TestMergeDetailIntoRecord:
+    def test_fills_missing_ente_and_scadenza(self) -> None:
+        record = {"title": "Atto", "body": "snippet", "ente": None, "scadenza": None}
+        details = {"ente": "Comune di Test", "scadenza": "2026-09-01", "body": "Descrizione completa"}
+        merged = merge_detail_into_record(record, details)
+        assert merged["ente"] == "Comune di Test"
+        assert merged["scadenza"] == "2026-09-01"
+
+    def test_does_not_overwrite_existing_ente(self) -> None:
+        record = {"title": "Atto", "body": "snippet", "ente": "Comune Originale", "scadenza": None}
+        details = {"ente": "Comune Diverso", "scadenza": None, "body": None}
+        merged = merge_detail_into_record(record, details)
+        assert merged["ente"] == "Comune Originale"
+
+    def test_prefers_detail_body_over_listing_snippet(self) -> None:
+        record = {"title": "Atto", "body": "snippet breve", "ente": "Comune di Test"}
+        details = {"ente": None, "scadenza": None, "body": "Descrizione completa e dettagliata dell'atto"}
+        merged = merge_detail_into_record(record, details)
+        assert merged["body"] == "Descrizione completa e dettagliata dell'atto"
+
+    def test_keeps_listing_body_when_detail_body_missing(self) -> None:
+        record = {"title": "Atto", "body": "snippet breve", "ente": "Comune di Test"}
+        details = {"ente": None, "scadenza": "2026-09-01", "body": None}
+        merged = merge_detail_into_record(record, details)
+        assert merged["body"] == "snippet breve"
+        assert merged["scadenza"] == "2026-09-01"

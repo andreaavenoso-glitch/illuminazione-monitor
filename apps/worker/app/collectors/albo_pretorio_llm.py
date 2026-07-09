@@ -176,6 +176,109 @@ async def extract_albo_records(
     return records if isinstance(records, list) else []
 
 
+# Third hop: once a candidate record has already been judged relevant from a
+# listing page, follow its own link to enrich it. Listing pages rarely carry
+# more than a title and a one-line snippet; the detail page usually has the
+# full description and the actual scadenza. importo/CIG are deliberately not
+# requested here -- pre-gara acts (manifestazioni di interesse, indagini di
+# mercato...) don't have a formal amount or CIG yet by definition, those are
+# only assigned once a real gara is published.
+DETAIL_SYSTEM_PROMPT = """Sei un assistente specializzato nell'estrazione di dettagli da un singolo atto amministrativo italiano relativo a un segnale pre-gara nel settore illuminazione pubblica (manifestazione di interesse, avviso di preinformazione, indagine di mercato, determina a contrarre).
+
+# CONTESTO
+Stai analizzando la pagina di DETTAGLIO di un singolo atto (non un elenco). L'atto è già stato identificato come pertinente al perimetro illuminazione pubblica; il tuo compito è arricchirlo con i dettagli disponibili in questa pagina.
+
+# FORMATO OUTPUT
+Restituisci SOLO un JSON con questa struttura:
+
+{
+  "ente": "Nome dell'ente pubblico o null",
+  "scadenza": "YYYY-MM-DD o null (scadenza per manifestare interesse/presentare candidatura)",
+  "body": "Descrizione completa e dettagliata dell'atto (max 2000 char) o null se non leggibile"
+}
+
+# REGOLE
+1. NON inventare dati: se un campo non è leggibile, metti null.
+2. Date: converti formato italiano (gg/mm/aaaa) in ISO (yyyy-mm-dd).
+3. NON aggiungere commenti, spiegazioni o testo fuori dal JSON.
+"""
+
+DETAIL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "ente": {"type": ["string", "null"]},
+        "scadenza": {"type": ["string", "null"]},
+        "body": {"type": ["string", "null"]},
+    },
+    "required": ["ente", "scadenza", "body"],
+    "additionalProperties": False,
+}
+
+
+async def extract_bando_detail(
+    html: str,
+    *,
+    url: str,
+    settings: WorkerSettings,
+    label: str,
+) -> dict[str, Any] | None:
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    user_msg = (
+        f"URL: {url}\n"
+        f"Data corrente: {datetime.now(tz=UTC).date().isoformat()}\n\n"
+        f"HTML della pagina di dettaglio:\n\n{html}"
+    )
+    try:
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=2000,
+            system=[
+                {
+                    "type": "text",
+                    "text": DETAIL_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_msg}],
+            output_config={"format": {"type": "json_schema", "schema": DETAIL_SCHEMA}},
+        )
+    except anthropic.APIError as exc:
+        log.warning("albo_pretorio.detail_claude_error", label=label, error=str(exc))
+        return None
+
+    log.info(
+        "albo_pretorio.detail_claude_ok",
+        label=label,
+        input_tokens=response.usage.input_tokens,
+        output_tokens=response.usage.output_tokens,
+    )
+
+    text = next((b.text for b in response.content if b.type == "text"), "")
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        log.warning("albo_pretorio.detail_bad_json", label=label)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def merge_detail_into_record(record: dict[str, Any], details: dict[str, Any]) -> dict[str, Any]:
+    """Fill missing ente/scadenza from a detail-page enrichment pass, and
+    prefer the detail page's fuller body over the listing page's snippet.
+    Pure function -- no DB/Celery/network dependency -- so it's
+    unit-testable on its own.
+    """
+    merged = dict(record)
+    for key in ("ente", "scadenza"):
+        if not merged.get(key) and details.get(key):
+            merged[key] = details[key]
+    if details.get("body"):
+        merged["body"] = details["body"]
+    return merged
+
+
 def _checksum(url: str, title: str | None, raw_date: datetime | None) -> str:
     payload = f"{url}|{title or ''}|{raw_date or ''}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
