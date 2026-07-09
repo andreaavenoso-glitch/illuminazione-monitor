@@ -20,7 +20,13 @@ independently). For url_trasparenza, a second hop follows the mandated
 transparency section's landing page is usually just a navigation menu. A
 dedicated Claude prompt (tuned for heterogeneous municipal notice-board
 content, not tender listings) then extracts only the pre-tender
-lighting-perimeter signals.
+lighting-perimeter signals from that listing.
+
+A third hop follows each already-relevant record's own link (when it has
+one) to its detail page and enriches ente/scadenza/body from there --
+listing pages rarely carry more than a title and a one-line snippet. This
+only fires for the handful of candidates a listing page actually surfaces
+(usually zero or one), not for every item on the page.
 """
 from __future__ import annotations
 
@@ -30,7 +36,13 @@ from datetime import UTC, datetime
 
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch
-from app.collectors.albo_pretorio_llm import build_raw_record_kwargs, extract_albo_records, find_bandi_link
+from app.collectors.albo_pretorio_llm import (
+    build_raw_record_kwargs,
+    extract_albo_records,
+    extract_bando_detail,
+    find_bandi_link,
+    merge_detail_into_record,
+)
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from shared_models import JobRun, RawRecord, WatchlistItem
@@ -91,6 +103,16 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
         job.records_found += len(records)
 
         for record in records:
+            detail_url = record.get("url")
+            if detail_url and detail_url != target_url:
+                detail_html = await _fetch_page(detail_url, settings=settings, label=f"{label}:detail")
+                if detail_html:
+                    details = await extract_bando_detail(
+                        detail_html, url=detail_url, settings=settings, label=f"{label}:detail"
+                    )
+                    if details:
+                        record = merge_detail_into_record(record, details)
+
             kwargs = build_raw_record_kwargs(
                 url_albo=target_url,
                 source_id=item.source_id,
