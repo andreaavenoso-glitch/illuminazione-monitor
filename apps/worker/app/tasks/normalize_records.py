@@ -205,13 +205,29 @@ def _merge_fields(
     target.reliability_index = incoming.reliability_index
 
 
+# Safety cap on batch iterations per run (protects against a runaway loop,
+# not a limit expected to be hit in practice: BATCH_SIZE * this is 200k rows).
+MAX_BATCHES_PER_RUN = 100
+
+
 async def _run_normalize() -> dict[str, int]:
     async with SessionLocal() as session:
         job = JobRun(job_name="normalize_records", status="running")
         session.add(job)
         await session.flush()
 
-        await _process_batch(session, job)
+        # Loop until a batch finds nothing left to normalize, instead of
+        # processing a single BATCH_SIZE slice per run -- otherwise a backlog
+        # bigger than BATCH_SIZE never fully drains without repeated manual
+        # triggers (only the newly-added rows past the cap would ever wait).
+        for _ in range(MAX_BATCHES_PER_RUN):
+            found_before = job.records_found
+            await _process_batch(session, job)
+            await session.commit()
+            if job.records_found == found_before:
+                break
+        else:
+            log.warning("normalize.max_batches_reached", extra={"job_id": str(job.id)})
 
         job.ended_at = datetime.now(tz=UTC)
         job.status = "failed" if job.error_message else "success"
