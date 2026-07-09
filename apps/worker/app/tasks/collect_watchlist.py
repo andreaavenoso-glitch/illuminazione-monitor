@@ -15,9 +15,12 @@ Pubbliche Amministrazioni) rather than discovered by hand.
 
 Each active watchlist item gets the same 3-tier adaptive fetch as
 SmartLLMCollector for every non-null URL it has (one page fetch per URL,
-independently), then a dedicated Claude prompt (tuned for heterogeneous
-municipal notice-board content, not tender listings) extracts only the
-pre-tender lighting-perimeter signals.
+independently). For url_trasparenza, a second hop follows the mandated
+"Bandi di gara e contratti" sub-section link when findable, since the
+transparency section's landing page is usually just a navigation menu. A
+dedicated Claude prompt (tuned for heterogeneous municipal notice-board
+content, not tender listings) then extracts only the pre-tender
+lighting-perimeter signals.
 """
 from __future__ import annotations
 
@@ -27,14 +30,25 @@ from datetime import UTC, datetime
 
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch
-from app.collectors.albo_pretorio_llm import build_raw_record_kwargs, extract_albo_records
-from app.config import get_worker_settings
+from app.collectors.albo_pretorio_llm import build_raw_record_kwargs, extract_albo_records, find_bandi_link
+from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from shared_models import JobRun, RawRecord, WatchlistItem
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
+
+
+async def _fetch_page(url: str, *, settings: WorkerSettings, label: str) -> str:
+    return await adaptive_fetch(
+        url,
+        timeout=60.0,
+        max_html_chars=settings.smart_collector_max_html_chars,
+        playwright_min_chars=settings.smart_collector_playwright_min_chars,
+        playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
+        label=label,
+    )
 
 
 async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) -> None:
@@ -53,23 +67,32 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
 
     for kind, url in urls:
         label = f"{kind}:{item.id}"
-        cleaned = await adaptive_fetch(
-            url,
-            timeout=60.0,
-            max_html_chars=settings.smart_collector_max_html_chars,
-            playwright_min_chars=settings.smart_collector_playwright_min_chars,
-            playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
-            label=label,
-        )
+        cleaned = await _fetch_page(url, settings=settings, label=label)
         if not cleaned:
             continue
 
-        records = await extract_albo_records(cleaned, url=url, settings=settings, label=label)
+        target_url, target_html = url, cleaned
+        if kind == "trasparenza":
+            # The landing page of Amministrazione Trasparente is usually
+            # just a navigation menu; D.Lgs. 33/2013 mandates a "Bandi di
+            # gara e contratti" sub-section, so follow straight to it when
+            # findable instead of extracting from the near-empty menu page.
+            bandi_url = find_bandi_link(cleaned, base_url=url)
+            if bandi_url and bandi_url != url:
+                bandi_html = await _fetch_page(bandi_url, settings=settings, label=f"{label}:bandi")
+                if bandi_html:
+                    target_url, target_html = bandi_url, bandi_html
+                    log.info(
+                        "collect_watchlist.bandi_link_followed",
+                        extra={"item": str(item.id), "url": bandi_url},
+                    )
+
+        records = await extract_albo_records(target_html, url=target_url, settings=settings, label=label)
         job.records_found += len(records)
 
         for record in records:
             kwargs = build_raw_record_kwargs(
-                url_albo=url,
+                url_albo=target_url,
                 source_id=item.source_id,
                 entity_id=item.entity_id,
                 record=record,

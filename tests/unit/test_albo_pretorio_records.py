@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from app.collectors.albo_pretorio_llm import build_raw_record_kwargs
+from app.collectors.albo_pretorio_llm import build_raw_record_kwargs, find_bandi_link
 
 
 class TestBuildRawRecordKwargs:
@@ -76,3 +76,39 @@ class TestBuildRawRecordKwargs:
             now=now,
         )
         assert kwargs["raw_date"] == now
+
+
+class TestFindBandiLink:
+    def test_finds_exact_mandated_label(self) -> None:
+        html = """
+        <nav>
+          <a href="/amministrazione-trasparente/">Amministrazione Trasparente</a>
+          <a href="/amministrazione-trasparente/bandi-di-gara-e-contratti/">Bandi di gara e contratti</a>
+          <a href="/amministrazione-trasparente/personale/">Personale</a>
+        </nav>
+        """
+        result = find_bandi_link(html, base_url="https://comune.test/")
+        assert result == "https://comune.test/amministrazione-trasparente/bandi-di-gara-e-contratti/"
+
+    def test_resolves_relative_href_against_base_url(self) -> None:
+        html = '<a href="bandi-gara-contratti">Bandi gara e contratti</a>'
+        result = find_bandi_link(html, base_url="https://comune.test/trasparenza/")
+        assert result == "https://comune.test/trasparenza/bandi-gara-contratti"
+
+    def test_returns_none_when_no_match(self) -> None:
+        html = """
+        <nav>
+          <a href="/organizzazione/">Organizzazione</a>
+          <a href="/personale/">Personale</a>
+        </nav>
+        """
+        assert find_bandi_link(html, base_url="https://comune.test/") is None
+
+    def test_ignores_fragment_and_javascript_hrefs(self) -> None:
+        html = """
+        <a href="#">Bandi di gara e contratti</a>
+        <a href="javascript:void(0)">Bandi di gara</a>
+        <a href="/vero-link/">Bandi di gara e contratti</a>
+        """
+        result = find_bandi_link(html, base_url="https://comune.test/")
+        assert result == "https://comune.test/vero-link/"

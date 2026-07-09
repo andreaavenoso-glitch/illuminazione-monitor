@@ -14,14 +14,46 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 from uuid import UUID
 
 import anthropic
 import structlog
 from app.config import WorkerSettings
+from bs4 import BeautifulSoup
 
 log = structlog.get_logger(__name__)
+
+# D.Lgs. 33/2013 art. 37 mandates this exact taxonomy for the "Bandi di gara
+# e contratti" sub-section of Amministrazione Trasparente, so real
+# implementations almost always use this phrase (or a close variant) as the
+# menu label -- letting find_bandi_link follow straight to the procurement
+# listing instead of extracting from the transparency section's landing
+# page, which is usually just a navigation menu with little content of its
+# own.
+BANDI_LINK_PATTERNS = (
+    "bandi di gara e contratti",
+    "bandi di gara",
+    "bandi gara e contratti",
+    "bandi gara contratti",
+)
+
+
+def find_bandi_link(html: str, *, base_url: str) -> str | None:
+    """Find a link to the "Bandi di gara e contratti" sub-section within an
+    Amministrazione Trasparente landing page. Returns an absolute URL, or
+    None if no matching link is found.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    for a in soup.find_all("a", href=True):
+        text = a.get_text(" ", strip=True).lower()
+        if not text:
+            continue
+        if any(pattern in text for pattern in BANDI_LINK_PATTERNS):
+            href = a["href"].strip()
+            if href and not href.startswith("#") and not href.lower().startswith("javascript:"):
+                return urljoin(base_url, href)
+    return None
 
 ALBO_SYSTEM_PROMPT = """Sei un assistente specializzato nell'individuare segnali pre-gara per il settore dell'illuminazione pubblica italiana.
 
