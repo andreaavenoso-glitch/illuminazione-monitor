@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from urllib.parse import urljoin
 
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch
@@ -103,7 +104,15 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
         job.records_found += len(records)
 
         for record in records:
+            # The extraction prompt asks for absolute URLs only, but Claude
+            # doesn't always comply -- resolve defensively against the page
+            # it was found on rather than handing a relative path straight
+            # to httpx/Playwright (which reject it outright) or storing it
+            # as-is in raw_url, where it would be unusable to a reader.
             detail_url = record.get("url")
+            if detail_url:
+                detail_url = urljoin(target_url, detail_url)
+                record = {**record, "url": detail_url}
             if detail_url and detail_url != target_url:
                 detail_html = await _fetch_page(detail_url, settings=settings, label=f"{label}:detail")
                 if detail_html:
