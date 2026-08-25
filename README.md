@@ -37,11 +37,13 @@ docker compose exec api python -m infra.scripts.seed_watchlist
 Il seed carica anche la watchlist di 73 comuni lombardi target per l'illuminazione
 pubblica da `infra/scripts/data/comuni_lombardia_illuminazione.csv` — per
 aggiungerne o modificarne, basta editare quel CSV e rilanciare il seed (è
-idempotente: le entità già presenti non vengono duplicate). ~44 comuni hanno
-già un `url_albo`/`url_trasparenza` valorizzato e vengono scansionati da subito;
-i restanti risultano `active=False` finché qualcuno non compila l'URL mancante
-via `PATCH /watchlist/{id}` (endpoint API, non ancora esposto come form nella
-dashboard — vedi `/admin/watchlist` per la sola consultazione).
+idempotente: le entità già presenti non vengono duplicate). Tutti e 73 hanno
+un `url_albo`/`url_trasparenza` valorizzato e vengono scansionati da subito; per
+29 di essi l'URL è stato reperito via ricerca web (non tramite apertura diretta
+della pagina) e va quindi considerato da verificare — è segnalato nel campo
+`note` del CSV e nelle note dell'entità in `/admin/watchlist`. Per correggere
+un URL sbagliato: `PATCH /watchlist/{id}` (endpoint API, non ancora esposto
+come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione).
 
 Endpoint:
 
