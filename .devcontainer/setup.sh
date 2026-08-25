@@ -1,11 +1,36 @@
 #!/usr/bin/env bash
 # Avvio automatico dell'app dentro un Codespace: build dei container, attesa
 # che l'API sia pronta (alembic upgrade head gira dentro al comando di avvio
-# del servizio "api" in docker-compose.yml, non qui), poi seed della watchlist.
+# del servizio "api" in docker-compose.yml, non qui), poi seed di watchlist e
+# utente amministratore.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 cp -n .env.example .env || true
+
+# In un Codespace il browser dell'utente NON e' dentro il container: le
+# variabili che puntano ad "http://localhost:*" nel file .env.example sono
+# pensate per l'uso in locale e vanno riscritte con gli indirizzi pubblici
+# che GitHub assegna alle porte inoltrate (<nome-codespace>-<porta>.<dominio>),
+# altrimenti il sito web prova a contattare il PC dell'utente e fallisce con
+# "Failed to fetch". CODESPACE_NAME e GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN
+# sono variabili d'ambiente che GitHub imposta automaticamente in ogni Codespace.
+if [ -n "${CODESPACE_NAME:-}" ]; then
+  domain="${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev}"
+  api_url="https://${CODESPACE_NAME}-8000.${domain}"
+  web_url="https://${CODESPACE_NAME}-3000.${domain}"
+
+  set_env() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" .env; then
+      sed -i "s#^${key}=.*#${key}=${value}#" .env
+    else
+      echo "${key}=${value}" >> .env
+    fi
+  }
+  set_env "NEXT_PUBLIC_API_URL" "$api_url"
+  set_env "CORS_ORIGINS" "$web_url"
+fi
 
 echo "==> Costruzione e avvio dei servizi (puo' richiedere qualche minuto la prima volta)..."
 docker compose up -d --build
@@ -28,12 +53,24 @@ fi
 echo "==> API pronta. Carico la watchlist (73 comuni lombardi + enti nazionali)..."
 docker compose exec -T api python -m infra.scripts.seed_watchlist
 
-cat <<'EOF'
+echo "==> Creo l'utente amministratore..."
+docker compose exec -T api python -m infra.scripts.seed_admin
+
+# shellcheck disable=SC1091
+admin_email="$(grep '^BOOTSTRAP_ADMIN_EMAIL=' .env | cut -d= -f2-)"
+admin_password="$(grep '^BOOTSTRAP_ADMIN_PASSWORD=' .env | cut -d= -f2-)"
+
+cat <<EOF
 
 ======================================================================
  Tutto pronto!
  Apri la scheda "PORTS" in basso nell'editor, trova la riga con la
  porta 3000 ("Dashboard — apri questa") e clicca sull'icona del
  mondo/globo per aprirla nel browser.
+
+ Accedi con:
+   email:    ${admin_email}
+   password: ${admin_password}
+ (credenziali di prova valide solo dentro questo Codespace temporaneo)
 ======================================================================
 EOF
