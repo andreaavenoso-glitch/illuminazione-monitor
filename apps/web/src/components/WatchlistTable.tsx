@@ -40,7 +40,7 @@ export function WatchlistTable() {
             <th className="px-4 py-3 text-left font-medium text-neutral-500">Ente</th>
             <th className="px-4 py-3 text-left font-medium text-neutral-500">Regione</th>
             <th className="px-4 py-3 text-left font-medium text-neutral-500">Priorità</th>
-            <th className="px-4 py-3 text-left font-medium text-neutral-500">URL albo</th>
+            <th className="px-4 py-3 text-left font-medium text-neutral-500">URL monitorata</th>
             <th className="px-4 py-3 text-left font-medium text-neutral-500">Attivo</th>
           </tr>
         </thead>
@@ -56,6 +56,11 @@ export function WatchlistTable() {
                 {r.url_albo ? (
                   <a href={r.url_albo} target="_blank" rel="noreferrer" className="hover:underline">
                     {r.url_albo}
+                  </a>
+                ) : r.url_trasparenza ? (
+                  <a href={r.url_trasparenza} target="_blank" rel="noreferrer" className="hover:underline">
+                    {r.url_trasparenza}
+                    <span className="ml-1 text-neutral-400">(trasparenza)</span>
                   </a>
                 ) : (
                   "—"
