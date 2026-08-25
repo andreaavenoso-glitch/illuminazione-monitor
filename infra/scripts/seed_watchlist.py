@@ -7,7 +7,9 @@ Usage (inside the api container):
 from __future__ import annotations
 
 import asyncio
+import csv
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
 from app.core.database import SessionLocal
@@ -16,6 +18,11 @@ from app.models.source import Source
 from app.models.watchlist_item import WatchlistItem
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Custom watchlist supplied by the customer (comuni lombardi target per
+# l'illuminazione pubblica). Kept as a CSV so it can be updated by hand
+# without touching this script.
+COMUNI_LOMBARDIA_CSV = Path(__file__).parent / "data" / "comuni_lombardia_illuminazione.csv"
 
 # Ported 1:1 from scripts/watchlist.json (38 entries).
 # Layout: (ente, url, regione, entity_type).
@@ -219,16 +226,110 @@ async def seed_entities_and_watchlist(
     return created_entities, created_watchlist
 
 
+def _pick_trasparenza_url(url_delibere: str) -> str | None:
+    """Best candidate for WatchlistItem.url_trasparenza out of the pipe-separated
+    list of "amministrazione trasparente" links in the source CSV: the one
+    already pointing at the "bandi di gara e contratti" sub-section when
+    present (the collector reads that directly, see collect_watchlist.py),
+    otherwise the first link as a fallback landing page to crawl from.
+    """
+    candidates = [u.strip() for u in url_delibere.split("|") if u.strip()]
+    if not candidates:
+        return None
+    for url in candidates:
+        if "bandi-di-gara" in url.lower() or "bandi_di_gara" in url.lower():
+            return url
+    return candidates[0]
+
+
+async def seed_comuni_lombardia(
+    session: AsyncSession, source_ids: dict[str, UUID]
+) -> tuple[int, int]:
+    """Seed the customer-supplied watchlist of Lombardy comuni (§ comuni_lombardia
+    CSV). Idempotent per entity: an entity already on the watchlist (matched by
+    name + region) is left untouched rather than duplicated or overwritten, so
+    manual edits made afterwards via the API/dashboard survive re-runs.
+    """
+    if not COMUNI_LOMBARDIA_CSV.exists():
+        return 0, 0
+
+    default_source = source_ids.get("ANAC Pubblicità Legale")
+    created_entities = 0
+    created_watchlist = 0
+
+    with COMUNI_LOMBARDIA_CSV.open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            name = (row.get("comune") or "").strip()
+            if not name:
+                continue
+
+            note_parts = [
+                part
+                for part in (
+                    f"fascia pop.: {row['fascia_pop_stimata']}" if row.get("fascia_pop_stimata") else None,
+                    f"cluster: {row['cluster']}" if row.get("cluster") else None,
+                    f"cms: {row['cms']}" if row.get("cms") else None,
+                    "dominio da verificare" if row.get("dominio_verificato", "").strip().upper() == "NO" else None,
+                    (row.get("note") or "").strip() or None,
+                )
+                if part
+            ]
+
+            stmt = select(Entity).where(Entity.name == name, Entity.region == "Lombardia")
+            entity = (await session.execute(stmt)).scalar_one_or_none()
+            if entity is None:
+                entity = Entity(
+                    name=name,
+                    region="Lombardia",
+                    province=(row.get("provincia") or "").strip() or None,
+                    municipality=name,
+                    entity_type="comune",
+                    notes="; ".join(note_parts) or None,
+                )
+                session.add(entity)
+                await session.flush()
+                created_entities += 1
+
+            wl_stmt = select(WatchlistItem).where(WatchlistItem.entity_id == entity.id)
+            if (await session.execute(wl_stmt)).scalar_one_or_none() is not None:
+                continue
+
+            url_albo = (row.get("url_albo") or "").strip() or None
+            url_trasparenza = _pick_trasparenza_url(row.get("url_delibere") or "")
+            item = WatchlistItem(
+                entity_id=entity.id,
+                source_id=default_source,
+                url_albo=url_albo,
+                url_trasparenza=url_trasparenza,
+                frequency="daily",
+                priority="B",
+                reliability_score=Decimal("0.70"),
+                publication_model="html_scraping",
+                # collect_watchlist_albo only scans items with at least one of
+                # these URLs set; the CSV left ~29/73 comuni without one, so
+                # mark those inactive rather than silently never scanning them.
+                active=bool(url_albo or url_trasparenza),
+            )
+            session.add(item)
+            created_watchlist += 1
+
+    await session.flush()
+    return created_entities, created_watchlist
+
+
 async def main() -> None:
     async with SessionLocal() as session:
         source_ids = await seed_sources(session)
         created_entities, created_watchlist = await seed_entities_and_watchlist(
             session, source_ids
         )
+        lombardia_entities, lombardia_watchlist = await seed_comuni_lombardia(session, source_ids)
         await session.commit()
         print(
             f"seed complete — sources={len(source_ids)} "
-            f"new_entities={created_entities} new_watchlist={created_watchlist}"
+            f"new_entities={created_entities + lombardia_entities} "
+            f"new_watchlist={created_watchlist + lombardia_watchlist} "
+            f"(comuni Lombardia: entities={lombardia_entities}, watchlist={lombardia_watchlist})"
         )
 
 
