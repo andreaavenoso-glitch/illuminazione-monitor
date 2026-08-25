@@ -1,0 +1,20 @@
+{
+  "name": "Illuminazione Monitor (prova rapida)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "forwardPorts": [3000, 8000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Dashboard — apri questa",
+      "onAutoForward": "openPreview"
+    },
+    "8000": {
+      "label": "API (tecnico)",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "waitFor": "postCreateCommand"
+}

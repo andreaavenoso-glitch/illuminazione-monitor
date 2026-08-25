@@ -25,6 +25,18 @@ infra/
 tests/          unit + integration
 ```
 
+## Prova rapida senza installare nulla (GitHub Codespaces)
+
+Non serve Docker né essere amministratore del proprio PC: dalla pagina del
+repository su github.com, bottone verde **Code → Codespaces → Create
+codespace on main**. Il Codespace costruisce ed avvia da solo tutti i
+servizi e carica la watchlist (vedi `.devcontainer/`); ci vogliono alcuni
+minuti la prima volta. Quando è pronto, apri la scheda **PORTS** in basso e
+clicca sull'icona del mondo sulla riga della porta 3000 per aprire la
+dashboard nel browser. Pensato per una prova temporanea (rientra nel piano
+gratuito di GitHub Codespaces per uso limitato), non per l'uso in produzione
+continuativo — per quello vedi l'avvio locale/server qui sotto.
+
 ## Avvio locale
 
 ```bash
