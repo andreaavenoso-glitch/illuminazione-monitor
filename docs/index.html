@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monitoraggio Procurement · Illuminazione Pubblica</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+<style>
+:root{--bg:#fff;--bg2:#f5f4ef;--bg3:#eeedea;--txt:#1a1a18;--txt2:#6b6a65;--txt3:#9b9a95;--brd:rgba(0,0,0,.1);--brd2:rgba(0,0,0,.2);--blue:#185FA5;--blue-bg:#E6F1FB;--blue-txt:#0C447C;--green:#3B6D11;--green-bg:#EAF3DE;--green-txt:#27500A;--amber:#854F0B;--amber-bg:#FAEEDA;--amber-txt:#633806;--red:#A32D2D;--red-bg:#FCEBEB;--red-txt:#791F1F;--purple:#534AB7;--purple-bg:#EEEDFE;--purple-txt:#3C3489;--gray-bg:#F1EFE8;--gray-txt:#444441}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1a18;--bg2:#232320;--bg3:#2a2a27;--txt:#e8e6de;--txt2:#9b9a95;--txt3:#6b6a65;--brd:rgba(255,255,255,.1);--brd2:rgba(255,255,255,.2);--blue-bg:#042C53;--blue-txt:#B5D4F4;--green-bg:#173404;--green-txt:#C0DD97;--amber-bg:#412402;--amber-txt:#FAC775;--red-bg:#501313;--red-txt:#F7C1C1;--purple-bg:#26215C;--purple-txt:#CECBF6;--gray-bg:#2C2C2A;--gray-txt:#D3D1C7}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:var(--txt);background:var(--bg);min-height:100vh}
+.container{max-width:1200px;margin:0 auto;padding:20px 16px}
+header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+.logo{font-size:19px;font-weight:600;letter-spacing:-.02em}
+.logo span{color:var(--blue)}
+.updated{font-size:11px;color:var(--txt3);margin-top:3px}
+.actions{display:flex;gap:7px}
+.btn{font-size:12px;padding:6px 14px;border:0.5px solid var(--brd2);border-radius:8px;background:var(--bg2);color:var(--txt);cursor:pointer;font-family:inherit}
+.btn:hover{background:var(--bg3)}
+.alert-bar{background:var(--red-bg);border:0.5px solid var(--red);border-radius:8px;padding:9px 14px;margin-bottom:14px;font-size:12px;color:var(--red-txt);display:none;align-items:center;gap:8px}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:16px}
+.kpi-card{background:var(--bg2);border-radius:8px;padding:11px 13px}
+.kpi-label{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--txt3);margin-bottom:4px}
+.kpi-value{font-size:22px;font-weight:600;line-height:1}
+.kpi-sub{font-size:10px;color:var(--txt3);margin-top:3px}
+.filters{display:flex;gap:7px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+.filters select,.filters input{font-size:11px;padding:5px 8px;border:0.5px solid var(--brd2);border-radius:7px;background:var(--bg);color:var(--txt);height:29px;font-family:inherit}
+.filters input{width:190px}
+.tab-row{display:flex;gap:0;border-bottom:0.5px solid var(--brd);margin-bottom:14px;flex-wrap:wrap}
+.tab-btn{padding:7px 14px;font-size:12px;font-weight:400;cursor:pointer;background:none;border:none;border-bottom:2px solid transparent;color:var(--txt2);font-family:inherit}
+.tab-btn.active{font-weight:500;border-bottom-color:var(--blue);color:var(--blue)}
+.card{border:0.5px solid var(--brd);border-radius:10px;overflow:hidden;margin-bottom:14px}
+.card-hdr{padding:8px 13px;background:var(--bg2);border-bottom:0.5px solid var(--brd);font-size:11px;font-weight:500;display:flex;justify-content:space-between;align-items:center}
+.card-hdr span:last-child{font-weight:400;color:var(--txt3);font-size:10px}
+table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+thead th{background:var(--bg2);padding:6px 9px;text-align:left;font-size:9px;font-weight:500;color:var(--txt2);border-bottom:0.5px solid var(--brd);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+thead th.r{text-align:right}
+tbody td{padding:7px 9px;border-bottom:0.5px solid var(--brd);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+tbody td.r{text-align:right}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--bg2)}
+.b{display:inline-block;font-size:9px;padding:2px 6px;border-radius:8px;font-weight:500;white-space:nowrap}
+.bGP{background:var(--blue-bg);color:var(--blue-txt)}
+.bPR{background:var(--amber-bg);color:var(--amber-txt)}
+.bES{background:var(--green-bg);color:var(--green-txt)}
+.bRT{background:var(--purple-bg);color:var(--purple-txt)}
+.bP1{background:var(--red-bg);color:var(--red-txt)}
+.bP2{background:var(--amber-bg);color:var(--amber-txt)}
+.bP3{background:var(--green-bg);color:var(--green-txt)}
+.bP4{background:var(--gray-bg);color:var(--gray-txt)}
+.bANAC{background:var(--blue-bg);color:var(--blue-txt)}
+.bTED{background:var(--purple-bg);color:var(--purple-txt)}
+.bGURI{background:var(--green-bg);color:var(--green-txt)}
+.bAlbo{background:var(--amber-bg);color:var(--amber-txt)}
+.bStampa{background:var(--gray-bg);color:var(--gray-txt)}
+.report-box{padding:16px 20px;font-size:12.5px;line-height:1.7;max-height:600px;overflow-y:auto}
+.report-box h1{font-size:19px;margin-bottom:10px}
+.report-box h2{font-size:14px;margin-top:16px;margin-bottom:6px;color:var(--blue)}
+.report-box h3{font-size:12.5px;margin-top:10px;margin-bottom:4px}
+.report-box p{margin-bottom:8px}
+.report-box ul,.report-box ol{margin-left:18px;margin-bottom:8px}
+.report-box table{margin-top:8px;font-size:11px}
+.report-box code{background:var(--bg2);padding:1px 4px;border-radius:3px;font-size:10.5px}
+.empty{text-align:center;padding:30px;color:var(--txt3);font-size:12px}
+.detail-panel{border:0.5px solid var(--brd);border-radius:10px;padding:14px;margin-top:12px;display:none}
+.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}
+.df label{font-size:10px;color:var(--txt3);display:block;margin-bottom:2px}
+.df span{font-size:12px}
+.tag{display:inline-block;font-size:9px;padding:1px 6px;border-radius:4px;background:var(--bg2);border:0.5px solid var(--brd);color:var(--txt2);margin:2px}
+.scad-alert{color:var(--red-txt);font-weight:500}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:800px){.stats-grid{grid-template-columns:1fr}}
+.chart-card{border:0.5px solid var(--brd);border-radius:10px;padding:14px;background:var(--bg2)}
+.chart-title{font-size:11px;font-weight:500;color:var(--txt2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.03em}
+.chart-wrap{height:220px;position:relative}
+.source-list{list-style:none;padding:0}
+.source-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:0.5px solid var(--brd);font-size:12px}
+.source-item:last-child{border-bottom:none}
+.source-count{font-weight:600;color:var(--blue)}
+footer{margin-top:24px;padding-top:14px;border-top:0.5px solid var(--brd);display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--txt3);flex-wrap:wrap;gap:8px}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div>
+    <div class="logo">Illuminazione<span>Monitor</span></div>
+    <div class="updated" id="updated">Caricamento in corso…</div>
+  </div>
+  <div class="actions">
+    <button class="btn" onclick="load()">↻ Aggiorna</button>
+    <button class="btn" onclick="dlJson()">↓ JSON</button>
+    <button class="btn" onclick="dlCsv()">↓ CSV</button>
+    <button class="btn" onclick="dlReport()">↓ Report</button>
+  </div>
+</header>
+
+<div class="alert-bar" id="alert-bar">
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1L13 12H1Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><line x1="7" y1="5.5" x2="7" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="7" cy="10.5" r=".6" fill="currentColor"/></svg>
+  <span id="alert-text"></span>
+</div>
+
+<div class="kpi-grid" id="kpi-grid"></div>
+
+<div class="tab-row">
+  <button class="tab-btn active" id="tab-gare" onclick="setTab('gare')">Gare attive</button>
+  <button class="tab-btn" id="tab-preg" onclick="setTab('preg')">Pre-gara</button>
+  <button class="tab-btn" id="tab-scad" onclick="setTab('scad')">In scadenza</button>
+  <button class="tab-btn" id="tab-all" onclick="setTab('all')">Tutti i record</button>
+  <button class="tab-btn" id="tab-stats" onclick="setTab('stats')">Statistiche</button>
+  <button class="tab-btn" id="tab-fonti" onclick="setTab('fonti')">Fonti</button>
+  <button class="tab-btn" id="tab-report" onclick="setTab('report')">Report</button>
+</div>
+
+<div class="filters" id="filters">
+  <input type="text" id="q" placeholder="Cerca ente, oggetto, CIG…" oninput="renderTable()">
+  <select id="f-reg" onchange="renderTable()"><option value="">Tutte le regioni</option></select>
+  <select id="f-prio" onchange="renderTable()">
+    <option value="">Tutte le priorità</option>
+    <option value="P1">P1 – Alta</option>
+    <option value="P2">P2 – Media-alta</option>
+    <option value="P3">P3 – Media</option>
+    <option value="P4">P4 – Bassa</option>
+  </select>
+  <select id="f-fonte" onchange="renderTable()">
+    <option value="">Tutte le fonti</option>
+    <option value="ANAC">ANAC</option>
+    <option value="TED">TED</option>
+    <option value="GURI">GURI</option>
+    <option value="Albo">Albo</option>
+    <option value="Stampa">Stampa</option>
+  </select>
+  <select id="f-flag" onchange="renderTable()">
+    <option value="">Tutti i flag</option>
+    <option value="pnrr">PNRR</option>
+    <option value="ppp">PPP / concessione</option>
+    <option value="sopra">Sopra soglia UE</option>
+  </select>
+</div>
+
+<div class="card" id="main-card">
+  <div class="card-hdr"><span id="card-title">Gare attive</span><span id="card-count"></span></div>
+  <table><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+</div>
+
+<div id="stats-view" style="display:none">
+  <div class="stats-grid">
+    <div class="chart-card"><div class="chart-title">Distribuzione per stato</div><div class="chart-wrap"><canvas id="c-stato"></canvas></div></div>
+    <div class="chart-card"><div class="chart-title">Distribuzione per priorità</div><div class="chart-wrap"><canvas id="c-prio"></canvas></div></div>
+    <div class="chart-card"><div class="chart-title">Record per regione (top 12)</div><div class="chart-wrap"><canvas id="c-reg"></canvas></div></div>
+    <div class="chart-card"><div class="chart-title">Record per fonte</div><div class="chart-wrap"><canvas id="c-fonte"></canvas></div></div>
+    <div class="chart-card" style="grid-column:1/-1"><div class="chart-title">Storico KPI (ultimi 30 run)</div><div class="chart-wrap" style="height:280px"><canvas id="c-hist"></canvas></div></div>
+  </div>
+</div>
+
+<div id="fonti-view" style="display:none">
+  <div class="card">
+    <div class="card-hdr"><span>Fonti attive nella pipeline</span><span id="fonti-count"></span></div>
+    <ul class="source-list" id="fonti-list"></ul>
+  </div>
+</div>
+
+<div class="detail-panel" id="detail-panel"></div>
+
+</div>
+
+<footer>
+  <span id="footer-info">Illuminazione Pubblica Monitor · Pipeline multi-agente automatica</span>
+  <span>schema v4.0</span>
+</footer>
+
+<script>
+let DATA=null, REPORT="", curTab="gare", selId=null, CHARTS={};
+
+const STATE_BADGE={"GARA PUBBLICATA":"bGP","PRE-GARA":"bPR","ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA":"bES","RETTIFICA-PROROGA-CHIARIMENTI":"bRT"};
+const STATE_LABEL={"GARA PUBBLICATA":"Gara","PRE-GARA":"Pre-gara","ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA":"Esito","RETTIFICA-PROROGA-CHIARIMENTI":"Rettifica"};
+const FONTE_BADGE={"ANAC":"bANAC","TED":"bTED","GURI":"bGURI","Albo":"bAlbo","Stampa":"bStampa"};
+const PRIO_BADGE={"P1":"bP1","P2":"bP2","P3":"bP3","P4":"bP4"};
+const CHART_COLORS=["#185FA5","#3B6D11","#854F0B","#A32D2D","#534AB7","#0C447C","#27500A","#633806","#791F1F","#3C3489","#6b6a65"];
+
+function fE(v){return v&&v!=="n.d."?"€"+Number(v).toLocaleString("it-IT"):"n.d.";}
+function sb(s){return`<span class="b ${STATE_BADGE[s]||''}">${STATE_LABEL[s]||s||"n.d."}</span>`;}
+function pb(p){return`<span class="b ${PRIO_BADGE[p]||'bP4'}">${p||"–"}</span>`;}
+function fb(f){return`<span class="b ${FONTE_BADGE[f]||''}" style="font-size:9px">${f}</span>`;}
+function daysUntil(s){
+  if(!s||s==="n.d.")return null;
+  const m=String(s).match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+  const d=m?new Date(+m[3],+m[2]-1,+m[1]):new Date(s);
+  return isNaN(d)?null:Math.ceil((d-new Date())/864e5);
+}
+function esc(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+async function load(){
+  document.getElementById("updated").textContent="Caricamento…";
+  try{
+    const r=await fetch("illuminazione.json?v="+Date.now());
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    DATA=await r.json();
+
+    const regs=[...new Set((DATA.records||[]).map(r=>r.regione).filter(x=>x&&x!=="n.d."))].sort();
+    const sel=document.getElementById("f-reg");
+    sel.innerHTML=`<option value="">Tutte le regioni</option>`+regs.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("");
+
+    const today=new Date().toISOString().slice(0,10);
+    const paths=[`../reports/report-${today}.md`, `reports/report-${today}.md`];
+    for(const p of paths){
+      try{const rr=await fetch(p);if(rr.ok){REPORT=await rr.text();break;}}catch{}
+    }
+
+    renderKPI();
+    renderAlerts();
+    renderTable();
+    const k=DATA.kpi_oggi||{};
+    document.getElementById("updated").textContent=
+      "Aggiornato: "+new Date(DATA.last_updated).toLocaleString("it-IT")+
+      " · "+(DATA.records||[]).length+" record · "+
+      (k.ai_calls||0)+" call AI · "+
+      "~"+(k.token_stimati||0)+" token · "+
+      (k.fonti_attive||0)+" fonti";
+    document.getElementById("footer-info").textContent=
+      `Illuminazione Pubblica Monitor · ${(DATA.records||[]).length} record · schema v${DATA.schema_version}`;
+  }catch(e){
+    document.getElementById("updated").textContent="Errore caricamento: "+e.message+". Esegui almeno un run manuale per generare illuminazione.json.";
+  }
+}
+
+function renderKPI(){
+  const d=DATA,k=d.kpi_oggi||{};
+  const alerts=d.gare_scadenza_imminente||[];
+  document.getElementById("kpi-grid").innerHTML=[
+    {l:"Record validi",     v:(d.records||[]).filter(r=>r.tipo_novita!=="evidenza_debole").length, s:(k.priorita_p1||0)+" P1"},
+    {l:"Gare attive",       v:k.gare_attive||0},
+    {l:"Pre-gara",          v:k.pre_gara||0},
+    {l:"Scadenza ≤7gg",     v:alerts.length, s:alerts.length?"⚠ Verificare":"OK"},
+    {l:"Valore monitorato", v:"€"+(((k.valore_totale_eur||0)/1e6).toFixed(1))+"M"},
+    {l:"Fonti attive",      v:k.fonti_attive||0, s:(k.ai_calls||0)+" call AI"},
+  ].map(x=>`<div class="kpi-card"><div class="kpi-label">${x.l}</div><div class="kpi-value">${x.v}</div>${x.s?`<div class="kpi-sub">${x.s}</div>`:""}</div>`).join("");
+}
+
+function renderAlerts(){
+  const d=DATA;
+  const alerts=[];
+  const imm=d.gare_scadenza_imminente||[];
+  if(imm.length)alerts.push(`${imm.length} gara/e con scadenza entro 7 giorni`);
+  if(((d.anomalie_aperte||[]).length)>0)alerts.push(`${d.anomalie_aperte.length} anomalie aperte da verificare`);
+  const bar=document.getElementById("alert-bar");
+  if(alerts.length){bar.style.display="flex";document.getElementById("alert-text").textContent=alerts.join(" · ");}
+  else bar.style.display="none";
+}
+
+function getRows(){
+  if(!DATA)return[];
+  const q=(document.getElementById("q").value||"").toLowerCase();
+  const fr=document.getElementById("f-reg").value;
+  const fp=document.getElementById("f-prio").value;
+  const ff=document.getElementById("f-fonte").value;
+  const fl=document.getElementById("f-flag").value;
+  let rows=DATA.records||[];
+
+  if(curTab==="gare")  rows=rows.filter(r=>r.stato_procedurale==="GARA PUBBLICATA");
+  if(curTab==="preg")  rows=rows.filter(r=>r.stato_procedurale==="PRE-GARA");
+  if(curTab==="scad")  rows=(DATA.gare_scadenza_imminente||[]);
+  if(!["report","stats","fonti"].includes(curTab)) rows=rows.filter(r=>r.tipo_novita!=="evidenza_debole");
+
+  if(q)  rows=rows.filter(r=>JSON.stringify(r).toLowerCase().includes(q));
+  if(fr) rows=rows.filter(r=>r.regione===fr);
+  if(fp) rows=rows.filter(r=>r.priorita_commerciale===fp);
+  if(ff) rows=rows.filter(r=>r.fonte_principale===ff);
+  if(fl==="pnrr")  rows=rows.filter(r=>r.flag_pnrr);
+  if(fl==="ppp")   rows=rows.filter(r=>r.flag_ppp);
+  if(fl==="sopra") rows=rows.filter(r=>r.flag_sopra_soglia_ue);
+
+  return rows.slice().sort((a,b)=>({P1:0,P2:1,P3:2,P4:3}[a.priorita_commerciale]||3)-({P1:0,P2:1,P3:2,P4:3}[b.priorita_commerciale]||3));
+}
+
+function renderTable(){
+  document.getElementById("stats-view").style.display="none";
+  document.getElementById("fonti-view").style.display="none";
+  if(curTab==="stats"){
+    document.getElementById("main-card").style.display="none";
+    document.getElementById("filters").style.display="none";
+    document.getElementById("detail-panel").style.display="none";
+    document.getElementById("stats-view").style.display="block";
+    renderCharts();
+    return;
+  }
+  if(curTab==="fonti"){
+    document.getElementById("main-card").style.display="none";
+    document.getElementById("filters").style.display="none";
+    document.getElementById("detail-panel").style.display="none";
+    document.getElementById("fonti-view").style.display="block";
+    renderFonti();
+    return;
+  }
+  if(curTab==="report"){
+    document.getElementById("main-card").style.display="block";
+    document.getElementById("filters").style.display="none";
+    document.getElementById("detail-panel").style.display="none";
+    const rp=document.getElementById("main-card");
+    let html=REPORT?(window.marked?marked.parse(REPORT):REPORT):"Nessun report disponibile per oggi.";
+    rp.innerHTML=`<div class="card-hdr"><span>Report giornaliero</span></div><div class="report-box">${html}</div>`;
+    return;
+  }
+  document.getElementById("filters").style.display="flex";
+  document.getElementById("main-card").style.display="block";
+
+  const rows=getRows();
+  const titles={gare:"Gare attive",preg:"Segnali pre-gara",scad:"Gare con scadenza ≤7 giorni",all:"Tutti i record"};
+  document.getElementById("card-title").textContent=titles[curTab]||"Record";
+  document.getElementById("card-count").textContent=rows.length+" record";
+
+  document.getElementById("thead").innerHTML=`<tr>
+    <th style="width:17%">Ente</th>
+    <th style="width:22%">Oggetto</th>
+    <th class="r" style="width:11%">Importo</th>
+    <th style="width:11%">Stato</th>
+    <th style="width:7%">Prio.</th>
+    <th style="width:10%">Scadenza</th>
+    <th style="width:9%;font-size:9px">CIG</th>
+    <th style="width:8%">Fonte</th>
+    <th style="width:5%">+</th>
+  </tr>`;
+
+  if(!rows.length){document.getElementById("tbody").innerHTML=`<tr><td colspan="9" class="empty">Nessun record con i filtri selezionati.</td></tr>`;return;}
+
+  document.getElementById("tbody").innerHTML=rows.map(r=>{
+    const d=daysUntil(r.data_scadenza);
+    const scadClass=d!==null&&d>=0&&d<=3?"scad-alert":"";
+    return`<tr onclick="showDetail('${esc(r.record_id)}')" style="cursor:pointer">
+      <td title="${esc(r.ente)}">${esc(r.ente)}</td>
+      <td title="${esc(r.oggetto)}">${esc(r.oggetto.slice(0,46))}</td>
+      <td class="r">${fE(r.importo_iva_escl)}</td>
+      <td>${sb(r.stato_procedurale)}</td>
+      <td>${pb(r.priorita_commerciale)}</td>
+      <td class="${scadClass}">${esc(r.data_scadenza)}${d!==null&&d>=0&&d<=7?` <span style="font-size:9px">(${d}gg)</span>`:""}</td>
+      <td style="font-family:monospace;font-size:9px">${r.cig!=="n.d."?esc(r.cig.slice(0,10)):"n.d."}</td>
+      <td>${fb(r.fonte_principale)}</td>
+      <td style="font-size:10px;color:var(--txt3)">▸</td>
+    </tr>`;
+  }).join("");
+}
+
+function showDetail(id){
+  const r=(DATA.records||[]).find(x=>x.record_id===id);
+  if(!r)return;
+  if(selId===id){document.getElementById("detail-panel").style.display="none";selId=null;return;}
+  selId=id;
+  const dp=document.getElementById("detail-panel");
+  dp.style.display="block";
+  const pnrr=r.flag_pnrr?`<span class="tag" style="background:var(--blue-bg);color:var(--blue-txt);border-color:#85B7EB">PNRR</span>`:"";
+  const ppp=r.flag_ppp?`<span class="tag" style="background:var(--amber-bg);color:var(--amber-txt);border-color:#EF9F27">PPP</span>`:"";
+  const sopra=r.flag_sopra_soglia_ue?`<span class="tag" style="background:var(--purple-bg);color:var(--purple-txt);border-color:#AFA9EC">sopra soglia UE</span>`:"";
+  dp.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <div>
+        <div style="font-size:13px;font-weight:500;margin-bottom:3px">${esc(r.ente)}</div>
+        <div style="font-size:11px;color:var(--txt2)">${esc(r.oggetto)}</div>
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">${sb(r.stato_procedurale)} ${pb(r.priorita_commerciale)} ${pnrr}${ppp}${sopra}</div>
+    </div>
+    <div class="detail-grid">
+      <div class="df"><label>CIG</label><span style="font-family:monospace;font-size:11px">${esc(r.cig)}</span></div>
+      <div class="df"><label>Importo (IVA esclusa)</label><span>${fE(r.importo_iva_escl)}${r.importo_stimato?" (stimato)":""}</span></div>
+      <div class="df"><label>Scadenza</label><span>${esc(r.data_scadenza)}</span></div>
+      <div class="df"><label>Procedura</label><span>${esc(r.procedura)}</span></div>
+      <div class="df"><label>Regione</label><span>${esc(r.regione)}</span></div>
+      <div class="df"><label>Fonte</label><span>${esc(r.fonte_principale)}</span></div>
+      <div class="df"><label>Validazione</label><span>${esc(r.livello_validazione)}</span></div>
+      <div class="df"><label>Confidence</label><span>${Math.round((r.confidence_score||0)*100)}%</span></div>
+      <div class="df"><label>Score commerciale</label><span>${r.score_commerciale||0}/100</span></div>
+    </div>
+    <div style="margin-top:10px;border-top:0.5px solid var(--brd);padding-top:8px">
+      <div style="font-size:10px;color:var(--txt3);margin-bottom:5px">Tag tecnici</div>
+      <div>${(r.tag_tecnico||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join("")||"–"}</div>
+    </div>
+    ${r.note_operative?`<div style="margin-top:8px;border-top:0.5px solid var(--brd);padding-top:8px;font-size:11px;color:var(--txt2)">${esc(r.note_operative)}</div>`:""}
+    <div style="margin-top:10px">
+      <a href="${esc(r.link_bando)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--blue)">→ Apri bando/atto</a>
+      <span style="font-size:10px;color:var(--txt3);margin-left:12px">Aggiornato: ${new Date(r.last_updated_at).toLocaleString("it-IT")}</span>
+    </div>`;
+  dp.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+
+function makeChart(id,type,labels,data,opts={}){
+  if(CHARTS[id]){CHARTS[id].destroy();delete CHARTS[id];}
+  const ctx=document.getElementById(id);
+  if(!ctx)return;
+  CHARTS[id]=new Chart(ctx,{
+    type,
+    data:{labels,datasets:[{data,backgroundColor:opts.multi?CHART_COLORS:CHART_COLORS[0],borderWidth:0,...opts.dataset}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:type==="doughnut"||type==="pie",position:"right",labels:{font:{size:10}}}},scales:opts.scales||(type==="doughnut"||type==="pie"?{}:{y:{beginAtZero:true,ticks:{font:{size:10}}},x:{ticks:{font:{size:10}}}})}
+  });
+}
+
+function renderCharts(){
+  const d=DATA;
+  const perSt=d.per_stato||{}, perRg=d.per_regione||{}, perFn=d.per_fonte||{};
+  const prio=(d.records||[]).reduce((a,r)=>{a[r.priorita_commerciale]=(a[r.priorita_commerciale]||0)+1;return a;},{});
+  makeChart("c-stato","doughnut",Object.keys(perSt).map(k=>STATE_LABEL[k]||k),Object.values(perSt),{multi:true});
+  makeChart("c-prio","doughnut",["P1","P2","P3","P4"],["P1","P2","P3","P4"].map(k=>prio[k]||0),{multi:true});
+  const topReg=Object.entries(perRg).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  makeChart("c-reg","bar",topReg.map(x=>x[0]),topReg.map(x=>x[1]),{});
+  makeChart("c-fonte","bar",Object.keys(perFn),Object.values(perFn),{multi:true});
+  const hist=d.storico_kpi||[];
+  const labels=hist.map(h=>h.date.slice(5));
+  if(CHARTS["c-hist"]){CHARTS["c-hist"].destroy();}
+  const ctx=document.getElementById("c-hist");
+  if(ctx&&hist.length){
+    CHARTS["c-hist"]=new Chart(ctx,{
+      type:"line",
+      data:{labels,datasets:[
+        {label:"Gare attive",data:hist.map(h=>h.gare_attive||0),borderColor:"#185FA5",backgroundColor:"transparent",tension:0.3},
+        {label:"Pre-gara",  data:hist.map(h=>h.pre_gara||0),   borderColor:"#854F0B",backgroundColor:"transparent",tension:0.3},
+        {label:"P1",        data:hist.map(h=>h.priorita_p1||0),borderColor:"#A32D2D",backgroundColor:"transparent",tension:0.3},
+        {label:"Totale",    data:hist.map(h=>h.record_totali||0),borderColor:"#3B6D11",backgroundColor:"transparent",tension:0.3},
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"top",labels:{font:{size:10}}}},scales:{y:{beginAtZero:true,ticks:{font:{size:10}}},x:{ticks:{font:{size:9}}}}}
+    });
+  }
+}
+
+function renderFonti(){
+  const list=(DATA.fonti_attive||[]);
+  document.getElementById("fonti-count").textContent=list.length+" fonti";
+  document.getElementById("fonti-list").innerHTML=list.map(s=>
+    `<li class="source-item"><div><div style="font-weight:500">${esc(s.id)}</div><div style="font-size:10px;color:var(--txt3);margin-top:2px">${esc(s.type)}</div></div><div class="source-count">${s.count} record</div></li>`
+  ).join("")||`<li class="empty">Nessuna fonte registrata.</li>`;
+}
+
+function setTab(t){
+  curTab=t;selId=null;
+  document.getElementById("detail-panel").style.display="none";
+  ["gare","preg","scad","all","stats","fonti","report"].forEach(k=>{
+    const el=document.getElementById("tab-"+k);
+    if(el)el.classList.toggle("active",k===t);
+  });
+  renderTable();
+}
+
+function dlJson(){
+  if(!DATA)return;
+  const b=new Blob([JSON.stringify(DATA,null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="illuminazione.json";a.click();
+}
+function dlCsv(){
+  if(!DATA)return;
+  const rows=DATA.records||[];
+  const cols=["record_id","ente","oggetto","importo_iva_escl","cig","data_scadenza","stato_procedurale","priorita_commerciale","fonte_principale","regione","link_bando"];
+  const csv=[cols.join(",")].concat(rows.map(r=>cols.map(c=>{
+    const v=String(r[c]==null?"":r[c]).replace(/"/g,'""');
+    return `"${v}"`;
+  }).join(","))).join("\n");
+  const b=new Blob([csv],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="illuminazione.csv";a.click();
+}
+function dlReport(){
+  if(!REPORT)return;
+  const b=new Blob([REPORT],{type:"text/markdown"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="report.md";a.click();
+}
+
+load();
+</script>
+</body>
+</html>
