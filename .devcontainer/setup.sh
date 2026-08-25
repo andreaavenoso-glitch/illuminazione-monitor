@@ -6,7 +6,11 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-cp -n .env.example .env || true
+# Sovrascrive sempre .env da .env.example: questo e' un ambiente di prova
+# usa-e-getta, non un deploy persistente, e rieseguire questo script (es.
+# dopo un git pull, o riavviando manualmente) deve poter correggere un .env
+# rimasto con valori vecchi da un avvio precedente dello stesso Codespace.
+cp .env.example .env
 
 # In un Codespace il browser dell'utente NON e' dentro il container: le
 # variabili che puntano ad "http://localhost:*" nel file .env.example sono
@@ -33,7 +37,11 @@ if [ -n "${CODESPACE_NAME:-}" ]; then
 fi
 
 echo "==> Costruzione e avvio dei servizi (puo' richiedere qualche minuto la prima volta)..."
-docker compose up -d --build
+# --force-recreate: se questo script viene rieseguito su container gia'
+# esistenti (es. dopo un git pull nello stesso Codespace), forza la
+# ricreazione così i container ripartono leggendo il nuovo .env invece di
+# restare in piedi con le variabili d'ambiente della volta precedente.
+docker compose up -d --build --force-recreate
 
 echo "==> Attendo che l'API sia pronta..."
 ready=""
