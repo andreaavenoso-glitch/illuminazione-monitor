@@ -1,0 +1,53 @@
+name: Pipeline Illuminazione Pubblica
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # 05:00 UTC = 06:00 CET / 07:00 CEST (Roma)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pipeline-illuminazione
+  cancel-in-progress: false
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --omit=dev || npm install --omit=dev
+
+      - name: Run multi-agent pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node scripts/pipeline.js
+
+      - name: Prune old reports (>90 giorni)
+        run: |
+          find reports/ -type f -name "report-*.md" -mtime +90 -delete 2>/dev/null || true
+
+      - name: Commit artefatti generati
+        run: |
+          git config user.name  "illuminazione-bot"
+          git config user.email "bot@illuminazione-monitor"
+          git add docs/illuminazione.json reports/ state/ scripts/watchlist.json
+          if git diff --cached --quiet; then
+            echo "Nessun aggiornamento da committare"
+          else
+            git commit -m "run: $(date -u +'%Y-%m-%d %H:%M') UTC"
+            for i in 1 2 3 4; do
+              git push && break || sleep $((2**i))
+            done
+          fi
