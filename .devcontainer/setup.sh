@@ -36,6 +36,14 @@ if [ -n "${CODESPACE_NAME:-}" ]; then
   set_env "CORS_ORIGINS" "$web_url"
 fi
 
+# docker-compose.yml monta /app/.next del servizio "web" come volume anonimo
+# (serve a non far sparire la build di Next dietro al bind-mount del codice
+# sorgente) — ma un volume anonimo sopravvive anche a un container ricreato
+# da zero. Se NEXT_PUBLIC_API_URL cambia (es. rieseguendo questo script), la
+# pagina di login continuerebbe a servire il bundle JS gia' compilato con il
+# vecchio indirizzo finche' quella cache non viene buttata via esplicitamente.
+docker compose rm -f -s -v web >/dev/null 2>&1 || true
+
 echo "==> Costruzione e avvio dei servizi (puo' richiedere qualche minuto la prima volta)..."
 # --force-recreate: se questo script viene rieseguito su container gia'
 # esistenti (es. dopo un git pull nello stesso Codespace), forza la
