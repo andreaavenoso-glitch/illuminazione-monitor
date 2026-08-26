@@ -4,14 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
 
-type StepStatus = "pending" | "running" | "done" | "error";
-
-type Step = {
-  key: string;
-  label: string;
-  waitLabel: string;
-  waitMs: number;
-  run: () => Promise<unknown>;
+type TaskStatus = {
+  task_id: string;
+  status: string;
+  ready: boolean;
+  result?: Record<string, number | string> | null;
+  error?: string;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,35 +18,41 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-const STEPS: Step[] = [
-  {
-    key: "collect",
-    label: "Raccolta da fonti ufficiali e comuni",
-    waitLabel: "Attendo che il worker scarichi i dati…",
-    waitMs: 60_000,
-    run: () => api.post("/admin/run-daily-monitor"),
-  },
-  {
-    key: "normalize",
-    label: "Pulizia e normalizzazione dei risultati",
-    waitLabel: "Normalizzo i risultati…",
-    waitMs: 10_000,
-    run: () => api.post("/admin/normalize-records"),
-  },
-  {
-    key: "score",
-    label: "Calcolo priorità e rimozione doppioni",
-    waitLabel: "Calcolo punteggi e rimuovo doppioni…",
-    waitMs: 5_000,
-    run: () => api.post("/admin/score-and-dedupe"),
-  },
-  {
-    key: "report",
-    label: "Generazione report del giorno",
-    waitLabel: "",
-    waitMs: 0,
-    run: () => api.post(`/admin/rebuild-report/${todayIso()}`),
-  },
+async function pollTask(
+  taskId: string,
+  { intervalMs = 4000, timeoutMs = 20 * 60_000 }: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<TaskStatus> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await api.get<TaskStatus>(`/admin/task-status/${taskId}`);
+    if (status.status === "SUCCESS" || status.status === "FAILURE") {
+      return status;
+    }
+    await sleep(intervalMs);
+  }
+  throw new Error("tempo massimo di attesa superato: il lavoro sembra bloccato sul server");
+}
+
+function summarizeResult(result: TaskStatus["result"]): string {
+  if (!result) return "";
+  const parts: string[] = [];
+  if (typeof result.sources_run === "number") parts.push(`${result.sources_run} fonti interrogate`);
+  if (typeof result.items_scanned === "number") parts.push(`${result.items_scanned} comuni scansionati`);
+  if (typeof result.records_found === "number") parts.push(`${result.records_found} trovati`);
+  if (typeof result.records_valid === "number") parts.push(`${result.records_valid} validi`);
+  if (typeof result.records_weak === "number" && result.records_weak > 0)
+    parts.push(`${result.records_weak} deboli`);
+  if (typeof result.duplicates_removed === "number" && result.duplicates_removed > 0)
+    parts.push(`${result.duplicates_removed} doppioni rimossi`);
+  if (typeof result.errors === "number" && result.errors > 0) parts.push(`${result.errors} errori`);
+  return parts.join(", ");
+}
+
+// Labels for the 3 collection jobs fired in parallel by /admin/run-daily-monitor.
+const COLLECT_JOBS: { key: string; label: string }[] = [
+  { key: "official_task_id", label: "Fonti ufficiali (ANAC, TED, GURI, Consip)" },
+  { key: "eproc_task_id", label: "Portali e-procurement" },
+  { key: "watchlist_task_id", label: "Comuni in watchlist" },
 ];
 
 const ADVANCED_ACTIONS = [
@@ -75,28 +79,73 @@ export function ManualCollectionPanel() {
   const appendLog = (line: string) =>
     setLog((prev) => [...prev, `${new Date().toLocaleTimeString("it-IT")} — ${line}`]);
 
+  const runSingleTaskStep = async (
+    label: string,
+    dispatch: () => Promise<{ task_id: string }>,
+    timeoutMs = 5 * 60_000,
+  ) => {
+    setCurrentStep(`${label}…`);
+    const { task_id } = await dispatch();
+    const status = await pollTask(task_id, { intervalMs: 3000, timeoutMs });
+    if (status.status === "SUCCESS") {
+      appendLog(`${label}: completato — ${summarizeResult(status.result)}`);
+    } else {
+      appendLog(`${label}: errore — ${status.error ?? "sconosciuto"}`);
+    }
+  };
+
+  const runCollectStep = async () => {
+    const dispatched = await api.post<Record<string, string>>("/admin/run-daily-monitor");
+    const jobs = COLLECT_JOBS.filter((job) => dispatched[job.key]);
+    let doneCount = 0;
+    setCurrentStep(`Raccolta dalle fonti in corso (0/${jobs.length} completate)… può richiedere diversi minuti`);
+
+    await Promise.all(
+      jobs.map(async (job) => {
+        try {
+          // Watchlist scan is the slowest leg (up to ~9 pages per comune x 73
+          // comuni, one AI call each) so it gets the longest budget.
+          const timeoutMs = job.key === "watchlist_task_id" ? 25 * 60_000 : 15 * 60_000;
+          const status = await pollTask(dispatched[job.key], { intervalMs: 5000, timeoutMs });
+          doneCount += 1;
+          setCurrentStep(`Raccolta dalle fonti in corso (${doneCount}/${jobs.length} completate)…`);
+          if (status.status === "SUCCESS") {
+            appendLog(`${job.label}: completata — ${summarizeResult(status.result)}`);
+          } else {
+            appendLog(`${job.label}: errore — ${status.error ?? "sconosciuto"}`);
+          }
+        } catch (err) {
+          doneCount += 1;
+          setCurrentStep(`Raccolta dalle fonti in corso (${doneCount}/${jobs.length} completate)…`);
+          appendLog(`${job.label}: ${err instanceof Error ? err.message : "errore imprevisto"}`);
+        }
+      }),
+    );
+  };
+
   const runFullCollection = async () => {
     setRunning(true);
     setOutcome("idle");
     setLog([]);
 
     try {
-      for (const step of STEPS) {
-        setCurrentStep(step.label);
-        await step.run();
-        appendLog(`${step.label}: avviato`);
-        if (step.waitMs > 0) {
-          setCurrentStep(step.waitLabel);
-          await sleep(step.waitMs);
-        }
-      }
+      await runCollectStep();
+      await runSingleTaskStep("Pulizia e normalizzazione dei risultati", () =>
+        api.post("/admin/normalize-records"),
+      );
+      await runSingleTaskStep("Calcolo priorità e rimozione doppioni", () =>
+        api.post("/admin/score-and-dedupe"),
+      );
+      await runSingleTaskStep("Generazione report del giorno", () =>
+        api.post(`/admin/rebuild-report/${todayIso()}`),
+      );
       setCurrentStep(null);
       setOutcome("done");
       appendLog("Completato. Controlla la pagina Elenco gare.");
     } catch (err) {
       setCurrentStep(null);
       setOutcome("error");
-      const msg = err instanceof ApiError ? err.message : "Errore imprevisto";
+      const msg = err instanceof ApiError || err instanceof Error ? err.message : "Errore imprevisto";
       appendLog(`Errore: ${msg}`);
     } finally {
       setRunning(false);
@@ -124,7 +173,9 @@ export function ManualCollectionPanel() {
           <h2 className="text-sm font-semibold">Raccolta manuale</h2>
           <p className="mt-1 text-sm text-neutral-500">
             Normalmente il sistema raccoglie da solo ogni notte. Usa questo pulsante per
-            forzare una raccolta adesso e vedere i risultati senza aspettare.
+            forzare una raccolta adesso: aspetta il completamento reale di ogni fase (può
+            richiedere diversi minuti, soprattutto per la scansione dei comuni) invece di
+            fermarsi dopo un tempo fisso.
           </p>
         </div>
         <button

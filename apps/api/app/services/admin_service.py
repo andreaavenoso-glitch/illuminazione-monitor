@@ -2,6 +2,7 @@ from uuid import UUID
 
 from app.core.config import get_settings
 from celery import Celery
+from celery.result import AsyncResult
 
 
 def _celery_app() -> Celery:
@@ -11,6 +12,21 @@ def _celery_app() -> Celery:
         broker=settings.celery_broker_url,
         backend=settings.celery_result_backend,
     )
+
+
+def get_task_status(task_id: str) -> dict:
+    """Poll a dispatched task's real state instead of guessing from elapsed
+    time — a full collection pass can take several minutes (more since the
+    watchlist scan started following up to ~9 pages per comune), so any
+    fixed wait either lags behind a fast run or cuts off a slow one.
+    """
+    result = AsyncResult(task_id, app=_celery_app())
+    payload: dict = {"task_id": task_id, "status": result.status, "ready": result.ready()}
+    if result.successful():
+        payload["result"] = result.result
+    elif result.failed():
+        payload["error"] = str(result.result)
+    return payload
 
 
 def dispatch_daily_monitor() -> dict[str, str]:

@@ -31,7 +31,7 @@ jobs:
           pip install -e packages/shared_schemas
           pip install httpx beautifulsoup4 lxml feedparser openpyxl structlog \
             fastapi sqlalchemy asyncpg pydantic-settings \
-            "bcrypt==4.0.1" pyjwt slowapi email-validator anthropic \
+            "bcrypt==4.0.1" pyjwt slowapi email-validator anthropic "celery[redis]==5.4.0" \
             pytest pytest-asyncio pytest-httpx
 
       - name: Run unit tests
