@@ -16,6 +16,16 @@ async def run_daily_monitor(_: User = Depends(require_role("admin"))) -> dict:
     return {"status": "dispatched", **task_ids}
 
 
+@router.get("/task-status/{task_id}")
+async def task_status(task_id: str, _: User = Depends(require_role("admin"))) -> dict:
+    """Real status of a task dispatched by one of the endpoints below (PENDING/
+    STARTED/SUCCESS/FAILURE), so a caller can wait for actual completion
+    instead of a guessed delay."""
+    from app.services.admin_service import get_task_status
+
+    return get_task_status(task_id)
+
+
 @router.post("/retry-source/{source_id}")
 async def retry_source(
     source_id: UUID,
