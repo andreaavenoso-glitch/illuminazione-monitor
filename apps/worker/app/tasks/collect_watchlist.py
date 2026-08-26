@@ -15,12 +15,15 @@ Pubbliche Amministrazioni) rather than discovered by hand.
 
 Each active watchlist item gets the same 3-tier adaptive fetch as
 SmartLLMCollector for every non-null URL it has (one page fetch per URL,
-independently). For url_trasparenza, a second hop follows the mandated
-"Bandi di gara e contratti" sub-section link when findable, since the
-transparency section's landing page is usually just a navigation menu. A
-dedicated Claude prompt (tuned for heterogeneous municipal notice-board
-content, not tender listings) then extracts only the pre-tender
-lighting-perimeter signals from that listing.
+independently). For url_trasparenza, the landing page is usually just a
+navigation menu, so this goes looking for where the actual content is
+instead of stopping at the mandated "Bandi di gara e contratti" label:
+sitemap.xml when the site has one (§ collectors/sitemap.py), otherwise the
+label match plus an AI pass over every link on the page (§
+select_relevant_links), up to MAX_EXTRA_PAGES pages. A dedicated Claude
+prompt (tuned for heterogeneous municipal notice-board content, not tender
+listings) then extracts only the pre-tender lighting-perimeter signals from
+each page visited.
 
 A third hop follows each already-relevant record's own link (when it has
 one) to its detail page and enriches ente/scadenza/body from there --
@@ -43,7 +46,9 @@ from app.collectors.albo_pretorio_llm import (
     extract_bando_detail,
     find_bandi_link,
     merge_detail_into_record,
+    select_relevant_links,
 )
+from app.collectors.sitemap import discover_sitemap_urls
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from shared_models import JobRun, RawRecord, WatchlistItem
@@ -51,6 +56,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
+
+# Bounds how many extra pages a single url_trasparenza scan can follow, to
+# keep the (real, Claude-metered) cost of going deeper predictable: each
+# extra page is one more page fetch and one more extraction call, on top of
+# whatever detail-page hops the records it finds trigger.
+MAX_EXTRA_PAGES = 8
 
 
 async def _fetch_page(url: str, *, settings: WorkerSettings, label: str) -> str:
@@ -62,6 +73,81 @@ async def _fetch_page(url: str, *, settings: WorkerSettings, label: str) -> str:
         playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
         label=label,
     )
+
+
+async def _process_page(
+    session: AsyncSession,
+    item: WatchlistItem,
+    job: JobRun,
+    *,
+    target_url: str,
+    target_html: str,
+    label: str,
+    settings: WorkerSettings,
+    now: datetime,
+    seen: set[str],
+) -> None:
+    """Extract records from one already-fetched page and persist the new
+    ones. Shared by every page a watchlist item's scan touches, whether
+    that's the single url_albo page or one of several url_trasparenza pages
+    followed via sitemap/link-selection below.
+    """
+    records = await extract_albo_records(target_html, url=target_url, settings=settings, label=label)
+    job.records_found += len(records)
+
+    for record in records:
+        # The extraction prompt asks for absolute URLs only, but Claude
+        # doesn't always comply -- resolve defensively against the page
+        # it was found on rather than handing a relative path straight
+        # to httpx/Playwright (which reject it outright) or storing it
+        # as-is in raw_url, where it would be unusable to a reader.
+        detail_url = record.get("url")
+        if detail_url:
+            detail_url = urljoin(target_url, detail_url)
+            record = {**record, "url": detail_url}
+        if detail_url and detail_url != target_url:
+            detail_html = await _fetch_page(detail_url, settings=settings, label=f"{label}:detail")
+            if detail_html:
+                details = await extract_bando_detail(
+                    detail_html, url=detail_url, settings=settings, label=f"{label}:detail"
+                )
+                if details:
+                    record = merge_detail_into_record(record, details)
+
+        kwargs = build_raw_record_kwargs(
+            url_albo=target_url,
+            source_id=item.source_id,
+            entity_id=item.entity_id,
+            record=record,
+            now=now,
+        )
+        checksum = kwargs["checksum"]
+        if checksum in seen:
+            job.duplicates_removed += 1
+            continue
+        seen.add(checksum)
+
+        session.add(RawRecord(**kwargs))
+        job.records_valid += 1
+
+
+async def _trasparenza_pages(cleaned: str, url: str, *, settings: WorkerSettings, label: str) -> list[str]:
+    """Pages beyond the Amministrazione Trasparente landing page worth
+    extracting from. Pre-gara signals are often filed under sections other
+    than "Bandi di gara e contratti" (Provvedimenti, Avvisi, Novità...) or
+    several clicks deep, so a single label match isn't enough. Sitemap.xml,
+    when the site has one, is the cheapest and most complete way to find
+    them; otherwise fall back to the deterministic label match plus an AI
+    pass over every link on the landing page.
+    """
+    sitemap_pages = await discover_sitemap_urls(url)
+    if sitemap_pages:
+        return sitemap_pages[:MAX_EXTRA_PAGES]
+
+    bandi_url = find_bandi_link(cleaned, base_url=url)
+    selected = await select_relevant_links(cleaned, base_url=url, settings=settings, label=label)
+    pages = [u for u in dict.fromkeys([bandi_url, *selected]) if u and u != url]
+    return pages[:MAX_EXTRA_PAGES]
 
 
 async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) -> None:
@@ -84,59 +170,39 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
         if not cleaned:
             continue
 
-        target_url, target_html = url, cleaned
-        if kind == "trasparenza":
-            # The landing page of Amministrazione Trasparente is usually
-            # just a navigation menu; D.Lgs. 33/2013 mandates a "Bandi di
-            # gara e contratti" sub-section, so follow straight to it when
-            # findable instead of extracting from the near-empty menu page.
-            bandi_url = find_bandi_link(cleaned, base_url=url)
-            if bandi_url and bandi_url != url:
-                bandi_html = await _fetch_page(bandi_url, settings=settings, label=f"{label}:bandi")
-                if bandi_html:
-                    target_url, target_html = bandi_url, bandi_html
-                    log.info(
-                        "collect_watchlist.bandi_link_followed",
-                        extra={"item": str(item.id), "url": bandi_url},
-                    )
-
-        records = await extract_albo_records(target_html, url=target_url, settings=settings, label=label)
-        job.records_found += len(records)
-
-        for record in records:
-            # The extraction prompt asks for absolute URLs only, but Claude
-            # doesn't always comply -- resolve defensively against the page
-            # it was found on rather than handing a relative path straight
-            # to httpx/Playwright (which reject it outright) or storing it
-            # as-is in raw_url, where it would be unusable to a reader.
-            detail_url = record.get("url")
-            if detail_url:
-                detail_url = urljoin(target_url, detail_url)
-                record = {**record, "url": detail_url}
-            if detail_url and detail_url != target_url:
-                detail_html = await _fetch_page(detail_url, settings=settings, label=f"{label}:detail")
-                if detail_html:
-                    details = await extract_bando_detail(
-                        detail_html, url=detail_url, settings=settings, label=f"{label}:detail"
-                    )
-                    if details:
-                        record = merge_detail_into_record(record, details)
-
-            kwargs = build_raw_record_kwargs(
-                url_albo=target_url,
-                source_id=item.source_id,
-                entity_id=item.entity_id,
-                record=record,
-                now=now,
+        if kind != "trasparenza":
+            await _process_page(
+                session, item, job,
+                target_url=url, target_html=cleaned, label=label,
+                settings=settings, now=now, seen=seen,
             )
-            checksum = kwargs["checksum"]
-            if checksum in seen:
-                job.duplicates_removed += 1
-                continue
-            seen.add(checksum)
+            continue
 
-            session.add(RawRecord(**kwargs))
-            job.records_valid += 1
+        extra_pages = await _trasparenza_pages(cleaned, url, settings=settings, label=label)
+        if not extra_pages:
+            # Nothing more specific found: extract from the landing page
+            # itself, same as before this went looking further.
+            await _process_page(
+                session, item, job,
+                target_url=url, target_html=cleaned, label=label,
+                settings=settings, now=now, seen=seen,
+            )
+            continue
+
+        log.info(
+            "collect_watchlist.extra_pages",
+            extra={"item": str(item.id), "count": len(extra_pages)},
+        )
+        for page_url in extra_pages:
+            page_label = f"{label}:{page_url}"
+            page_html = await _fetch_page(page_url, settings=settings, label=page_label)
+            if not page_html:
+                continue
+            await _process_page(
+                session, item, job,
+                target_url=page_url, target_html=page_html, label=page_label,
+                settings=settings, now=now, seen=seen,
+            )
 
     item.last_scan_at = now
 
