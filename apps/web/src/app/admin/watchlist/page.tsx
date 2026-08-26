@@ -1,3 +1,4 @@
+import { ManualCollectionPanel } from "@/components/ManualCollectionPanel";
 import { WatchlistTable } from "@/components/WatchlistTable";
 
 export default function WatchlistAdminPage() {
@@ -9,6 +10,7 @@ export default function WatchlistAdminPage() {
           Enti e fonti monitorati per l&apos;illuminazione pubblica.
         </p>
       </header>
+      <ManualCollectionPanel />
       <WatchlistTable />
     </div>
   );
