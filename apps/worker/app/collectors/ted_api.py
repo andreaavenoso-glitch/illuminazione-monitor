@@ -101,8 +101,24 @@ class TEDCollector(BaseCollector):
                 deadline_raw = deadline_raw[0] if deadline_raw else None
             scadenza = str(deadline_raw)[:10] if deadline_raw else None
 
+            # classify_stato_procedurale only has raw_body/descrizione text to
+            # go on -- it has no idea this came from TED's own structured
+            # deadline field, so an award notice's absent deadline was never
+            # reaching it as a signal. total-value (the concluded contract
+            # value, as opposed to estimated-value-lot, its pre-award
+            # estimate) together with no submission deadline is TED's own
+            # signal that this is a result/award notice, not an open one; a
+            # plain "avviso di aggiudicazione" note in the body lets the
+            # existing esito keyword match (§classifier._ESITO_RE) pick it up
+            # like any other source, instead of every TED record defaulting
+            # to "GARA PUBBLICATA" forever -- which is what left
+            # already-awarded tenders showing as still open on the dashboard.
+            is_award_notice = total_value is not None and not deadline_raw
+
             body_parts = [f"Ente: {buyer}"] if buyer else []
             body_parts.append(f"Numero pubblicazione TED: {pub_number}")
+            if is_award_notice:
+                body_parts.append("Tipo avviso: esito di aggiudicazione")
             drafts.append(
                 RawRecordDraft(
                     raw_url=url,

@@ -15,6 +15,7 @@ class FakeRecord:
     importo: Decimal | None
     source_priority_rank: int
     first_seen_at: datetime
+    stato_procedurale: str = "GARA PUBBLICATA"
 
 
 def _record(**overrides) -> FakeRecord:
@@ -26,6 +27,7 @@ def _record(**overrides) -> FakeRecord:
         importo=Decimal("1000000"),
         source_priority_rank=4,
         first_seen_at=datetime(2026, 4, 22, 10, tzinfo=UTC),
+        stato_procedurale="GARA PUBBLICATA",
     )
     base.update(overrides)
     return FakeRecord(**base)
@@ -93,3 +95,43 @@ class TestDeduplicateGroup:
     def test_empty_returns_no_master(self) -> None:
         group = deduplicate_group([])
         assert group.master_id is None
+
+    def test_esito_wins_over_gara_pubblicata_even_with_worse_source_rank(self) -> None:
+        # Same CIG, two lifecycle stages: the original bando (from a highly
+        # ranked source) and, weeks later, its esito di aggiudicazione (from
+        # a lower-ranked source, e.g. ANAC vs. the comune's own portal). The
+        # esito must win regardless -- otherwise an awarded tender keeps
+        # showing as still open.
+        bando = _record(
+            source_priority_rank=1,
+            stato_procedurale="GARA PUBBLICATA",
+            first_seen_at=datetime(2026, 3, 1, tzinfo=UTC),
+        )
+        esito = _record(
+            source_priority_rank=5,
+            stato_procedurale="ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA",
+            first_seen_at=datetime(2026, 4, 15, tzinfo=UTC),
+        )
+        group = deduplicate_group([bando, esito])
+        assert group.master_id == str(esito.id)
+        assert group.duplicate_ids == [str(bando.id)]
+
+    def test_rettifica_wins_over_gara_pubblicata(self) -> None:
+        bando = _record(source_priority_rank=1, stato_procedurale="GARA PUBBLICATA")
+        rettifica = _record(source_priority_rank=5, stato_procedurale="RETTIFICA-PROROGA-CHIARIMENTI")
+        group = deduplicate_group([bando, rettifica])
+        assert group.master_id == str(rettifica.id)
+
+    def test_pre_gara_never_beats_a_published_gara(self) -> None:
+        pre_gara = _record(source_priority_rank=1, stato_procedurale="PRE-GARA")
+        gara = _record(source_priority_rank=5, stato_procedurale="GARA PUBBLICATA")
+        group = deduplicate_group([pre_gara, gara])
+        assert group.master_id == str(gara.id)
+
+    def test_same_stage_still_breaks_ties_by_source_rank(self) -> None:
+        # Two records at the same lifecycle stage (e.g. the same bando
+        # mirrored on two portals): source reliability still decides.
+        best = _record(source_priority_rank=1, stato_procedurale="GARA PUBBLICATA")
+        worse = _record(source_priority_rank=4, stato_procedurale="GARA PUBBLICATA")
+        group = deduplicate_group([worse, best])
+        assert group.master_id == str(best.id)
