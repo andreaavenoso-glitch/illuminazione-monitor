@@ -84,3 +84,42 @@ class TestTEDCollectorFetch:
         drafts = await collector.fetch()
         assert drafts[0].extracted["scadenza"] is None
         assert drafts[0].extracted["procedura"] is None
+
+    @pytest.mark.asyncio
+    async def test_award_notice_body_flags_esito_for_the_classifier(self, httpx_mock) -> None:
+        # total-value (concluded contract value) with no submission deadline
+        # is TED's own signal that this is a result/award notice -- without
+        # some textual trace of that, classify_stato_procedurale (which only
+        # reads raw_body/descrizione) has nothing to key off and defaults
+        # every TED record to "GARA PUBBLICATA" forever.
+        httpx_mock.add_response(
+            url=TED_SEARCH_URL,
+            method="POST",
+            json={"notices": [_notice(**{"total-value": 5493558.9})]},
+        )
+        collector = TEDCollector(uuid4(), "https://api.ted.europa.eu")
+        drafts = await collector.fetch()
+        assert "aggiudicazione" in drafts[0].raw_body.lower()
+
+    @pytest.mark.asyncio
+    async def test_open_notice_with_a_value_is_not_flagged_as_award(self, httpx_mock) -> None:
+        # A live notice can legitimately report a value (e.g. a framework
+        # agreement's estimated ceiling) while still being open -- only the
+        # combination of a value *and* no deadline means "already awarded".
+        httpx_mock.add_response(
+            url=TED_SEARCH_URL,
+            method="POST",
+            json={
+                "notices": [
+                    _notice(
+                        **{
+                            "total-value": 5493558.9,
+                            "deadline-receipt-tender-date-lot": ["2026-02-24+01:00"],
+                        }
+                    )
+                ]
+            },
+        )
+        collector = TEDCollector(uuid4(), "https://api.ted.europa.eu")
+        drafts = await collector.fetch()
+        assert "aggiudicazione" not in drafts[0].raw_body.lower()
