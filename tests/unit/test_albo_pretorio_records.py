@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from app.collectors.albo_pretorio_llm import (
     build_raw_record_kwargs,
+    extract_links,
     find_bandi_link,
     merge_detail_into_record,
 )
@@ -116,6 +117,36 @@ class TestFindBandiLink:
         """
         result = find_bandi_link(html, base_url="https://comune.test/")
         assert result == "https://comune.test/vero-link/"
+
+
+class TestExtractLinks:
+    def test_extracts_text_and_absolute_url(self) -> None:
+        html = '<a href="/provvedimenti/">Provvedimenti</a>'
+        links = extract_links(html, base_url="https://comune.test/")
+        assert links == [("Provvedimenti", "https://comune.test/provvedimenti/")]
+
+    def test_skips_empty_text_fragment_and_javascript_links(self) -> None:
+        html = """
+        <a href="/vuoto/"></a>
+        <a href="#">Ancora</a>
+        <a href="javascript:void(0)">Script</a>
+        <a href="/valido/">Valido</a>
+        """
+        links = extract_links(html, base_url="https://comune.test/")
+        assert links == [("Valido", "https://comune.test/valido/")]
+
+    def test_dedupes_repeated_urls(self) -> None:
+        html = """
+        <a href="/avvisi/">Avvisi</a>
+        <a href="/avvisi/">Avvisi (menu duplicato)</a>
+        """
+        links = extract_links(html, base_url="https://comune.test/")
+        assert len(links) == 1
+
+    def test_respects_limit(self) -> None:
+        html = "".join(f'<a href="/pagina-{i}/">Pagina {i}</a>' for i in range(10))
+        links = extract_links(html, base_url="https://comune.test/", limit=3)
+        assert len(links) == 3
 
 
 class TestMergeDetailIntoRecord:

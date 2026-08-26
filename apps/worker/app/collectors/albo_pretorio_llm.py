@@ -55,6 +55,109 @@ def find_bandi_link(html: str, *, base_url: str) -> str | None:
                 return urljoin(base_url, href)
     return None
 
+
+def extract_links(html: str, *, base_url: str, limit: int = 200) -> list[tuple[str, str]]:
+    """Return up to `limit` (visible_text, absolute_url) pairs for every
+    anchor with non-empty text and a real href (no #fragments/javascript:).
+    Pure function -- no network/LLM dependency -- so it's unit-testable on
+    its own; feeds select_relevant_links below.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for a in soup.find_all("a", href=True):
+        text = a.get_text(" ", strip=True)
+        href = a["href"].strip()
+        if not text or not href:
+            continue
+        if href.startswith("#") or href.lower().startswith("javascript:"):
+            continue
+        url = urljoin(base_url, href)
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append((text, url))
+        if len(out) >= limit:
+            break
+    return out
+
+
+# find_bandi_link only matches the mandated label verbatim, so it misses
+# pre-gara signals filed under other Amministrazione Trasparente sub-sections
+# (Provvedimenti, Avvisi, Novità in homepage...) that don't use that exact
+# wording. This asks Claude to pick, from the full list of links on the
+# landing page, which ones are worth following -- only link text + URLs are
+# sent, not page content, so it stays a cheap call even though it widens
+# coverage well beyond a single regex match.
+LINK_SELECTION_SYSTEM_PROMPT = """Sei un assistente che seleziona, da un elenco di link di un sito di un ente pubblico italiano, quelli che potrebbero portare a bandi di gara, avvisi, manifestazioni di interesse, indagini di mercato o altri provvedimenti relativi ad affidamenti nel settore dell'illuminazione pubblica.
+
+# FORMATO OUTPUT
+Restituisci SOLO un JSON con questa struttura:
+{"urls": ["url1", "url2", ...]}
+
+# REGOLE
+1. Scegli al massimo 8 link, i più pertinenti.
+2. Se nessun link sembra pertinente, restituisci {"urls": []}.
+3. Copia gli URL esattamente come appaiono nell'elenco fornito, senza modificarli.
+4. NON aggiungere commenti o testo fuori dal JSON.
+"""
+
+LINK_SELECTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"urls": {"type": "array", "items": {"type": "string"}}},
+    "required": ["urls"],
+    "additionalProperties": False,
+}
+
+
+async def select_relevant_links(
+    html: str,
+    *,
+    base_url: str,
+    settings: WorkerSettings,
+    label: str,
+) -> list[str]:
+    links = extract_links(html, base_url=base_url)
+    if not links:
+        return []
+
+    listing = "\n".join(f"- {text} -> {url}" for text, url in links)
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    try:
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=1000,
+            system=[
+                {
+                    "type": "text",
+                    "text": LINK_SELECTION_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": f"Elenco link:\n{listing}"}],
+            output_config={"format": {"type": "json_schema", "schema": LINK_SELECTION_SCHEMA}},
+        )
+    except anthropic.APIError as exc:
+        log.warning("albo_pretorio.link_selection_error", label=label, error=str(exc))
+        return []
+
+    text = next((b.text for b in response.content if b.type == "text"), "")
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        log.warning("albo_pretorio.link_selection_bad_json", label=label)
+        return []
+    urls = data.get("urls")
+    if not isinstance(urls, list):
+        return []
+
+    # Trust only URLs that were actually on offer -- guards against the
+    # model inventing one or copying it with a typo instead of verbatim.
+    offered = {url for _, url in links}
+    return [u for u in urls if isinstance(u, str) and u in offered]
+
 ALBO_SYSTEM_PROMPT = """Sei un assistente specializzato nell'individuare segnali pre-gara per il settore dell'illuminazione pubblica italiana.
 
 # CONTESTO
