@@ -118,7 +118,6 @@ RECORDS_SCHEMA: dict[str, Any] = {
 
 PLATFORM_SEARCH_URLS: dict[str, str] = {
     "ted": "https://api.ted.europa.eu/v3/notices/search?fields=publication-number,title,buyer-name,description-proc&query=classification-cpv%3D34928510%20OR%20classification-cpv%3D34993000%20OR%20classification-cpv%3D50232000%20OR%20classification-cpv%3D45316110",
-    "anac": "https://dati.anticorruzione.it/superset/dashboard/appalti/",
     "bdncp": "https://dati.anticorruzione.it/opendata/dataset",
     "guri": "https://www.gazzettaufficiale.it/ricercaTesto?numero=&numeroSezione=&pagina=1&tipoSerie=serie_generale&tipoProvvedimento=BANDO&keyword=illuminazione+pubblica&giorno_dataPubblicazioneGazzetta=&mese_dataPubblicazioneGazzetta=&anno_dataPubblicazioneGazzetta=&giorno_a=&mese_a=&anno_a=",
     "asmecomm": "https://piattaforma.asmecomm.it/categorie_merceologiche.php",
@@ -149,12 +148,11 @@ PLATFORM_SEARCH_URLS: dict[str, str] = {
 }
 
 # Per-platform Playwright wait override (ms), for sources whose default
-# smart_collector_playwright_wait_ms is too short. ANAC/BDNCP run a Superset
+# smart_collector_playwright_wait_ms is too short. BDNCP runs a Superset
 # analytics dashboard that fires many client-side XHR calls after initial
 # load — a plain browser render at the default 4s wait only captures the
 # empty shell.
 PLATFORM_PLAYWRIGHT_WAIT_MS: dict[str, int] = {
-    "anac": 15000,
     "bdncp": 15000,
 }
 
