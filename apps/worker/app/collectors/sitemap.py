@@ -22,19 +22,37 @@ _SITEMAP_PATHS = ("/sitemap.xml", "/sitemap_index.xml")
 # Keep the candidate list bounded: a comune sitemap can list thousands of
 # pages (news, services, events...); only ones whose URL plausibly relates
 # to procurement/transparency are worth the extra fetch + extraction cost.
-_RELEVANT_KEYWORDS = (
-    "trasparen",
+#
+# Two tiers, not one flat list: a URL matching only a generic transparency
+# term (avviso, delibera, determina...) is noisy -- on a comune's site that
+# word shows up on TARI payment notices, election announcements, waste
+# collection reminders, anything -- while MAX_EXTRA_PAGES downstream only
+# ever reads the first 8 candidates returned here. Confirmed in production:
+# 110 comuni scanned real, substantial pages and found zero lighting
+# signals, because every one of the pages actually read (selected by an
+# unranked keyword match) turned out to be about disability inclusion
+# services, waste collection, or elections -- generic "avviso"/"delibera"
+# hits crowding out whatever genuine "bandi-di-gara" page existed further
+# down the sitemap. Procurement-specific terms are surfaced first so they
+# survive that cap; generic ones only pad out remaining slots.
+_STRONG_KEYWORDS = (
     "bandi",
     "gara",
     "appalt",
+    "manifestazion",
+    "indagin",
+    "illuminazione",
+    "relamping",
+)
+_WEAK_KEYWORDS = (
+    "trasparen",
     "contratt",
     "albo",
     "avvis",
     "delibera",
     "determin",
-    "manifestazion",
-    "indagin",
 )
+_RELEVANT_KEYWORDS = _STRONG_KEYWORDS + _WEAK_KEYWORDS
 
 MAX_SITEMAP_URLS = 15
 
@@ -100,4 +118,16 @@ def _parse_locs(xml_text: str) -> list[str]:
 
 
 def _filter_relevant(urls: list[str]) -> list[str]:
-    return [u for u in urls if any(k in u.lower() for k in _RELEVANT_KEYWORDS)]
+    """Relevant URLs, strong-keyword matches first (each tier keeps the
+    sitemap's own order), so a downstream cap on how many get read favors
+    procurement-specific pages over generic transparency ones.
+    """
+    strong: list[str] = []
+    weak: list[str] = []
+    for u in urls:
+        lowered = u.lower()
+        if any(k in lowered for k in _STRONG_KEYWORDS):
+            strong.append(u)
+        elif any(k in lowered for k in _WEAK_KEYWORDS):
+            weak.append(u)
+    return strong + weak
