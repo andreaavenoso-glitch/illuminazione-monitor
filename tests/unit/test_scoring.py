@@ -81,6 +81,28 @@ class TestScadenza:
         assert result.days_to_deadline == days
         assert result.score == 3 + expected_pts
 
+    @pytest.mark.parametrize("days_ago", [1, 30, 365])
+    def test_a_deadline_already_in_the_past_gets_no_urgency_bonus(self, days_ago) -> None:
+        # A negative "days to deadline" used to fall into the days<=3 bucket
+        # right alongside a genuinely imminent one, handing an expired
+        # tender (e.g. a Consip framework agreement past its Data_Termine)
+        # the same maximum +20 urgency score as one closing in 0-3 days.
+        scad = self.NOW - timedelta(days=days_ago)
+        result = score_record(
+            ScoringInput(importo=None, stato_procedurale="x", scadenza=scad),
+            now=self.NOW,
+        )
+        assert result.days_to_deadline == -days_ago
+        assert result.score == 3  # importo base only -- no scadenza bonus
+
+    def test_a_deadline_already_in_the_past_is_never_p1_via_imminence(self) -> None:
+        scad = self.NOW - timedelta(days=10)
+        result = score_record(
+            ScoringInput(importo=None, stato_procedurale="GARA PUBBLICATA", scadenza=scad),
+            now=self.NOW,
+        )
+        assert result.priority != "P1"
+
 
 class TestFlagsAndTags:
     NOW = datetime(2026, 4, 22, tzinfo=UTC)
