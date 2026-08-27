@@ -173,6 +173,43 @@ def test_duplicates_excluded_from_sections() -> None:
     assert result.nuove_gare[0]["id"] == str(master_id)
 
 
+def test_expired_gara_excluded_from_valore_gare_attive() -> None:
+    # An already-past scadenza means the submission window is closed --
+    # its importo shouldn't keep inflating "valore gare attive" forever
+    # (confirmed in production: an expired Consip framework agreement kept
+    # counting toward this total with no way for it to ever drop out).
+    now = _today_ts()
+    records = [
+        FakeRecord(
+            id=uuid4(),
+            ente="Comune attivo",
+            importo=Decimal("1000000"),
+            scadenza=datetime(2026, 5, 1, tzinfo=UTC),  # in the future
+            stato_procedurale="GARA PUBBLICATA",
+        ),
+        FakeRecord(
+            id=uuid4(),
+            ente="AQ scaduto",
+            importo=Decimal("10000000"),
+            scadenza=datetime(2025, 10, 20, tzinfo=UTC),  # in the past
+            stato_procedurale="GARA PUBBLICATA",
+        ),
+        FakeRecord(
+            id=uuid4(),
+            ente="Senza scadenza",
+            importo=Decimal("500000"),
+            scadenza=None,
+            stato_procedurale="GARA PUBBLICATA",
+        ),
+    ]
+    result = build_daily_report(
+        ReportContext(records=records, sources=[], job_runs=[], alerts=[]),
+        today=now.date(),
+        now=now,
+    )
+    assert result.kpi["valore_totale_eur"] == 1_500_000.0
+
+
 def test_job_runs_outside_24h_are_ignored() -> None:
     now = _today_ts()
     source_id = uuid4()

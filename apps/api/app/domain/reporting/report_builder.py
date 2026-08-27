@@ -113,10 +113,18 @@ def build_daily_report(
     evidenze_deboli_rows = [r for r in ctx.records if r.is_weak_evidence]
 
     p1_count = sum(1 for r in masters if r.priorita_commerciale == "P1")
+    # A GARA PUBBLICATA whose scadenza has already passed isn't "active" value
+    # any more (its submission window is closed) -- without this guard an
+    # expired framework agreement (e.g. a Consip AQ with scadenza a year in
+    # the past) keeps inflating this total indefinitely, the same way it used
+    # to inflate its own commercial score (see scoring_engine's
+    # _scadenza_points fix).
     total_value = sum(
         float(r.importo)
         for r in masters
-        if r.importo is not None and r.stato_procedurale == "GARA PUBBLICATA"
+        if r.importo is not None
+        and r.stato_procedurale == "GARA PUBBLICATA"
+        and (r.scadenza is None or r.scadenza >= now)
     )
 
     # fonti_interrogate: one row per source run today, latest status.

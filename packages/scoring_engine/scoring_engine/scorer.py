@@ -105,6 +105,13 @@ def _scadenza_points(scadenza: datetime | None, today: date) -> tuple[int, int |
         return 0, None
     target = scadenza.date() if isinstance(scadenza, datetime) else scadenza
     days = (target - today).days
+    if days < 0:
+        # A deadline already in the past isn't "urgent" -- days<=3 below
+        # would otherwise catch negative values too and hand an expired
+        # tender the same maximum urgency bonus as one closing in 0-3 days,
+        # which is how an already-closed Consip framework agreement kept
+        # scoring as P1 (confirmed: Andrea saw exactly this).
+        return 0, days
     if days <= 3:
         return 20, days
     if days <= 7:
