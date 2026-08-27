@@ -6,11 +6,39 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+set_env() {
+  local key="$1" value="$2"
+  if grep -q "^${key}=" .env; then
+    sed -i "s#^${key}=.*#${key}=${value}#" .env
+  else
+    echo "${key}=${value}" >> .env
+  fi
+}
+
+# ANTHROPIC_API_KEY ha nessun valore utilizzabile in .env.example (ci arriva
+# vuoto -- ogni altra chiave li' ha un default di sviluppo gia' funzionante).
+# Senza, ogni collector basato su IA (la scansione della watchlist e quasi
+# tutti i portali e-procurement) restituisce silenziosamente 0 risultati pur
+# segnalando "completato" -- confermato in produzione: il pannello di
+# raccolta manuale mostrava "110 comuni scansionati, 0 validi" senza nessun
+# errore visibile. Salva quello che l'utente ha eventualmente scritto a mano
+# in .env prima che la sovrascrittura incondizionata qui sotto lo cancelli a
+# ogni riesecuzione di questo script (rebuild del Codespace, o riavvio
+# manuale dopo un git pull).
+existing_anthropic_key=""
+if [ -f .env ]; then
+  existing_anthropic_key="$(grep '^ANTHROPIC_API_KEY=' .env | cut -d= -f2- || true)"
+fi
+
 # Sovrascrive sempre .env da .env.example: questo e' un ambiente di prova
 # usa-e-getta, non un deploy persistente, e rieseguire questo script (es.
 # dopo un git pull, o riavviando manualmente) deve poter correggere un .env
 # rimasto con valori vecchi da un avvio precedente dello stesso Codespace.
 cp .env.example .env
+
+if [ -n "$existing_anthropic_key" ]; then
+  set_env "ANTHROPIC_API_KEY" "$existing_anthropic_key"
+fi
 
 # In un Codespace il browser dell'utente NON e' dentro il container: le
 # variabili che puntano ad "http://localhost:*" nel file .env.example sono
@@ -24,14 +52,6 @@ if [ -n "${CODESPACE_NAME:-}" ]; then
   api_url="https://${CODESPACE_NAME}-8000.${domain}"
   web_url="https://${CODESPACE_NAME}-3000.${domain}"
 
-  set_env() {
-    local key="$1" value="$2"
-    if grep -q "^${key}=" .env; then
-      sed -i "s#^${key}=.*#${key}=${value}#" .env
-    else
-      echo "${key}=${value}" >> .env
-    fi
-  }
   set_env "NEXT_PUBLIC_API_URL" "$api_url"
   set_env "CORS_ORIGINS" "$web_url"
 fi
@@ -90,3 +110,18 @@ cat <<EOF
  (credenziali di prova valide solo dentro questo Codespace temporaneo)
 ======================================================================
 EOF
+
+if ! grep -q '^ANTHROPIC_API_KEY=.\+' .env; then
+  cat <<EOF
+
+======================================================================
+ ATTENZIONE: manca ANTHROPIC_API_KEY in .env.
+ Senza questa chiave, la scansione dei comuni in watchlist e quasi
+ tutti i portali e-procurement NON raccolgono nulla (0 risultati),
+ pur segnalando "completato" -- nessun errore visibile.
+ Prendine una su https://console.anthropic.com/settings/keys, poi
+ aggiungi la riga "ANTHROPIC_API_KEY=sk-ant-..." in fondo a .env e
+ riavvia i container con: docker compose up -d --force-recreate worker api
+======================================================================
+EOF
+fi

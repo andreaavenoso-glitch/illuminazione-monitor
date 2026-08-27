@@ -91,6 +91,15 @@ class ConsipOpenDataCollector(BaseCollector):
                 body_parts.append(f"Base asta: {base_asta}")
 
             lotto_id = item.get("Identificativo_Lotto", "")
+            # normalize()'s normalizer only ever reads "scadenza"/"scadenza_raw"/
+            # "deadline" out of extracted -- it never looked at "data_termine",
+            # so every Consip record's scadenza stayed None regardless of the
+            # framework agreement's real end date, and an expired one kept
+            # showing as if still open (confirmed: Andrea saw exactly this).
+            # Also reparse to ISO: parse_italian_date only matches dd/mm/yyyy
+            # (slashes) or ISO, not Consip's raw dd-mm-yyyy (hyphens), so
+            # passing the raw string through unchanged would still fail silently.
+            data_termine = _parse_it_date(item.get("Data_Termine"))
             # normalize_records treats raw_url (-> link_bando) as the unique
             # identity of a tender. The Consip feed gives no per-lot detail
             # page, but every raw_url must still be distinct per lot or all
@@ -113,6 +122,7 @@ class ConsipOpenDataCollector(BaseCollector):
                         "tipo_strumento": item.get("Tipo_Strumento"),
                         "procedura": item.get("Tipo_Procedura"),
                         "importo": base_asta,
+                        "scadenza": data_termine.date().isoformat() if data_termine else None,
                         "data_attivazione": item.get("Data_Attivazione"),
                         "data_termine": item.get("Data_Termine"),
                         "extracted_by": "consip-opendata-direct",
