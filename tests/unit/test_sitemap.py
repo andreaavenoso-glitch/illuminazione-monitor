@@ -82,6 +82,29 @@ class TestDiscoverSitemapUrls:
         assert urls == ["https://comune.test/trasparenza/avvisi-pubblici/"]
 
     @pytest.mark.asyncio
+    async def test_procurement_specific_urls_are_ranked_before_generic_ones(self, httpx_mock) -> None:
+        # A generic "avviso"/"delibera" URL matches almost any municipal
+        # notice (TARI payments, elections, waste collection...) and would
+        # otherwise crowd out a genuine "bandi-di-gara" page once
+        # MAX_EXTRA_PAGES caps how many of these actually get read.
+        mixed = """<?xml version="1.0"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://comune.test/news/avviso-pagamento-tari/</loc></url>
+          <url><loc>https://comune.test/delibera/giunta-123/</loc></url>
+          <url><loc>https://comune.test/amministrazione-trasparente/bandi-di-gara/</loc></url>
+          <url><loc>https://comune.test/news/avviso-elezioni/</loc></url>
+        </urlset>"""
+        httpx_mock.add_response(url="https://comune.test/sitemap.xml", text=mixed)
+        urls = await discover_sitemap_urls("https://comune.test/")
+        assert urls[0] == "https://comune.test/amministrazione-trasparente/bandi-di-gara/"
+        assert set(urls) == {
+            "https://comune.test/news/avviso-pagamento-tari/",
+            "https://comune.test/delibera/giunta-123/",
+            "https://comune.test/amministrazione-trasparente/bandi-di-gara/",
+            "https://comune.test/news/avviso-elezioni/",
+        }
+
+    @pytest.mark.asyncio
     async def test_caps_result_at_max_sitemap_urls(self, httpx_mock) -> None:
         many = "".join(
             f"<url><loc>https://comune.test/trasparenza/bandi-{i}/</loc></url>"
