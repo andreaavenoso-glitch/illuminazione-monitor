@@ -549,16 +549,17 @@ class TestRunLimited:
 
 
 class TestThirdDryRunFindings:
-    def test_votive_lamps_and_sports_lighting_are_not_public_lighting(self) -> None:
-        html = (
-            "<ul><li><a href='/a'>Avviso ai cittadini: servizio illuminazione lampade votive esercizio 2026</a></li>"
-            "<li><a href='/b'>Lavori di adeguamento illuminazione impianti sportivi comunali</a></li></ul>"
-        )
-        assert gate_page(html, base_url=BASE).action == "skip"
-        # ...but real public lighting next to them still passes.
-        real = html + "<li><a href='/c'>Manutenzione degli impianti di illuminazione pubblica</a></li>"
-        res = gate_page(real, base_url=BASE)
-        assert res.action == "compact" and len(res.candidates) == 1
+    def test_other_services_of_the_catalog_pass_the_gate(self) -> None:
+        """The company sells more than lighting: these were "noise" before."""
+        for title in (
+            "Servizio di videosorveglianza e video-analisi del territorio comunale",
+            "Realizzazione di infrastrutture di ricarica per veicoli elettrici",
+            "Efficientamento energetico degli edifici scolastici",
+            "Impianti fotovoltaici su coperture comunali e comunità energetica",
+            "Concessione di impianti pubblicitari e digital advertising",
+        ):
+            html = f"<ul><li><a href='/x'>{title}</a> pubblicato il 12/11/2026</li></ul>"
+            assert gate_page(html, base_url=BASE).action == "compact", title
 
     def test_comune_tenant_on_a_vendor_platform_is_not_a_regional_site(self) -> None:
         from app.collectors.page_gate import discovered_platforms
@@ -586,3 +587,52 @@ class TestSitemapFilter:
             "https://c.it/amministrazione-trasparente/bandi-di-gara-e-contratti",
             "https://c.it/gare-e-appalti",
         ]
+
+
+class TestServicesCatalog:
+    def test_every_service_has_keywords_and_a_label(self) -> None:
+        from shared_models.services import SERVICES
+
+        assert len({s.key for s in SERVICES}) == len(SERVICES) == 11
+        assert all(s.keywords and s.label for s in SERVICES)
+
+    def test_detect_services(self) -> None:
+        from shared_models.services import detect_services
+
+        assert detect_services("Manutenzione impianti di illuminazione pubblica e videosorveglianza") == [
+            "illuminazione_pubblica", "videosorveglianza",
+        ]
+        assert detect_services("Fornitura di cancelleria") == []
+        assert detect_services(None) == []
+
+    def test_configure_limits_the_gate_and_restores(self) -> None:
+        from shared_models.services import configure, gate_keywords
+
+        try:
+            configure(["videosorveglianza"])
+            assert "videosorveglianza" in gate_keywords() and "illuminazione pubblica" not in gate_keywords()
+            assert "finanza di progetto" in gate_keywords()  # PPP always passes
+            configure(["nonexistent"])  # a typo must not switch everything off
+            assert "illuminazione pubblica" in gate_keywords()
+        finally:
+            configure(None)
+
+    def test_prompt_lists_the_active_services(self) -> None:
+        from app.collectors.albo_pretorio_llm import albo_system_prompt
+
+        prompt = albo_system_prompt()
+        assert "{{SERVIZI}}" not in prompt
+        assert "Videosorveglianza e video-analisi" in prompt and "Ricarica per veicoli elettrici" in prompt
+
+    def test_other_services_are_in_the_normalizer_perimeter(self) -> None:
+        from app.domain.normalization.normalizer import NormalizerInput, normalize
+
+        rec = normalize(NormalizerInput(
+            raw_title="Servizio di videosorveglianza urbana", raw_body="Affidamento", raw_url="https://x/1",
+            raw_date=None, extracted={}, source_priority_rank=2,
+        ))
+        assert rec is not None
+        assert normalize(NormalizerInput(
+            raw_title="Fornitura di cancelleria", raw_body="uffici", raw_url="https://x/2",
+            raw_date=None, extracted={}, source_priority_rank=2,
+        )) is None

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
-from shared_models.categories import GATE_KEYWORDS
+from shared_models.services import gate_keywords
 
 
 def safe_join(base: str, href: str) -> str | None:
@@ -83,19 +83,8 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-# Wordings that contain a lighting keyword but are not public lighting:
-# the cemetery votive-lamp service ("servizio illuminazione lampade votive"),
-# lighting of sports facilities, interior lighting.
-_NOT_PUBLIC_LIGHTING = re.compile(
-    r"illuminazione\s+(delle\s+)?lampade\s+votive|lampade\s+votive|illuminazione\s+votiva|"
-    r"illuminazione\s+(degli\s+|dei\s+)?(impianti|campi)\s+sportivi|illuminazione\s+interna",
-    re.IGNORECASE,
-)
-
-
 def _has_gate_keyword(text_lower: str) -> bool:
-    text_lower = _NOT_PUBLIC_LIGHTING.sub(" ", text_lower)
-    return any(re.search(r"(?<!\w)" + re.escape(k) + r"(?!\w)", text_lower) for k in GATE_KEYWORDS)
+    return any(re.search(r"(?<!\w)" + re.escape(k) + r"(?!\w)", text_lower) for k in gate_keywords())
 
 
 def detect_template(html: str) -> str:

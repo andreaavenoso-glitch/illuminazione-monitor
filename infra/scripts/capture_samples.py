@@ -72,6 +72,10 @@ async def run(region: str, limit: int, out: Path, concurrency: int = 3) -> None:
     from sqlalchemy import or_, select
 
     settings = get_worker_settings()
+    from shared_models.services import configure as configure_services
+    from shared_models.services import parse_enabled
+
+    configure_services(parse_enabled(settings.enabled_services))
     out.mkdir(parents=True, exist_ok=True)
     canonical = normalize_region(region)
 

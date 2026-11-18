@@ -23,6 +23,7 @@ class DigestItem:
     link: str
     scadenza: date | None = None
     importo: float | None = None
+    servizi: tuple[str, ...] = ()
     fonte_nazionale: bool = False
 
 
@@ -32,6 +33,8 @@ def _line(i: DigestItem) -> str:
         bits.append(f"{i.importo:,.0f} EUR".replace(",", "."))
     if i.scadenza:
         bits.append(f"scadenza {i.scadenza.strftime('%d/%m/%Y')}")
+    if i.servizi:
+        bits.append("servizi: " + ", ".join(i.servizi))
     if i.fonte_nazionale:
         bits.append("da portale nazionale")
     return " | ".join(bits)

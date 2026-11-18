@@ -22,11 +22,14 @@ import logging
 from datetime import UTC, datetime
 
 from app.celery_app import celery_app
+from app.config import get_worker_settings
 from app.db import SessionLocal
 from app.domain.classification import classify_stato_procedurale, classify_tipo_novita
 from app.domain.normalization import NormalizerInput, normalize
 from shared_models import Entity, JobRun, ProcurementRecord, RawRecord, Source
 from shared_models.regions import entity_key, infer_region, normalize_region
+from shared_models.services import configure as configure_services
+from shared_models.services import detect_services, parse_enabled
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -141,6 +144,9 @@ async def _upsert(
 
     regione = await _resolve_region(session, raw, normalized)
     extracted_atto_tipo = (raw.extracted_json or {}).get("atto_tipo")
+    servizio = ",".join(
+        detect_services(f"{normalized.descrizione or ''} {raw.raw_title or ''} {raw.raw_body or ''}")
+    ) or None
 
     if existing:
         _merge_fields(existing, normalized, stato=stato, tipo=tipo, now=now)
@@ -148,6 +154,8 @@ async def _upsert(
             existing.regione = regione
         if extracted_atto_tipo and not existing.atto_tipo:
             existing.atto_tipo = extracted_atto_tipo
+        if servizio and not existing.servizio:
+            existing.servizio = servizio
         return existing
 
     record = ProcurementRecord(
@@ -159,6 +167,7 @@ async def _upsert(
         scadenza=normalized.scadenza,
         regione=regione,
         atto_tipo=extracted_atto_tipo,
+        servizio=servizio,
         provincia=normalized.provincia,
         comune=normalized.comune,
         tipologia_gara_procedura=normalized.tipologia_gara_procedura,
@@ -252,6 +261,7 @@ MAX_BATCHES_PER_RUN = 100
 
 
 async def _run_normalize() -> dict[str, int]:
+    configure_services(parse_enabled(get_worker_settings().enabled_services))
     async with SessionLocal() as session:
         job = JobRun(job_name="normalize_records", status="running")
         session.add(job)

@@ -58,7 +58,22 @@ export interface RegionRecord {
   first_seen_at: string;
   notificato: boolean;
   score: number | null;
+  servizi: string[];
 }
+
+export const SERVIZIO_LABEL: Record<string, string> = {
+  illuminazione_pubblica: "Illuminazione pubblica",
+  illuminazione_artistica: "Illuminazione artistica",
+  piste_ciclabili_pedonali: "Piste ciclabili e pedonali",
+  semafori: "Semafori",
+  videosorveglianza: "Videosorveglianza",
+  relamping_edifici: "Edifici pubblici e scuole",
+  fotovoltaico_cer: "Fotovoltaico e CER",
+  ricarica_ev: "Ricarica EV",
+  connettivita_5g: "5G e telecomunicazioni",
+  digital_advertising: "Digital advertising",
+  smart_city: "Smart city",
+};
 
 export interface RegionDetail {
   region: string;

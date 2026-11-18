@@ -22,6 +22,10 @@ class WorkerSettings(BaseSettings):
     smart_collector_playwright_min_chars: int = 3000
     smart_collector_playwright_wait_ms: int = 4000
 
+    # Services of the catalog (shared_models.services) to look for, comma-separated
+    # keys; empty means all of them.
+    enabled_services: str = ""
+
     # Deep crawl of one comune's site (see app.collectors.crawler).
     crawl_max_pages: int = 20
     crawl_max_depth: int = 5

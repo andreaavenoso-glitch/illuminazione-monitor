@@ -201,6 +201,7 @@ async def region_detail(
             "scadenza": rec.scadenza, "stato": rec.stato_procedurale,
             "first_seen_at": rec.first_seen_at, "notificato": rec.notified_at is not None,
             "score": rec.score_commerciale,
+            "servizi": [k for k in (rec.servizio or "").split(",") if k],
         })
     return {
         "region": region,

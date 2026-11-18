@@ -11,6 +11,7 @@ import {
   STATO_CLASS,
   STATO_LABEL,
   type Categoria,
+  SERVIZIO_LABEL,
   type RegionDetail,
 } from "@/lib/regions";
 
@@ -186,6 +187,15 @@ export default function RegionPage() {
                   {r.notificato ? " · email inviata" : " · email in attesa"}
                 </span>
               </div>
+              {r.servizi.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {r.servizi.map((k) => (
+                    <span key={k} className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-900 dark:bg-sky-950 dark:text-sky-200">
+                      {SERVIZIO_LABEL[k] ?? k}
+                    </span>
+                  ))}
+                </div>
+              )}
               <p className="mt-1 text-neutral-700 dark:text-neutral-300">{(r.descrizione ?? "").slice(0, 300)}</p>
               <a href={r.link} target="_blank" rel="noreferrer" className="mt-1 inline-block break-all text-xs text-sky-700 underline dark:text-sky-300">
                 {r.link}

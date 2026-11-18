@@ -81,6 +81,7 @@ async def _run(region: str | None = None) -> dict:
                     link=r.link_bando,
                     scadenza=r.scadenza.date() if r.scadenza else None,
                     importo=float(r.importo) if r.importo else None,
+                    servizi=tuple(k for k in (r.servizio or "").split(",") if k),
                 )))
             if not items:
                 out["regions"][rs.region] = "nothing_new"

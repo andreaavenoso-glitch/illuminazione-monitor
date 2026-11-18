@@ -67,6 +67,8 @@ from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from shared_models import Entity, JobRun, RawRecord, RegionSettings, Source, WatchlistItem
 from shared_models.regions import normalize_region
+from shared_models.services import configure as configure_services
+from shared_models.services import parse_enabled
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -414,6 +416,7 @@ async def _regions_to_scan(session: AsyncSession, region: str | None) -> set[str
 
 
 async def _run_watchlist_scan(region: str | None = None, limit: int | None = None) -> dict[str, int]:
+    configure_services(parse_enabled(get_worker_settings().enabled_services))
     totals = {"items_scanned": 0, "records_found": 0, "records_valid": 0, "errors": 0}
     stats: Counter = Counter()
     async with SessionLocal() as session:

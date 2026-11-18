@@ -22,6 +22,7 @@ import structlog
 from app.collectors.page_gate import safe_join
 from app.config import WorkerSettings
 from bs4 import BeautifulSoup
+from shared_models.services import prompt_block
 
 log = structlog.get_logger(__name__)
 
@@ -159,7 +160,7 @@ async def select_relevant_links(
     offered = {url for _, url in links}
     return [u for u in urls if isinstance(u, str) and u in offered]
 
-ALBO_SYSTEM_PROMPT = """Sei un assistente specializzato nell'individuare segnali pre-gara per il settore dell'illuminazione pubblica italiana.
+ALBO_SYSTEM_PROMPT = """Sei un assistente specializzato nell'individuare segnali pre-gara per l'illuminazione pubblica italiana e per i servizi collegati elencati sotto.
 
 # CONTESTO
 Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "determine"/"avvisi" di un ente pubblico), che elenca atti amministrativi eterogenei: delibere, determine, ordinanze, bandi, avvisi, ecc. Devi individuare SOLO gli atti che segnalano una FUTURA procedura di affidamento nel perimetro "illuminazione pubblica", NON i bandi di gara già pubblicati (quelli sono raccolti altrove).
@@ -173,12 +174,14 @@ Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "det
 - Avvisi / manifestazioni di interesse / indagini di mercato per MANUTENZIONE (ordinaria, straordinaria, conduzione), SOSTITUZIONE di corpi illuminanti o apparecchi, retrofit LED, relamping, efficientamento o riqualificazione energetica, servizio luce / gestione del servizio di illuminazione pubblica (anche se l'importo e' piccolo o si procede con affidamento diretto o procedura negoziata)
 - Proposte di finanza di progetto / project financing / partenariato pubblico-privato (PPP) sull'illuminazione pubblica: proposta di un privato, dichiarazione di pubblico interesse, avviso per la sollecitazione di proposte (art. 193 d.lgs. 36/2023), delibere di giunta su queste proposte
 - Incarichi collegati a un PPP o a una futura gara di illuminazione pubblica: advisor tecnico-finanziario o legale, supporto al RUP, valutatore/commissione per la valutazione delle proposte, verifica del PFTE o del progetto di fattibilita'
+- Gli stessi tipi di atto (manifestazioni di interesse, avvisi, indagini di mercato, determine a contrarre, proposte PPP, incarichi) relativi a questi ALTRI SERVIZI collegati:
+{{SERVIZI}}
 - Incarichi tecnici preparatori: piano regolatore dell'illuminazione comunale (PRIC), censimento degli impianti, diagnosi/audit energetico, studio di fattibilita', progettazione di impianti di illuminazione pubblica
 
 NON includere:
 - Bandi di gara già in pubblicazione con scadenza di presentazione offerte (categoria raccolta da altre fonti)
 - Esiti di gara / aggiudicazioni
-- Atti che non riguardano l'illuminazione pubblica (delibere di bilancio, nomine, ordinanze di viabilità generiche, ecc.)
+- Atti che non riguardano l'illuminazione pubblica ne' nessuno dei servizi elencati sopra (delibere di bilancio, nomine, ordinanze di viabilità generiche, ecc.)
 
 # FORMATO OUTPUT
 Restituisci SOLO un JSON con questa struttura:
@@ -231,6 +234,11 @@ ALBO_RECORDS_SCHEMA: dict[str, Any] = {
 }
 
 
+def albo_system_prompt() -> str:
+    """The extraction prompt with the currently active services listed."""
+    return ALBO_SYSTEM_PROMPT.replace("{{SERVIZI}}", prompt_block())
+
+
 async def extract_albo_records(
     html: str,
     *,
@@ -255,7 +263,7 @@ async def extract_albo_records(
             system=[
                 {
                     "type": "text",
-                    "text": ALBO_SYSTEM_PROMPT,
+                    "text": albo_system_prompt(),
                     "cache_control": {"type": "ephemeral"},
                 }
             ],

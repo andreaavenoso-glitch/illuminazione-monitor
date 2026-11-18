@@ -82,6 +82,12 @@ come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione)
   (provinciale, regionale o di un fornitore, per esempio il PortaleAppalti di una Provincia), il sito viene salvato tra
   i siti della regione del comune, **spento e da approvare**, con l'elenco dei comuni che vi rimandano. Dalla pagina
   della regione, tab "Siti", un amministratore lo attiva o lo disattiva.
+- **Servizi cercati:** non solo l'illuminazione pubblica. Il catalogo (`packages/shared_models/shared_models/services.py`,
+  ricavato dalle schede dei servizi A2A Illuminazione Pubblica) ha 11 servizi, ciascuno con le sue parole chiave:
+  illuminazione pubblica, artistica, piste ciclabili e passaggi pedonali, semafori, videosorveglianza, relamping ed
+  efficientamento di edifici e scuole, fotovoltaico e comunità energetiche, ricarica EV, 5G, digital advertising,
+  smart city. Si attivano con `ENABLED_SERVICES` (vuoto = tutti). Il filtro delle pagine, le istruzioni a Claude e il
+  controllo di pertinenza usano i servizi attivi; ogni avviso riporta i servizi di cui parla.
 - I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:
