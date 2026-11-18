@@ -22,7 +22,7 @@ from decimal import Decimal
 
 # IPA column names vary slightly between releases: accept the known spellings.
 _ALIASES = {
-    "name": ("Denominazione_ente", "denominazione_ente", "Denominazione ente"),
+    "name": ("Denominazione_ente", "denominazione_ente", "Denominazione ente", "des_amm"),
     "tipo": ("Tipologia", "tipologia", "Tipologia_istat", "tipologia_istat"),
     "comune": ("Comune", "comune"),
     "provincia": ("Provincia", "provincia", "Sigla_provincia"),
@@ -131,8 +131,11 @@ async def run(region: str, text: str) -> None:
                 select(WatchlistItem).where(WatchlistItem.entity_id == ent.id)
             )).scalar_one_or_none():
                 continue
-            url = r["trasparenza"]
-            if not url:
+            # IPA's txt release has no "Amministrazione Trasparente" column:
+            # fall back to the comune's own home page, from which the scan
+            # looks for the "Bandi di gara e contratti" section by itself.
+            url = r["trasparenza"] or r["sito"]
+            if not r["trasparenza"]:
                 no_url += 1
             session.add(WatchlistItem(
                 entity_id=ent.id, url_trasparenza=url, frequency="daily", priority="B",
@@ -142,7 +145,7 @@ async def run(region: str, text: str) -> None:
             new_w += 1
         await session.commit()
     print(f"import_ipa {canonical}: comuni nel file={len(rows)} nuovi_enti={new_e} "
-          f"nuovi_siti={new_w} senza_link_trasparenza={no_url} (inattivi)")
+          f"nuovi_siti={new_w} senza_link_trasparenza={no_url} (usata la home del sito)")
 
 
 def main() -> None:

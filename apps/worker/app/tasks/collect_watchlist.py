@@ -284,7 +284,13 @@ async def _run_watchlist_scan(region: str | None = None) -> dict[str, int]:
     return totals
 
 
-@celery_app.task(name="app.tasks.collect_watchlist.collect_watchlist_albo")
+# A region can have hundreds of comuni (Puglia ~250 at ~11 s each), well past
+# the global 25/30 minute limits, and the scan commits per item anyway.
+@celery_app.task(
+    name="app.tasks.collect_watchlist.collect_watchlist_albo",
+    soft_time_limit=4 * 3600,
+    time_limit=4 * 3600 + 300,
+)
 def collect_watchlist_albo(region: str | None = None) -> dict[str, int]:
     """Scan the watchlist; ``region`` limits it to one region (any, enabled or
     not), otherwise only the enabled regions are scanned."""

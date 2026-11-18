@@ -53,3 +53,13 @@ def test_xlsx_roundtrip(tmp_path) -> None:
     rows = parse_ipa_rows(xlsx_to_text(str(path)), "Puglia")
     assert [r["name"] for r in rows] == ["Comune di Taranto"]
     assert rows[0]["trasparenza"] == "https://t.taranto.it"
+
+
+def test_old_txt_release_columns() -> None:
+    text = (
+        "cod_amm\tdes_amm\tcomune\tprovincia\tregione\tsito_istituzionale\ttipologia_istat\n"
+        "c_a662\tComune di Bari\tBari\tBA\tPuglia\twww.comune.bari.it\tComuni e loro Consorzi e Associazioni\n"
+        "054\tAzienda Unita' Sanitaria Locale Umbria 1\tPerugia\tPG\tUmbria\thttps://www.uslumbria1.it\tAziende Sanitarie Locali\n"
+    )
+    rows = parse_ipa_rows(text, "Puglia")
+    assert rows == [{"name": "Comune di Bari", "provincia": "BA", "sito": "https://www.comune.bari.it", "trasparenza": None}]
