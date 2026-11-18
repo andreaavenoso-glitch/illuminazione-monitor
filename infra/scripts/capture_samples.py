@@ -52,11 +52,17 @@ def summarize(reports: list[dict]) -> dict:
     return {"counts": dict(s), "templates": dict(templates), "errors": dict(errors)}
 
 
-async def run(region: str, limit: int, out: Path) -> None:
+async def run(region: str, limit: int, out: Path, concurrency: int = 3) -> None:
     from app.collectors.adaptive_fetch import adaptive_fetch_result
     from app.collectors.albo_pretorio_llm import find_bandi_link
     from app.collectors.crawler import crawl
-    from app.collectors.page_gate import detect_template, discovered_platforms, gate_page, pick_section_links
+    from app.collectors.page_gate import (
+        detect_template,
+        discovered_platforms,
+        gate_page,
+        pick_section_links,
+        same_site,
+    )
     from app.collectors.sitemap import discover_sitemap_urls
     from app.config import get_worker_settings
     from app.db import SessionLocal
@@ -69,9 +75,9 @@ async def run(region: str, limit: int, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     canonical = normalize_region(region)
 
-    async def fetch(url: str, label: str):
+    async def fetch(url: str, label: str, timeout: float = 60.0, variants: bool = True):
         return await adaptive_fetch_result(
-            url, timeout=60.0, max_html_chars=settings.crawl_max_html_chars,
+            url, timeout=timeout, try_variants=variants, max_html_chars=settings.crawl_max_html_chars,
             playwright_min_chars=settings.smart_collector_playwright_min_chars,
             playwright_wait_ms=settings.smart_collector_playwright_wait_ms, label=label,
         )
@@ -123,13 +129,14 @@ async def run(region: str, limit: int, out: Path) -> None:
             (out / f"{_base}__{len(pages_seen):02d}_d{depth}.html").write_text(html, encoding="utf-8")
             return g
 
-        async def fetch_page(purl: str, _base=base):
-            return await fetch(purl, _base)
+        async def fetch_page(purl: str, _base=base, _start=url):
+            own = same_site(purl, _start)
+            return await fetch(purl, _base, timeout=60.0 if own else settings.crawl_external_timeout_s, variants=False)
 
         result = await crawl(
             start_url=url, start_html=first.text, seeds=pages, fetch=fetch_page, on_page=on_page,
             max_pages=settings.crawl_max_pages, max_depth=settings.crawl_max_depth,
-            time_budget_s=settings.crawl_time_budget_s,
+            time_budget_s=settings.crawl_time_budget_s, delay_s=settings.crawl_delay_s,
         )
         rep["pages"] = pages_seen
         rep["unreadable"] = [{"url": v.url, "error": v.error} for v in result.visits if v.action == "unreadable"]
@@ -138,12 +145,17 @@ async def run(region: str, limit: int, out: Path) -> None:
         rep["deepest"] = max(v.depth for v in result.visits)
         return rep
 
-    for n, item in enumerate(sample, 1):
-        try:
-            reports.append(await one(n, item))
-        except Exception as exc:  # noqa: BLE001  one bad site must not stop the dry run
-            print(f"   ERRORE su questo comune: {type(exc).__name__}: {exc}", flush=True)
-            reports.append({"ente": by_id[item.id].name, "error": f"crash: {type(exc).__name__}", "pages": []})
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def guarded(n: int, item) -> dict:
+        async with sem:
+            try:
+                return await one(n, item)
+            except Exception as exc:  # noqa: BLE001  one bad site must not stop the dry run
+                print(f"   ERRORE su {by_id[item.id].name}: {type(exc).__name__}: {exc}", flush=True)
+                return {"ente": by_id[item.id].name, "error": f"crash: {type(exc).__name__}", "pages": []}
+
+    reports = list(await asyncio.gather(*(guarded(n, i) for n, i in enumerate(sample, 1))))
 
     platforms: Counter = Counter()
     for r in reports:
@@ -175,8 +187,9 @@ def main() -> None:
     ap.add_argument("--region", required=True)
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--concurrency", type=int, default=3, help="comuni letti in parallelo")
     a = ap.parse_args()
-    asyncio.run(run(a.region, a.limit, Path(a.out)))
+    asyncio.run(run(a.region, a.limit, Path(a.out), a.concurrency))
 
 
 if __name__ == "__main__":

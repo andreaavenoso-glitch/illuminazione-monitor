@@ -34,6 +34,7 @@ only fires for the handful of candidates a listing page actually surfaces
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 from collections import Counter
@@ -58,6 +59,7 @@ from app.collectors.page_gate import (
     pick_section_links,
     rank_links,
     safe_join,
+    same_site,
 )
 from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
@@ -88,17 +90,25 @@ async def _fetch_page(url: str, *, settings: WorkerSettings, label: str) -> str:
     )
 
 
-async def _fetch_page_result(url: str, *, settings: WorkerSettings, label: str) -> FetchResult:
+async def _fetch_page_result(
+    url: str,
+    *,
+    settings: WorkerSettings,
+    label: str,
+    timeout: float = 60.0,
+    try_variants: bool = True,
+) -> FetchResult:
     """Like _fetch_page but keeps why a fetch failed, for source health. Pages
     are kept far longer than what Claude may receive: the gate reads them whole
     (entries often sit past the first 80 000 characters) and cuts what it sends."""
     return await adaptive_fetch_result(
         url,
-        timeout=60.0,
+        timeout=timeout,
         max_html_chars=settings.crawl_max_html_chars,
         playwright_min_chars=settings.smart_collector_playwright_min_chars,
         playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
         label=label,
+        try_variants=try_variants,
     )
 
 
@@ -114,6 +124,7 @@ async def _process_page(
     now: datetime,
     seen: set[str],
     stats: Counter,
+    digests: set[str] | None = None,
 ) -> GateResult:
     """Extract records from one already-fetched page and persist the new
     ones. Shared by every page a watchlist item's scan touches, whether
@@ -132,6 +143,13 @@ async def _process_page(
     if gated.action == "skip":
         stats["pages_skipped_no_keywords"] += 1
         return gated
+    if digests is not None:
+        # The same content under another address (/utilita/... and
+        # /amministrazione/... on one site) is analysed once per comune.
+        if gated.digest in digests:
+            stats["pages_duplicate_content"] += 1
+            return gated
+        digests.add(gated.digest)
     hashes = dict(item.content_hashes or {})
     if hashes.get(target_url) == gated.digest:
         stats["pages_unchanged"] += 1
@@ -222,7 +240,13 @@ MAX_COMUNI_LISTED = 50
 
 
 async def _save_discovered_sites(
-    session: AsyncSession, item: WatchlistItem, urls: list[str], *, start_url: str, stats: Counter
+    session: AsyncSession,
+    item: WatchlistItem,
+    urls: list[str],
+    *,
+    start_url: str,
+    stats: Counter,
+    lock: asyncio.Lock | None = None,
 ) -> None:
     """Procurement platforms the crawl was led to (provincial / regional /
     vendor portals) are saved as regional sites of the comune's region, off
@@ -235,6 +259,15 @@ async def _save_discovered_sites(
     region = normalize_region(entity.region) if entity else None
     if not region or entity is None:
         return
+    # Several comuni are scanned at once and may find the same portal: the
+    # lookup, the insert and the commit happen under one lock, or two sessions
+    # would both insert it (names are unique).
+    async with lock or contextlib.nullcontext():
+        await _upsert_discovered(session, entity, region, found, stats)
+        await session.commit()
+
+
+async def _upsert_discovered(session: AsyncSession, entity: Entity, region: str, found: dict[str, str], stats: Counter) -> None:
     for host, first_url in found.items():
         name = f"{region} - {host}"
         src = (await session.execute(select(Source).where(Source.name == name))).scalar_one_or_none()
@@ -257,7 +290,13 @@ async def _save_discovered_sites(
         log.info("collect_watchlist.site_discovered region=%s host=%s comune=%s", region, host, entity.name)
 
 
-async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, stats: Counter) -> None:
+async def _scan_item(
+    session: AsyncSession,
+    item: WatchlistItem,
+    job: JobRun,
+    stats: Counter,
+    site_lock: asyncio.Lock | None = None,
+) -> None:
     settings = get_worker_settings()
     if not settings.anthropic_api_key:
         log.warning("collect_watchlist.no_api_key")
@@ -270,6 +309,7 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, st
     ]
     now = datetime.now(tz=UTC)
     seen: set[str] = set()
+    digests: set[str] = set()
     # Source health: the item is healthy if at least one of its primary URLs
     # returned content (finding nothing relevant there still counts).
     primary_ok = False
@@ -299,18 +339,26 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, st
                 session, item, job,
                 target_url=page_url, target_html=page_html,
                 label=_label if depth == 0 else f"{_label}:{page_url}",
-                settings=settings, now=now, seen=seen, stats=stats,
+                settings=settings, now=now, seen=seen, stats=stats, digests=digests,
             )
 
-        async def fetch(page_url: str, _label=label) -> FetchResult:
-            return await _fetch_page_result(page_url, settings=settings, label=f"{_label}:{page_url}")
+        async def fetch(page_url: str, _label=label, _start=url) -> FetchResult:
+            # Inner pages of a site that already answered: no www/http variants.
+            # Other hosts (provincial portals, vendors) get a shorter timeout.
+            own = same_site(page_url, _start)
+            return await _fetch_page_result(
+                page_url, settings=settings, label=f"{_label}:{page_url}",
+                timeout=60.0 if own else settings.crawl_external_timeout_s, try_variants=False,
+            )
 
         result = await crawl(
             start_url=url, start_html=cleaned, seeds=seeds, fetch=fetch, on_page=on_page,
             max_pages=settings.crawl_max_pages, max_depth=settings.crawl_max_depth,
-            time_budget_s=settings.crawl_time_budget_s,
+            time_budget_s=settings.crawl_time_budget_s, delay_s=settings.crawl_delay_s,
         )
-        await _save_discovered_sites(session, item, [v.url for v in result.visits], start_url=url, stats=stats)
+        await _save_discovered_sites(
+            session, item, [v.url for v in result.visits], start_url=url, stats=stats, lock=site_lock
+        )
         stats[f"crawl_stopped_by_{result.stopped_by}"] += 1
         stats["pages_followed_deeper"] += sum(1 for v in result.visits if v.depth >= 2)
         stats["max_depth_reached"] = max(stats["max_depth_reached"], max(v.depth for v in result.visits))
@@ -321,6 +369,22 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, st
 
     item.last_scan_at = now
     apply_scan_outcome(item, now=now, ok=primary_ok, error=first_error)
+
+
+async def run_limited(items: list, worker, limit: int) -> None:
+    """Run ``worker(item)`` for every item, at most ``limit`` at a time. A
+    worker that raises does not stop the others (it is the worker's job to
+    record its own failure)."""
+    sem = asyncio.Semaphore(max(1, limit))
+
+    async def guarded(item) -> None:
+        async with sem:
+            try:
+                await worker(item)
+            except Exception:  # noqa: BLE001
+                log.exception("collect_watchlist.worker_failed")
+
+    await asyncio.gather(*(guarded(i) for i in items))
 
 
 def select_sample(items: list, limit: int | None, rng: random.Random | None = None) -> list:
@@ -371,20 +435,36 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
         items = select_sample(items, limit)
         log.info("collect_watchlist.scope region=%s items=%d limit=%s", region, len(items), limit)
 
-        for item in items:
-            try:
-                await _scan_item(session, item, job, stats)
-                totals["items_scanned"] += 1
-            except Exception as exc:  # noqa: BLE001
-                totals["errors"] += 1
-                job.error_message = f"{type(exc).__name__}: {exc}"
-                log.exception("collect_watchlist.item_crashed", extra={"item": str(item.id), "err": str(exc)})
-            # Persist as we go: a full scan of 100+ comuni takes ~20 minutes,
-            # and committing only at the end meant a task killed by the
-            # Celery time limit (or a worker restart) lost everything it had
-            # already found. expire_on_commit=False (app.db) keeps the loaded
-            # items usable across commits.
-            await session.commit()
+        settings = get_worker_settings()
+        site_lock = asyncio.Lock()
+        item_ids = [item.id for item in items]
+
+        async def scan_one(item_id) -> None:
+            # Each comune has its own session (a session is not safe to share
+            # between concurrent tasks) and commits as it goes: a task killed
+            # by the Celery time limit or a restart loses at most what is in
+            # flight. The shared JobRun is only touched by plain attribute
+            # updates, which is safe on one event loop.
+            async with SessionLocal() as item_session:
+                item = await item_session.get(WatchlistItem, item_id)
+                if item is None:
+                    return
+                try:
+                    await _scan_item(item_session, item, job, stats, site_lock)
+                    totals["items_scanned"] += 1
+                except Exception as exc:  # noqa: BLE001
+                    totals["errors"] += 1
+                    job.error_message = f"{type(exc).__name__}: {exc}"
+                    log.exception("collect_watchlist.item_crashed", extra={"item": str(item_id), "err": str(exc)})
+                    await item_session.rollback()
+                try:
+                    await item_session.commit()
+                except Exception:  # noqa: BLE001
+                    log.exception("collect_watchlist.commit_failed item=%s", item_id)
+                    await item_session.rollback()
+
+        await run_limited(item_ids, scan_one, settings.scan_concurrency)
+        await session.commit()
 
         job.ended_at = datetime.now(tz=UTC)
         job.status = "failed" if job.error_message else ("partial" if job.records_valid == 0 else "success")

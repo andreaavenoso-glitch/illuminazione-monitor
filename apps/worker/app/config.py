@@ -26,6 +26,11 @@ class WorkerSettings(BaseSettings):
     crawl_max_pages: int = 20
     crawl_max_depth: int = 5
     crawl_time_budget_s: float = 150.0
+    # Pause between two requests to the same host, and comuni scanned at once.
+    crawl_delay_s: float = 1.0
+    scan_concurrency: int = 3
+    # Hosts other than the comune's own (provincial portals, vendors) get less time.
+    crawl_external_timeout_s: float = 25.0
     # Pages are fetched up to this size and read whole by the page gate; only
     # what is sent to Claude is cut to smart_collector_max_html_chars.
     crawl_max_html_chars: int = 600000

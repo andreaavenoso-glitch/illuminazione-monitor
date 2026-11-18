@@ -372,3 +372,154 @@ class TestDiscoveredPlatforms:
         assert set(discovered_platforms(urls, self.START)) == {
             "app.albofornitori.it", "gare.comune-altro.it", "x.example.it",
         }
+
+
+class TestSecondDryRunFindings:
+    """Things the real Puglia dry run showed."""
+
+    def test_vendor_hosted_albo_and_trasparenza_are_not_regional_platforms(self) -> None:
+        from app.collectors.page_gate import discovered_platforms
+
+        urls = [
+            "https://trasparenza.parsec326.it/en/web/mesagne/bandi-di-gara-e-contratti",
+            "https://trasparenza.tinnvision.cloud/traspamm/80010060756/2/home.html",
+            "https://albo.tinnvision.cloud/?ente=80010060756",
+            "http://www.albo.tinnservice.com/?idente=80010060756",
+            "https://lecce.trasparenza-valutazione-merito.it/web/trasparenza/albo-pretorio",
+            "http://albo.egov.ba.it/web/ruvo-di-puglia",
+        ]
+        assert discovered_platforms(urls, "https://www.comune.melendugno.le.it") == {}
+
+    def test_real_procurement_portals_still_found(self) -> None:
+        from app.collectors.page_gate import discovered_platforms
+
+        found = discovered_platforms(
+            ["https://appalti.provincia.foggia.it/PortaleAppalti/it/ppgare_bandi_lista.wp",
+             "https://www.traspare.com/home"],
+            "https://www.montesantangelo.it",
+        )
+        assert set(found) == {"appalti.provincia.foggia.it", "traspare.com"}
+
+    def test_session_ids_do_not_make_new_pages(self) -> None:
+        from app.collectors.page_gate import normalize_url
+
+        a = "https://trasparenza.parsec326.it/en/web/mesagne/albo-pretoreo;jsessionid=4E394BE4B62269ECBC003DBA34CBBCAC"
+        b = "https://trasparenza.parsec326.it/en/web/mesagne/albo-pretoreo;jsessionid=2B908F428E240387A9828CACAEC4DAE7"
+        assert normalize_url(a) == normalize_url(b) == normalize_url("https://trasparenza.parsec326.it/en/web/mesagne/albo-pretoreo")
+
+
+@pytest.mark.asyncio
+class TestPolitenessAndDuplicates:
+    async def test_pause_between_requests_to_the_same_host_only(self) -> None:
+        from app.collectors.crawler import crawl
+        from app.collectors.page_gate import gate_page
+
+        now = [0.0]
+        slept: list[float] = []
+
+        async def sleep(s):
+            slept.append(round(s, 2))
+            now[0] += s
+
+        pages = {
+            "https://c.it/": "<a href='/a'>Avvisi pubblici</a><a href='/b'>Bandi di gara e contratti</a>"
+                             "<a href='https://gare.altro.it/x'>Albo pretorio</a>",
+            "https://c.it/a": "x", "https://c.it/b": "x", "https://gare.altro.it/x": "x",
+        }
+
+        async def fetch(url):
+            now[0] += 0.1  # a request takes 100 ms
+            return FakeFetched(pages.get(url, ""), url)
+
+        async def on_page(url, html, depth):
+            return gate_page(html, base_url=url)
+
+        await crawl(
+            start_url="https://c.it/", start_html=pages["https://c.it/"], seeds=[], fetch=fetch,
+            on_page=on_page, max_pages=10, max_depth=3, time_budget_s=1000, delay_s=1.0,
+            clock=lambda: now[0], sleep=sleep,
+        )
+        # Three pages on c.it/gare.altro.it: only the second c.it request waits (the other
+        # host and the first request of each host do not).
+        assert len([s for s in slept if s > 0]) == 1
+        assert 0.8 <= max(slept) <= 1.0
+
+    async def test_same_content_under_two_addresses_is_analysed_once(self, monkeypatch) -> None:
+        from collections import Counter
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from app.tasks import collect_watchlist as cw
+
+        calls: list[str] = []
+
+        async def fake_extract(html, *, url, settings, label, status=None):
+            calls.append(url)
+            return []
+
+        monkeypatch.setattr(cw, "extract_albo_records", fake_extract)
+        item = SimpleNamespace(content_hashes=None, source_id=None, entity_id=None)
+        job = SimpleNamespace(records_found=0, records_valid=0, duplicates_removed=0)
+        stats, digests = Counter(), set()
+        for url in ("https://c.it/utilita/trasparenza", "https://c.it/amministrazione/trasparenza"):
+            await cw._process_page(
+                SimpleNamespace(add=lambda *_: None), item, job,
+                target_url=url, target_html=DESIGN_ITALIA_LIST, label="t",
+                settings=SimpleNamespace(smart_collector_max_html_chars=80_000),
+                now=datetime.now(tz=UTC), seen=set(), stats=stats, digests=digests,
+            )
+        assert len(calls) == 1 and stats["pages_duplicate_content"] == 1
+
+    async def test_no_browser_after_a_connect_timeout_and_no_variants_when_disabled(self, monkeypatch, httpx_mock) -> None:
+        import httpx
+        from app.collectors import adaptive_fetch as af
+
+        httpx_mock.add_exception(httpx.ConnectTimeout("t"), url="https://dead.it/")
+        called = []
+
+        async def browser(url, **kw):
+            called.append(url)
+            return None
+
+        monkeypatch.setattr(af, "_fetch_with_playwright", browser)
+        res = await af.adaptive_fetch_result(
+            "https://dead.it/", timeout=5, max_html_chars=1000, playwright_min_chars=10,
+            playwright_wait_ms=1, label="t", try_variants=False,
+        )
+        assert res.error == "timeout" and called == []
+        assert len(httpx_mock.get_requests()) == 1  # no www variant either
+
+
+@pytest.mark.asyncio
+class TestRunLimited:
+    async def test_never_more_than_the_limit_at_once_and_all_are_run(self) -> None:
+        import asyncio
+
+        from app.tasks.collect_watchlist import run_limited
+
+        active = peak = 0
+        done: list[int] = []
+
+        async def worker(i):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            done.append(i)
+
+        await run_limited(list(range(10)), worker, 3)
+        assert sorted(done) == list(range(10)) and peak == 3
+
+    async def test_a_failing_worker_does_not_stop_the_others(self) -> None:
+        from app.tasks.collect_watchlist import run_limited
+
+        done: list[int] = []
+
+        async def worker(i):
+            if i == 2:
+                raise RuntimeError("boom")
+            done.append(i)
+
+        await run_limited([1, 2, 3, 4], worker, 2)
+        assert sorted(done) == [1, 3, 4]

@@ -243,15 +243,22 @@ def _host(url: str) -> str:
     return h[4:] if h.startswith("www.") else h
 
 
+def host_of(url: str) -> str:
+    return _host(url)
+
+
 def same_site(a: str, b: str) -> bool:
     """Same host, or one a subdomain of the other (albo.comune.x.it)."""
     ha, hb = _host(a), _host(b)
     return bool(ha and hb) and (ha == hb or ha.endswith("." + hb) or hb.endswith("." + ha))
 
 
+_SESSION_PARAM = re.compile(r";jsessionid=[^/?#]*", re.IGNORECASE)
+
+
 def normalize_url(url: str) -> str:
     try:
-        parts = urlsplit(url)
+        parts = urlsplit(_SESSION_PARAM.sub("", url))
     except ValueError:
         return url.lower()
     path = parts.path.rstrip("/") or "/"
@@ -317,13 +324,17 @@ def rank_links(html: str, *, base_url: str, limit: int = 12) -> list[tuple[str, 
 # is how the crawl finds them; these helpers pick them out so they can be saved
 # as regional sites instead of being rediscovered on every scan.
 _PLATFORM_HOST = re.compile(
-    r"appalti|\bgare\b|^gare\.|tuttogare|net4market|albofornitori|traspare|sintel|empulia|"
-    r"acquistinrete|portaleappalti|\bcuc\b|\bsua\b|stazioneappaltante|centraledicommittenza|"
-    r"^provincia\.|\.provincia\.|cittametropolitana|^regione\.|\.regione\.|eprocurement|"
-    r"e-procurement|asmecomm|digitalpa",
+    r"appalti|^gare\.|\.gare\.|tuttogare|net4market|albofornitori|traspare\.(com|it|net)|sintel|"
+    r"empulia|acquistinrete|portaleappalti|\bcuc\b|\bsua\b|stazioneappaltante|"
+    r"centraledicommittenza|^provincia\.|\.provincia\.|cittametropolitana|^regione\.|\.regione\.|"
+    r"eprocurement|e-procurement|asmecomm|digitalpa",
     re.IGNORECASE,
 )
-_PLATFORM_PATH = re.compile(r"portaleappalti|ppgare|bandi_lista|/gare|/bandi", re.IGNORECASE)
+# Albo / Amministrazione Trasparente hosted by a vendor for ONE comune
+# (trasparenza.parsec326.it, albo.tinnvision.cloud...) is not a procurement
+# platform shared by many bodies: never offered as a regional site.
+_COMUNE_LEVEL_HOST = re.compile(r"trasparen|\balbo\b|\balbo\.|amministrazione", re.IGNORECASE)
+_PLATFORM_PATH = re.compile(r"portaleappalti|ppgare|bandi_lista", re.IGNORECASE)
 
 
 def discovered_platforms(urls: list[str], start_url: str) -> dict[str, str]:
@@ -334,7 +345,7 @@ def discovered_platforms(urls: list[str], start_url: str) -> dict[str, str]:
         if not url or same_site(url, start_url):
             continue
         host = _host(url)
-        if not host:
+        if not host or _COMUNE_LEVEL_HOST.search(host):
             continue
         try:
             path = urlsplit(url).path

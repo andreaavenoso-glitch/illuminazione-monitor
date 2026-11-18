@@ -14,13 +14,14 @@ record what was seen).
 """
 from __future__ import annotations
 
+import asyncio
 import heapq
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from app.collectors.page_gate import GateResult, normalize_url, rank_links, same_site
+from app.collectors.page_gate import GateResult, host_of, normalize_url, rank_links, same_site
 
 SEED_SCORE = 100  # links already chosen by the caller (sitemap, section names)
 LINKS_PER_PAGE = 6
@@ -56,7 +57,9 @@ async def crawl(
     max_pages: int,
     max_depth: int,
     time_budget_s: float,
+    delay_s: float = 0.0,
     clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> CrawlResult:
     """Visit the start page (depth 0), then the best-ranked links, deeper and
     deeper. ``max_pages`` counts fetched pages after the start page."""
@@ -95,6 +98,7 @@ async def crawl(
 
     started = clock()
     fetched = 0
+    last_hit: dict[str, float] = {}  # host -> when we last asked it for a page
     while heap:
         if fetched >= max_pages:
             result.stopped_by = "pages"
@@ -103,6 +107,13 @@ async def crawl(
             result.stopped_by = "time"
             break
         _, _, url, depth = heapq.heappop(heap)
+        # Be polite: sites such as small comuni drop connections when pages are
+        # requested back to back (seen as intermittent ConnectError / reset).
+        host = host_of(url)
+        wait = delay_s - (clock() - last_hit.get(host, -1e9))
+        if wait > 0:
+            await sleep(wait)
+        last_hit[host] = clock()
         res = await fetch(url)
         fetched += 1
         if not res.text:

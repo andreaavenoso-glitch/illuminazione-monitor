@@ -141,6 +141,7 @@ async def adaptive_fetch_result(
     playwright_min_chars: int,
     playwright_wait_ms: int,
     label: str,
+    try_variants: bool = True,
 ) -> FetchResult:
     """Fetch ``url``; if it cannot be reached at all, quickly try its likely
     variants (www on/off, http). The result's ``url`` is the address that
@@ -152,7 +153,7 @@ async def adaptive_fetch_result(
         "label": label,
     }
     first = await _fetch_single(url, timeout=timeout, **kwargs)
-    if first.text or not _worth_trying_variants(first.error):
+    if first.text or not try_variants or not _worth_trying_variants(first.error):
         return first
     for variant in url_variants(url, first.error):
         # Short timeout and no browser: if plain HTTP cannot even connect,
@@ -203,7 +204,10 @@ async def _fetch_single(
     log.info("adaptive_fetch.fetched", label=label, url=url, chars=len(cleaned))
 
     browser_errors: list[str] = []
-    if len(cleaned) < playwright_min_chars and (cleaned or browser_if_http_failed):
+    # A host that does not even answer the TCP connection in time will not
+    # answer a browser either (one dead albo cost 140 s of timeouts + browser).
+    host_dead = http_error == "timeout" and not cleaned
+    if len(cleaned) < playwright_min_chars and (cleaned or browser_if_http_failed) and not host_dead:
         rendered = await _fetch_with_playwright(
             url,
             timeout=timeout,
