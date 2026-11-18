@@ -9,6 +9,7 @@ around.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 import httpx
 import structlog
@@ -36,7 +37,43 @@ def clean_html(html: str, max_chars: int) -> str:
     return html
 
 
-async def adaptive_fetch(
+@dataclass(frozen=True)
+class FetchResult:
+    """Outcome of a fetch: the cleaned page text, plus a short error kind
+    when no content could be read at all (``None`` whenever there is text,
+    even if the plain HTTP attempt failed and the browser fallback recovered
+    the page -- a source that can be read is a healthy one).
+    """
+
+    text: str
+    error: str | None = None
+
+
+def classify_fetch_error(exc: BaseException) -> str:
+    """Short, stable label for why a fetch failed. The distinction matters
+    for what to do next: ``http_404``/``dns`` mean the address is probably
+    wrong (worth searching for the right one), ``http_403`` means the site
+    blocks us (a different address won't help), ``ssl`` is the server's own
+    certificate problem, ``timeout`` may well be transient.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"http_{exc.response.status_code}"
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    msg = str(exc).lower()
+    if "certificate" in msg or "ssl" in msg:
+        return "ssl"
+    if (
+        "name or service not known" in msg
+        or "nodename nor servname" in msg
+        or "temporary failure in name resolution" in msg
+        or "getaddrinfo" in msg
+    ):
+        return "dns"
+    return "error"
+
+
+async def adaptive_fetch_result(
     url: str,
     *,
     timeout: float,
@@ -44,10 +81,11 @@ async def adaptive_fetch(
     playwright_min_chars: int,
     playwright_wait_ms: int,
     label: str,
-) -> str:
+) -> FetchResult:
     """Fetch ``url`` with plain HTTP; fall back to a headless browser if the
     cleaned content comes back thinner than ``playwright_min_chars``.
     """
+    http_error: str | None = None
     async with httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=True,
@@ -59,6 +97,7 @@ async def adaptive_fetch(
             html = resp.text
         except (httpx.HTTPError, httpx.TimeoutException) as exc:
             log.warning("adaptive_fetch.fetch_failed", label=label, url=url, error=str(exc))
+            http_error = classify_fetch_error(exc)
             html = ""
 
     cleaned = clean_html(html, max_html_chars) if html else ""
@@ -76,7 +115,30 @@ async def adaptive_fetch(
             cleaned = rendered
             log.info("adaptive_fetch.playwright_fetched", label=label, url=url, chars=len(cleaned))
 
-    return cleaned
+    if cleaned:
+        return FetchResult(text=cleaned)
+    return FetchResult(text="", error=http_error or "empty")
+
+
+async def adaptive_fetch(
+    url: str,
+    *,
+    timeout: float,
+    max_html_chars: int,
+    playwright_min_chars: int,
+    playwright_wait_ms: int,
+    label: str,
+) -> str:
+    """Text-only wrapper around :func:`adaptive_fetch_result`."""
+    result = await adaptive_fetch_result(
+        url,
+        timeout=timeout,
+        max_html_chars=max_html_chars,
+        playwright_min_chars=playwright_min_chars,
+        playwright_wait_ms=playwright_wait_ms,
+        label=label,
+    )
+    return result.text
 
 
 async def _fetch_with_playwright(

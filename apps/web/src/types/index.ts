@@ -43,6 +43,9 @@ export type WatchlistItem = {
   publication_model: string | null;
   active: boolean;
   last_scan_at: string | null;
+  last_success_at: string | null;
+  consecutive_failures: number;
+  last_error: string | null;
   created_at: string;
   updated_at: string;
 };

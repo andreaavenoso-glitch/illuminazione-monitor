@@ -39,7 +39,7 @@ from datetime import UTC, datetime
 from urllib.parse import urljoin
 
 from app.celery_app import celery_app
-from app.collectors.adaptive_fetch import adaptive_fetch
+from app.collectors.adaptive_fetch import FetchResult, adaptive_fetch, adaptive_fetch_result
 from app.collectors.albo_pretorio_llm import (
     build_raw_record_kwargs,
     extract_albo_records,
@@ -49,6 +49,7 @@ from app.collectors.albo_pretorio_llm import (
     select_relevant_links,
 )
 from app.collectors.sitemap import discover_sitemap_urls
+from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from shared_models import JobRun, RawRecord, WatchlistItem
@@ -66,6 +67,18 @@ MAX_EXTRA_PAGES = 8
 
 async def _fetch_page(url: str, *, settings: WorkerSettings, label: str) -> str:
     return await adaptive_fetch(
+        url,
+        timeout=60.0,
+        max_html_chars=settings.smart_collector_max_html_chars,
+        playwright_min_chars=settings.smart_collector_playwright_min_chars,
+        playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
+        label=label,
+    )
+
+
+async def _fetch_page_result(url: str, *, settings: WorkerSettings, label: str) -> FetchResult:
+    """Like _fetch_page but keeps why a fetch failed, for source health."""
+    return await adaptive_fetch_result(
         url,
         timeout=60.0,
         max_html_chars=settings.smart_collector_max_html_chars,
@@ -163,12 +176,19 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
     ]
     now = datetime.now(tz=UTC)
     seen: set[str] = set()
+    # Source health: the item is healthy if at least one of its primary URLs
+    # returned content (finding nothing relevant there still counts).
+    primary_ok = False
+    first_error: str | None = None
 
     for kind, url in urls:
         label = f"{kind}:{item.id}"
-        cleaned = await _fetch_page(url, settings=settings, label=label)
+        fetched = await _fetch_page_result(url, settings=settings, label=label)
+        cleaned = fetched.text
         if not cleaned:
+            first_error = first_error or fetched.error
             continue
+        primary_ok = True
 
         if kind != "trasparenza":
             await _process_page(
@@ -205,6 +225,7 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
             )
 
     item.last_scan_at = now
+    apply_scan_outcome(item, now=now, ok=primary_ok, error=first_error)
 
 
 async def _run_watchlist_scan() -> dict[str, int]:
@@ -228,6 +249,12 @@ async def _run_watchlist_scan() -> dict[str, int]:
                 totals["errors"] += 1
                 job.error_message = f"{type(exc).__name__}: {exc}"
                 log.exception("collect_watchlist.item_crashed", extra={"item": str(item.id), "err": str(exc)})
+            # Persist as we go: a full scan of 100+ comuni takes ~20 minutes,
+            # and committing only at the end meant a task killed by the
+            # Celery time limit (or a worker restart) lost everything it had
+            # already found. expire_on_commit=False (app.db) keeps the loaded
+            # items usable across commits.
+            await session.commit()
 
         job.ended_at = datetime.now(tz=UTC)
         job.status = "failed" if job.error_message else ("partial" if job.records_valid == 0 else "success")
