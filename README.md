@@ -72,6 +72,12 @@ come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione)
   nulla parte e i record restano in attesa.
 - **Comuni di una regione**: `python -m infra.scripts.import_ipa --region Puglia --file amministrazioni.csv`
   (dataset "Amministrazioni" di IPA, indicepa.gov.it; accetta xlsx, txt con tabulazione e csv) importa i comuni con il link a Amministrazione Trasparente.
+- **Lettura dei siti dei comuni:** prima un filtro fisso (`app/collectors/page_gate.py`): una pagina senza parole
+  chiave di illuminazione o PPP non arriva mai a Claude; per le altre va solo l'elenco dei link che corrispondono;
+  una pagina invariata dall'ultima analisi riuscita non viene riletta. Le sezioni di Amministrazione Trasparente si
+  trovano prima per nome (D.Lgs. 33/2013) e solo se manca si chiede a Claude. I contatori (pagine saltate,
+  invariate, inviate a Claude, piattaforme rilevate) sono nel risultato del task e nel log
+  (`docker compose logs worker | grep collect_watchlist.stats`).
 - I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:

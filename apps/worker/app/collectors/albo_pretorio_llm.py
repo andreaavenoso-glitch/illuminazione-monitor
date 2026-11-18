@@ -236,7 +236,10 @@ async def extract_albo_records(
     url: str,
     settings: WorkerSettings,
     label: str,
+    status: dict[str, bool] | None = None,
 ) -> list[dict[str, Any]]:
+    """``status["ok"]`` is set False when the call failed (API error, bad
+    JSON), so a caller can tell "nothing relevant" from "could not analyse"."""
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     user_msg = (
         f"Fonte: {label}\n"
@@ -260,6 +263,8 @@ async def extract_albo_records(
         )
     except anthropic.APIError as exc:
         log.warning("albo_pretorio.claude_error", label=label, error=str(exc))
+        if status is not None:
+            status["ok"] = False
         return []
 
     log.info(
@@ -273,11 +278,15 @@ async def extract_albo_records(
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text:
+        if status is not None:
+            status["ok"] = False
         return []
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         log.warning("albo_pretorio.bad_json", label=label)
+        if status is not None:
+            status["ok"] = False
         return []
     records = data.get("records", [])
     return records if isinstance(records, list) else []

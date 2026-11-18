@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared_models.base import Base
@@ -38,6 +38,9 @@ class WatchlistItem(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     last_error: Mapped[str | None] = mapped_column(String, nullable=True)
+    # url -> fingerprint of what was last sent to Claude for that page: an
+    # unchanged page is not analysed again (see app.collectors.page_gate).
+    content_hashes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

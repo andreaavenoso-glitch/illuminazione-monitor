@@ -88,6 +88,17 @@ LIGHTING_KEYWORDS = [
 ]
 
 
+# What lets a page through to the (paid) Claude extraction: lighting wording or
+# a PPP / finanza di progetto signal (those acts often do not say
+# "illuminazione" in the title). Deliberately a subset: generic words like
+# "advisor" or "pubblico interesse" would let almost every page through.
+GATE_KEYWORDS = LIGHTING_KEYWORDS + [
+    "finanza di progetto", "project financing", "partenariato pubblico privato",
+    "partenariato pubblico-privato", "proposta di finanza", "ppp", "art. 193",
+    "articolo 193", "sollecitazione di proposte", "pric",
+]
+
+
 def _has(text: str, words: list[str]) -> bool:
     return any(re.search(r"(?<!\w)" + re.escape(w) + r"(?!\w)", text) for w in words)
 

@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections import Counter
 from datetime import UTC, datetime
 from urllib.parse import urljoin
 
@@ -49,6 +50,7 @@ from app.collectors.albo_pretorio_llm import (
     merge_detail_into_record,
     select_relevant_links,
 )
+from app.collectors.page_gate import gate_page, pick_section_links
 from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
@@ -101,13 +103,33 @@ async def _process_page(
     settings: WorkerSettings,
     now: datetime,
     seen: set[str],
+    stats: Counter,
 ) -> None:
     """Extract records from one already-fetched page and persist the new
     ones. Shared by every page a watchlist item's scan touches, whether
     that's the single url_albo page or one of several url_trasparenza pages
     followed via sitemap/link-selection below.
+
+    A fixed pre-filter (app.collectors.page_gate) runs first: pages with no
+    lighting/PPP wording never reach Claude, matching entries go as a compact
+    list, and a page unchanged since its last successful analysis is skipped.
     """
-    records = await extract_albo_records(target_html, url=target_url, settings=settings, label=label)
+    stats["pages_read"] += 1
+    gated = gate_page(target_html, base_url=target_url)
+    stats[f"template_{gated.template}"] += 1
+    if gated.action == "skip":
+        stats["pages_skipped_no_keywords"] += 1
+        return
+    hashes = dict(item.content_hashes or {})
+    if hashes.get(target_url) == gated.digest:
+        stats["pages_unchanged"] += 1
+        return
+    stats[f"pages_to_claude_{gated.action}"] += 1
+
+    status = {"ok": True}
+    records = await extract_albo_records(
+        gated.html, url=target_url, settings=settings, label=label, status=status
+    )
     job.records_found += len(records)
 
     for record in records:
@@ -145,27 +167,41 @@ async def _process_page(
         session.add(RawRecord(**kwargs))
         job.records_valid += 1
 
+    if status["ok"]:
+        # Only after a successful analysis: a failed call must be retried.
+        hashes[target_url] = gated.digest
+        item.content_hashes = hashes
 
-async def _trasparenza_pages(cleaned: str, url: str, *, settings: WorkerSettings, label: str) -> list[str]:
+
+async def _trasparenza_pages(
+    cleaned: str, url: str, *, settings: WorkerSettings, label: str, stats: Counter
+) -> list[str]:
     """Pages beyond the Amministrazione Trasparente landing page worth
     extracting from. Pre-gara signals are often filed under sections other
-    than "Bandi di gara e contratti" (Provvedimenti, Avvisi, Novità...) or
-    several clicks deep, so a single label match isn't enough. Sitemap.xml,
-    when the site has one, is the cheapest and most complete way to find
-    them; otherwise fall back to the deterministic label match plus an AI
-    pass over every link on the landing page.
+    than "Bandi di gara e contratti" (Provvedimenti, Avvisi, Novita...) or
+    several clicks deep, so a single label match isn't enough. In order of
+    cost: sitemap.xml (free, complete when present), the legal section names
+    matched on the page's links (free), and only if neither finds anything,
+    an AI pass over every link of the landing page.
     """
     sitemap_pages = await discover_sitemap_urls(url)
     if sitemap_pages:
+        stats["links_from_sitemap"] += 1
         return sitemap_pages[:MAX_EXTRA_PAGES]
 
     bandi_url = find_bandi_link(cleaned, base_url=url)
+    labelled = pick_section_links(cleaned, base_url=url, limit=MAX_EXTRA_PAGES)
+    pages = [u for u in dict.fromkeys([bandi_url, *labelled]) if u and u != url]
+    if pages:
+        stats["links_from_labels"] += 1
+        return pages[:MAX_EXTRA_PAGES]
+
+    stats["links_from_claude"] += 1
     selected = await select_relevant_links(cleaned, base_url=url, settings=settings, label=label)
-    pages = [u for u in dict.fromkeys([bandi_url, *selected]) if u and u != url]
-    return pages[:MAX_EXTRA_PAGES]
+    return [u for u in dict.fromkeys(selected) if u and u != url][:MAX_EXTRA_PAGES]
 
 
-async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) -> None:
+async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, stats: Counter) -> None:
     settings = get_worker_settings()
     if not settings.anthropic_api_key:
         log.warning("collect_watchlist.no_api_key")
@@ -202,18 +238,18 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
             await _process_page(
                 session, item, job,
                 target_url=url, target_html=cleaned, label=label,
-                settings=settings, now=now, seen=seen,
+                settings=settings, now=now, seen=seen, stats=stats,
             )
             continue
 
-        extra_pages = await _trasparenza_pages(cleaned, url, settings=settings, label=label)
+        extra_pages = await _trasparenza_pages(cleaned, url, settings=settings, label=label, stats=stats)
         if not extra_pages:
             # Nothing more specific found: extract from the landing page
             # itself, same as before this went looking further.
             await _process_page(
                 session, item, job,
                 target_url=url, target_html=cleaned, label=label,
-                settings=settings, now=now, seen=seen,
+                settings=settings, now=now, seen=seen, stats=stats,
             )
             continue
 
@@ -229,7 +265,7 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
             await _process_page(
                 session, item, job,
                 target_url=page_url, target_html=page_html, label=page_label,
-                settings=settings, now=now, seen=seen,
+                settings=settings, now=now, seen=seen, stats=stats,
             )
 
     item.last_scan_at = now
@@ -264,6 +300,7 @@ async def _regions_to_scan(session: AsyncSession, region: str | None) -> set[str
 
 async def _run_watchlist_scan(region: str | None = None, limit: int | None = None) -> dict[str, int]:
     totals = {"items_scanned": 0, "records_found": 0, "records_valid": 0, "errors": 0}
+    stats: Counter = Counter()
     async with SessionLocal() as session:
         job = JobRun(job_name="collect_watchlist_albo", status="running")
         session.add(job)
@@ -285,7 +322,7 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
 
         for item in items:
             try:
-                await _scan_item(session, item, job)
+                await _scan_item(session, item, job, stats)
                 totals["items_scanned"] += 1
             except Exception as exc:  # noqa: BLE001
                 totals["errors"] += 1
@@ -303,6 +340,9 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
         totals["records_found"] = job.records_found
         totals["records_valid"] = job.records_valid
         await session.commit()
+    log.info("collect_watchlist.stats", extra={"stats": dict(stats)})
+    # Pre-filter savings and platform mix, visible in the task result.
+    totals.update(dict(stats))
     return totals
 
 
