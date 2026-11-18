@@ -191,6 +191,12 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
             first_error = first_error or fetched.error
             continue
         primary_ok = True
+        if fetched.url and fetched.url != url:
+            # A variant (www on/off, http) answered: resolve links against it
+            # and remember it, so the next scan goes straight there.
+            log.info("collect_watchlist.url_repaired", extra={"item": str(item.id), "old": url, "new": fetched.url})
+            setattr(item, "url_albo" if kind == "albo" else "url_trasparenza", fetched.url)
+            url = fetched.url
 
         if kind != "trasparenza":
             await _process_page(

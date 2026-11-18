@@ -47,6 +47,9 @@ class FetchResult:
 
     text: str
     error: str | None = None
+    # The address that actually answered; differs from the requested one when
+    # a variant (www on/off, http) had to be used.
+    url: str | None = None
 
 
 def classify_fetch_error(exc: BaseException) -> str:
@@ -101,6 +104,35 @@ def classify_browser_error(message: str) -> str | None:
     return None
 
 
+def url_variants(url: str, error: str | None) -> list[str]:
+    """Other spellings of ``url`` worth one quick try after a connection-level
+    failure: www on/off (the most common cause: a site answering only on one
+    of them, e.g. unionecomunimessapia.it works, www.unionecomunimessapia.it
+    resets), plus plain http when the failure was a certificate problem."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    host = parts.netloc
+    if not host:
+        return []
+    toggled = host[4:] if host.lower().startswith("www.") else f"www.{host}"
+    out = [urlunsplit(parts._replace(netloc=toggled))]
+    if error == "ssl":
+        out.append(urlunsplit(parts._replace(scheme="http")))
+        out.append(urlunsplit(parts._replace(scheme="http", netloc=toggled)))
+    return [v for v in dict.fromkeys(out) if v != url]
+
+
+# Only connection-level failures can be fixed by another spelling of the
+# address. A page that answered (404/403, or 200 with nothing in it) would
+# just be asked again for no reason.
+_VARIANT_ERRORS = frozenset({"connect", "reset", "dns", "ssl", "timeout", "error", "protocol", "redirect"})
+
+
+def _worth_trying_variants(error: str | None) -> bool:
+    return error in _VARIANT_ERRORS
+
+
 async def adaptive_fetch_result(
     url: str,
     *,
@@ -109,6 +141,41 @@ async def adaptive_fetch_result(
     playwright_min_chars: int,
     playwright_wait_ms: int,
     label: str,
+) -> FetchResult:
+    """Fetch ``url``; if it cannot be reached at all, quickly try its likely
+    variants (www on/off, http). The result's ``url`` is the address that
+    worked, so callers can resolve links against it and store the fix."""
+    kwargs = {
+        "max_html_chars": max_html_chars,
+        "playwright_min_chars": playwright_min_chars,
+        "playwright_wait_ms": playwright_wait_ms,
+        "label": label,
+    }
+    first = await _fetch_single(url, timeout=timeout, **kwargs)
+    if first.text or not _worth_trying_variants(first.error):
+        return first
+    for variant in url_variants(url, first.error):
+        # Short timeout and no browser: if plain HTTP cannot even connect,
+        # the browser will not either, and this must stay cheap for the many
+        # sites that are simply down.
+        tried = await _fetch_single(
+            variant, timeout=min(timeout, 20.0), browser_if_http_failed=False, **kwargs
+        )
+        if tried.text:
+            log.info("adaptive_fetch.variant_worked", label=label, url=url, variant=variant)
+            return tried
+    return first
+
+
+async def _fetch_single(
+    url: str,
+    *,
+    timeout: float,
+    max_html_chars: int,
+    playwright_min_chars: int,
+    playwright_wait_ms: int,
+    label: str,
+    browser_if_http_failed: bool = True,
 ) -> FetchResult:
     """Fetch ``url`` with plain HTTP; fall back to a headless browser if the
     cleaned content comes back thinner than ``playwright_min_chars``.
@@ -136,7 +203,7 @@ async def adaptive_fetch_result(
     log.info("adaptive_fetch.fetched", label=label, url=url, chars=len(cleaned))
 
     browser_errors: list[str] = []
-    if len(cleaned) < playwright_min_chars:
+    if len(cleaned) < playwright_min_chars and (cleaned or browser_if_http_failed):
         rendered = await _fetch_with_playwright(
             url,
             timeout=timeout,
@@ -150,7 +217,7 @@ async def adaptive_fetch_result(
             log.info("adaptive_fetch.playwright_fetched", label=label, url=url, chars=len(cleaned))
 
     if cleaned:
-        return FetchResult(text=cleaned)
+        return FetchResult(text=cleaned, url=url)
     # An HTTP status (404, 403...) is the most specific; otherwise the
     # browser's own message says more than a bare "connect"/"error".
     if http_error and http_error.startswith("http_"):

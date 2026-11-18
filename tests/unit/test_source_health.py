@@ -172,7 +172,9 @@ class TestBrowserErrorKinds:
 
     @pytest.mark.asyncio
     async def test_reset_reported_when_http_and_browser_both_fail(self, monkeypatch, httpx_mock) -> None:
-        httpx_mock.add_exception(httpx.ConnectError("All connection attempts failed"))
+        # Original address and its www variant both fail.
+        httpx_mock.add_exception(httpx.ConnectError("All connection attempts failed"), url="https://x/")
+        httpx_mock.add_exception(httpx.ConnectError("All connection attempts failed"), url="https://www.x/")
 
         async def browser(url, **kw):
             kw["errors"].append("Page.goto: net::ERR_CONNECTION_RESET at https://x/")
@@ -199,3 +201,46 @@ class TestBrowserErrorKinds:
             playwright_wait_ms=1, label="t",
         )
         assert res.error == "http_404"
+
+
+class TestUrlVariants:
+    def test_www_toggle(self) -> None:
+        assert af.url_variants("https://www.a.it/albo", "connect") == ["https://a.it/albo"]
+        assert af.url_variants("https://a.it", "reset") == ["https://www.a.it"]
+
+    def test_ssl_also_tries_plain_http(self) -> None:
+        v = af.url_variants("https://www.a.it/", "ssl")
+        assert v == ["https://a.it/", "http://www.a.it/", "http://a.it/"]
+
+    @pytest.mark.parametrize("kind", ["http_404", "http_403", "empty", None])
+    def test_no_variants_for_pages_that_answered(self, kind) -> None:
+        assert not af._worth_trying_variants(kind)
+
+    @pytest.mark.asyncio
+    async def test_variant_that_works_is_returned_with_its_url(self, monkeypatch, httpx_mock) -> None:
+        httpx_mock.add_exception(httpx.ConnectError("All connection attempts failed"), url="https://www.x.it/")
+        httpx_mock.add_response(url="https://x.it/", text="<html>" + "pagina " * 30 + "</html>")
+
+        async def no_browser(url, **kw):
+            return None
+
+        monkeypatch.setattr(af, "_fetch_with_playwright", no_browser)
+        res = await af.adaptive_fetch_result(
+            "https://www.x.it/", timeout=5, max_html_chars=1000, playwright_min_chars=10,
+            playwright_wait_ms=1, label="t",
+        )
+        assert res.text and res.error is None and res.url == "https://x.it/"
+
+    @pytest.mark.asyncio
+    async def test_404_is_not_retried_on_variants(self, monkeypatch, httpx_mock) -> None:
+        httpx_mock.add_response(url="https://www.x.it/", status_code=404)
+
+        async def no_browser(url, **kw):
+            return None
+
+        monkeypatch.setattr(af, "_fetch_with_playwright", no_browser)
+        res = await af.adaptive_fetch_result(
+            "https://www.x.it/", timeout=5, max_html_chars=1000, playwright_min_chars=10,
+            playwright_wait_ms=1, label="t",
+        )
+        assert res.error == "http_404" and len(httpx_mock.get_requests()) == 1
