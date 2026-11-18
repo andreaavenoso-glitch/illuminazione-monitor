@@ -78,6 +78,10 @@ come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione)
   trovano prima per nome (D.Lgs. 33/2013) e solo se manca si chiede a Claude. I contatori (pagine saltate,
   invariate, inviate a Claude, piattaforme rilevate) sono nel risultato del task e nel log
   (`docker compose logs worker | grep collect_watchlist.stats`).
+- **Siti regionali scoperti in automatico:** quando la visita di un comune porta a una piattaforma di gara esterna
+  (provinciale, regionale o di un fornitore, per esempio il PortaleAppalti di una Provincia), il sito viene salvato tra
+  i siti della regione del comune, **spento e da approvare**, con l'elenco dei comuni che vi rimandano. Dalla pagina
+  della regione, tab "Siti", un amministratore lo attiva o lo disattiva.
 - I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:

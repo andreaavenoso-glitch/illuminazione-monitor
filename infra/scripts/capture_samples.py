@@ -56,7 +56,7 @@ async def run(region: str, limit: int, out: Path) -> None:
     from app.collectors.adaptive_fetch import adaptive_fetch_result
     from app.collectors.albo_pretorio_llm import find_bandi_link
     from app.collectors.crawler import crawl
-    from app.collectors.page_gate import detect_template, gate_page, pick_section_links
+    from app.collectors.page_gate import detect_template, discovered_platforms, gate_page, pick_section_links
     from app.collectors.sitemap import discover_sitemap_urls
     from app.config import get_worker_settings
     from app.db import SessionLocal
@@ -134,6 +134,7 @@ async def run(region: str, limit: int, out: Path) -> None:
         rep["pages"] = pages_seen
         rep["unreadable"] = [{"url": v.url, "error": v.error} for v in result.visits if v.action == "unreadable"]
         rep["stopped_by"] = result.stopped_by
+        rep["platforms_found"] = discovered_platforms([v.url for v in result.visits], url)
         rep["deepest"] = max(v.depth for v in result.visits)
         return rep
 
@@ -144,7 +145,12 @@ async def run(region: str, limit: int, out: Path) -> None:
             print(f"   ERRORE su questo comune: {type(exc).__name__}: {exc}", flush=True)
             reports.append({"ente": by_id[item.id].name, "error": f"crash: {type(exc).__name__}", "pages": []})
 
+    platforms: Counter = Counter()
+    for r in reports:
+        for host in r.get("platforms_found", {}):
+            platforms[host] += 1
     summary = summarize(reports)
+    summary["platforms_found"] = dict(platforms.most_common())
     (out / "report.json").write_text(json.dumps({"summary": summary, "comuni": reports}, ensure_ascii=False, indent=1), encoding="utf-8")
     lines = ["# Dry run scansione comuni (senza Claude)", "", f"Regione: {canonical}, comuni: {len(reports)}", "",
              "```", json.dumps(summary, ensure_ascii=False, indent=1), "```", ""]
@@ -155,6 +161,8 @@ async def run(region: str, limit: int, out: Path) -> None:
         )
         for p in r["pages"]:
             lines.append(f"    - d{p['depth']} {p['gate']} {p['url']} {p.get('candidates', '')}")
+        for host, purl in r.get("platforms_found", {}).items():
+            lines.append(f"    - PIATTAFORMA ESTERNA {host} {purl}")
         for u in r.get("unreadable", []):
             lines.append(f"    - ILLEGGIBILE {u['error']} {u['url']}")
     (out / "report.md").write_text("\n".join(lines), encoding="utf-8")

@@ -43,6 +43,7 @@ export interface RegionSite {
   ruolo: string | null;
   active: boolean;
   last_checked_at: string | null;
+  scoperto_da: { comuni: string[]; count: number } | null;
   ultimo_run: { status: string; errore: string | null; found: number; at: string } | null;
 }
 

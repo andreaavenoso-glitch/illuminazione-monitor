@@ -1,5 +1,6 @@
 """Level 2 (one box per region) and Level 1 (national sources overview)."""
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from app.auth import current_user, require_role
 from app.core.database import get_session
@@ -24,6 +25,10 @@ router = APIRouter()
 level1_router = APIRouter()
 
 RECENT_DAYS = 60
+
+
+class SiteUpdate(BaseModel):
+    active: bool
 
 
 class RegionSettingsUpdate(BaseModel):
@@ -206,6 +211,7 @@ async def region_detail(
         "siti_regionali": [
             {"id": str(s.id), "nome": s.name, "url": s.base_url, "ruolo": s.ruolo,
              "active": s.active, "last_checked_at": s.last_checked_at,
+             "scoperto_da": s.discovered_from,
              "ultimo_run": last_runs.get(s.id)}
             for s in sources
         ],
@@ -230,6 +236,25 @@ async def update_region(
         rs.recipients = (data["recipients"] or "").strip() or None
     await session.commit()
     return {"region": region, "enabled": rs.enabled, "recipients": rs.recipients}
+
+
+@router.patch("/{region}/sites/{source_id}")
+async def update_site(
+    region: str,
+    source_id: UUID,
+    payload: SiteUpdate,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Approve (activate) or switch off a regional site, e.g. one the crawl of
+    the comuni discovered."""
+    region = _canonical(region)
+    src = await session.get(Source, source_id)
+    if src is None or src.regione != region:
+        raise HTTPException(status_code=404, detail="Sito non trovato in questa regione")
+    src.active = payload.active
+    await session.commit()
+    return {"id": str(src.id), "active": src.active}
 
 
 @router.post("/{region}/collect")

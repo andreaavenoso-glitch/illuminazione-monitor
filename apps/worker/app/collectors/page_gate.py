@@ -309,3 +309,37 @@ def rank_links(html: str, *, base_url: str, limit: int = 12) -> list[tuple[str, 
             urls[key] = url
     ranked = sorted(((urls[k], sc) for k, sc in scores.items()), key=lambda x: -x[1])
     return ranked[:limit]
+
+
+# --- Procurement platforms found while crawling comuni -----------------------
+# Comuni often publish their tenders on a provincial / regional / vendor
+# platform (e.g. Provincia di Foggia's PortaleAppalti). Following a link there
+# is how the crawl finds them; these helpers pick them out so they can be saved
+# as regional sites instead of being rediscovered on every scan.
+_PLATFORM_HOST = re.compile(
+    r"appalti|\bgare\b|^gare\.|tuttogare|net4market|albofornitori|traspare|sintel|empulia|"
+    r"acquistinrete|portaleappalti|\bcuc\b|\bsua\b|stazioneappaltante|centraledicommittenza|"
+    r"^provincia\.|\.provincia\.|cittametropolitana|^regione\.|\.regione\.|eprocurement|"
+    r"e-procurement|asmecomm|digitalpa",
+    re.IGNORECASE,
+)
+_PLATFORM_PATH = re.compile(r"portaleappalti|ppgare|bandi_lista|/gare|/bandi", re.IGNORECASE)
+
+
+def discovered_platforms(urls: list[str], start_url: str) -> dict[str, str]:
+    """Hosts outside the comune's own site that look like procurement
+    platforms, with the first URL seen on each. Pure."""
+    found: dict[str, str] = {}
+    for url in urls:
+        if not url or same_site(url, start_url):
+            continue
+        host = _host(url)
+        if not host:
+            continue
+        try:
+            path = urlsplit(url).path
+        except ValueError:
+            continue
+        if _PLATFORM_HOST.search(host) or _PLATFORM_PATH.search(path):
+            found.setdefault(host, url)
+    return found

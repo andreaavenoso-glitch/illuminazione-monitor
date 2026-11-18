@@ -58,6 +58,11 @@ export default function RegionPage() {
       qc.invalidateQueries({ queryKey: ["regions"] });
     },
   });
+  const toggleSite = useMutation({
+    mutationFn: (v: { id: string; active: boolean }) =>
+      api.patch(`/regions/${encodeURIComponent(region)}/sites/${v.id}`, { active: v.active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["region", region] }),
+  });
   const collect = useMutation({
     mutationFn: (limit?: number) =>
       api.post(`/regions/${encodeURIComponent(region)}/collect${limit ? `?limit=${limit}` : ""}`),
@@ -193,11 +198,19 @@ export default function RegionPage() {
           <section>
             <h2 className="mb-2 font-semibold">Siti regionali ({data.siti_regionali.length})</h2>
             <table className="w-full text-left text-sm">
-              <thead className="text-xs text-neutral-500"><tr><th className="py-1">Sito</th><th>Ruolo</th><th>Ultimo controllo</th><th>Esito</th></tr></thead>
+              <thead className="text-xs text-neutral-500"><tr><th className="py-1">Sito</th><th>Ruolo</th><th>Ultimo controllo</th><th>Esito</th><th></th></tr></thead>
               <tbody>
                 {data.siti_regionali.map((s) => (
                   <tr key={s.id} className="border-t dark:border-neutral-800">
-                    <td className="py-1.5"><a href={s.url} target="_blank" rel="noreferrer" className="underline">{s.nome}</a></td>
+                    <td className={`py-1.5 ${s.active ? "" : "opacity-70"}`}>
+                      <a href={s.url} target="_blank" rel="noreferrer" className="underline">{s.nome}</a>
+                      {s.scoperto_da && (
+                        <div className="text-xs text-amber-700 dark:text-amber-300" title={s.scoperto_da.comuni.join(", ")}>
+                          scoperto da {s.scoperto_da.count} {s.scoperto_da.count === 1 ? "comune" : "comuni"}
+                          {!s.active && " · da approvare"}
+                        </div>
+                      )}
+                    </td>
                     <td>{s.ruolo ?? "—"}</td>
                     <td>{fmt(s.last_checked_at)}</td>
                     <td>
@@ -206,9 +219,17 @@ export default function RegionPage() {
                           ? <span className={`rounded-full px-2 py-0.5 text-xs ${STATO_CLASS.failing}`} title={s.ultimo_run.errore ?? ""}>errore</span>
                           : <span className={`rounded-full px-2 py-0.5 text-xs ${STATO_CLASS.ok}`}>letto ({s.ultimo_run.found} trovati)</span>}
                     </td>
+                    <td>
+                      {admin && (
+                        <button type="button" className="rounded border px-2 py-0.5 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                          onClick={() => toggleSite.mutate({ id: s.id, active: !s.active })}>
+                          {s.active ? "Disattiva" : "Attiva"}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
-                {data.siti_regionali.length === 0 && <tr><td colSpan={4} className="py-2 text-neutral-500">Nessun sito regionale nel catalogo per questa regione.</td></tr>}
+                {data.siti_regionali.length === 0 && <tr><td colSpan={5} className="py-2 text-neutral-500">Nessun sito regionale nel catalogo per questa regione.</td></tr>}
               </tbody>
             </table>
           </section>

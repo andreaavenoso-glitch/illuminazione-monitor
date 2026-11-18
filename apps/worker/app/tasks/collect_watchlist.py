@@ -38,6 +38,7 @@ import logging
 import random
 from collections import Counter
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import FetchResult, adaptive_fetch, adaptive_fetch_result
@@ -50,12 +51,19 @@ from app.collectors.albo_pretorio_llm import (
     select_relevant_links,
 )
 from app.collectors.crawler import crawl
-from app.collectors.page_gate import GateResult, gate_page, pick_section_links, rank_links, safe_join
+from app.collectors.page_gate import (
+    GateResult,
+    discovered_platforms,
+    gate_page,
+    pick_section_links,
+    rank_links,
+    safe_join,
+)
 from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
-from shared_models import Entity, JobRun, RawRecord, RegionSettings, WatchlistItem
+from shared_models import Entity, JobRun, RawRecord, RegionSettings, Source, WatchlistItem
 from shared_models.regions import normalize_region
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -210,6 +218,45 @@ async def _trasparenza_pages(
     return [u for u in dict.fromkeys(selected) if u and u != url][:MAX_EXTRA_PAGES]
 
 
+MAX_COMUNI_LISTED = 50
+
+
+async def _save_discovered_sites(
+    session: AsyncSession, item: WatchlistItem, urls: list[str], *, start_url: str, stats: Counter
+) -> None:
+    """Procurement platforms the crawl was led to (provincial / regional /
+    vendor portals) are saved as regional sites of the comune's region, off
+    until someone approves them: each active site is read on every run, so
+    that is a decision, not a side effect."""
+    found = discovered_platforms(urls, start_url)
+    if not found or not item.entity_id:
+        return
+    entity = await session.get(Entity, item.entity_id)
+    region = normalize_region(entity.region) if entity else None
+    if not region or entity is None:
+        return
+    for host, first_url in found.items():
+        name = f"{region} - {host}"
+        src = (await session.execute(select(Source).where(Source.name == name))).scalar_one_or_none()
+        if src is None:
+            src = Source(
+                name=name, source_type="regional_site", platform_type="generic_html",
+                base_url=first_url, regione=region, ruolo="scoperto",
+                sector_scope="illuminazione_pubblica", priority="B", source_priority_rank=2,
+                reliability_score=Decimal("0.60"), publication_model="html_scraping",
+                active=False, discovered_from={"comuni": [], "count": 0},
+            )
+            session.add(src)
+            stats["sites_discovered_new"] += 1
+        info = dict(src.discovered_from or {"comuni": [], "count": 0})
+        comuni = list(info.get("comuni", []))
+        if entity.name not in comuni and len(comuni) < MAX_COMUNI_LISTED:
+            comuni.append(entity.name)
+        info.update(comuni=comuni, count=max(info.get("count", 0), len(comuni)))
+        src.discovered_from = info
+        log.info("collect_watchlist.site_discovered region=%s host=%s comune=%s", region, host, entity.name)
+
+
 async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, stats: Counter) -> None:
     settings = get_worker_settings()
     if not settings.anthropic_api_key:
@@ -263,6 +310,7 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, st
             max_pages=settings.crawl_max_pages, max_depth=settings.crawl_max_depth,
             time_budget_s=settings.crawl_time_budget_s,
         )
+        await _save_discovered_sites(session, item, [v.url for v in result.visits], start_url=url, stats=stats)
         stats[f"crawl_stopped_by_{result.stopped_by}"] += 1
         stats["pages_followed_deeper"] += sum(1 for v in result.visits if v.depth >= 2)
         stats["max_depth_reached"] = max(stats["max_depth_reached"], max(v.depth for v in result.visits))

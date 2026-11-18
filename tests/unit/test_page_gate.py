@@ -335,3 +335,40 @@ class TestRobustness:
         text = "<p>" + "Servizio di illuminazione pubblica. " * 5000 + "</p>"
         res = gate_page(text, base_url=BASE, full_limit=1000)
         assert res.action == "full" and len(res.html) == 1000
+
+
+class TestDiscoveredPlatforms:
+    START = "https://www.montesantangelo.it"
+
+    def test_provincial_portal_is_found(self) -> None:
+        from app.collectors.page_gate import discovered_platforms
+
+        urls = [
+            "https://www.montesantangelo.it/en/news/x",
+            "https://appalti.provincia.foggia.it/PortaleAppalti/it/ppgare_bandi_lista.wp?actionPath=/a",
+            "https://appalti.provincia.foggia.it/PortaleAppalti/it/altra",
+        ]
+        found = discovered_platforms(urls, self.START)
+        assert list(found) == ["appalti.provincia.foggia.it"]
+        assert found["appalti.provincia.foggia.it"].endswith("actionPath=/a")  # first URL seen
+
+    def test_own_site_social_and_unrelated_hosts_are_not_platforms(self) -> None:
+        from app.collectors.page_gate import discovered_platforms
+
+        urls = [
+            "https://montesantangelo.it/albo", "https://albo.montesantangelo.it/x",
+            "https://www.facebook.com/comune", "https://www.example.org/pagina",
+            "http://[broken",
+        ]
+        assert discovered_platforms(urls, self.START) == {}
+
+    def test_known_vendor_platforms_by_host_or_path(self) -> None:
+        from app.collectors.page_gate import discovered_platforms
+
+        urls = [
+            "https://app.albofornitori.it/alboeproc/albo_x", "https://gare.comune-altro.it/",
+            "https://x.example.it/PortaleAppalti/it/home", "https://start.toscana.it/tendering",
+        ]
+        assert set(discovered_platforms(urls, self.START)) == {
+            "app.albofornitori.it", "gare.comune-altro.it", "x.example.it",
+        }
