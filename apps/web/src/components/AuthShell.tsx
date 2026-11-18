@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { clearSession, getUser, hasRole, type AuthUser } from "@/lib/auth";
+import { UsageBadge } from "./UsageBadge";
 
 const PUBLIC_PATHS = ["/login"];
 
@@ -67,6 +68,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
             {hasRole(user, "admin") && (
               <li><Link href="/admin/watchlist" className="hover:underline">Watchlist</Link></li>
             )}
+            <li><UsageBadge /></li>
             <li className="ml-2 flex items-center gap-2 border-l border-neutral-300 pl-4 dark:border-neutral-700">
               <span className="text-xs">
                 {user.email}{" "}

@@ -120,6 +120,7 @@ export interface ScanItemView {
   pages_skipped: number;
   claude_calls: number;
   claude_errors: number;
+  cost_usd: number | null;
   records_found: number;
   deepest: number;
   stopped_by: string | null;
@@ -141,6 +142,7 @@ export interface ScanRunView {
   queued: number;
   limit: number | null;
   error: string | null;
+  cost_usd: number | null;
   claude: { status: "unused" | "ok" | "down"; error: string | null; calls: number; call_errors: number };
   items: ScanItemView[];
 }

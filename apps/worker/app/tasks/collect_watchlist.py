@@ -66,6 +66,7 @@ from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
+from app.usage import current_run_id, current_scan_item_id
 from shared_models import (
     Entity,
     JobRun,
@@ -523,6 +524,7 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
             await session.flush()
             scan_item_ids[item.id] = si.id
         await session.commit()
+        current_run_id.set(run.id)  # inherited by the per-comune tasks started below
 
         settings = get_worker_settings()
         site_lock = asyncio.Lock()
@@ -536,6 +538,7 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
             # flight. The shared JobRun is only touched by plain attribute
             # updates, which is safe on one event loop.
             sid = scan_item_ids[item_id]
+            current_scan_item_id.set(sid)
             if claude_down.is_set():
                 stats["items_skipped_claude_down"] += 1
                 await _update_scan_item(run.id, sid, status="skipped", error="Claude non disponibile")

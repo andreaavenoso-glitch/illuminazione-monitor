@@ -10,7 +10,14 @@ FINISHED = {"done", "error", "skipped"}
 STALE_AFTER_S = 600
 
 
-def scan_summary(run: Any, items: list[Any], now: datetime, stale_after: int = STALE_AFTER_S) -> dict:
+def scan_summary(
+    run: Any,
+    items: list[Any],
+    now: datetime,
+    stale_after: int = STALE_AFTER_S,
+    costs: dict | None = None,
+    run_cost: float | None = None,
+) -> dict:
     status = run.status
     if status == "running" and run.heartbeat_at is not None and (now - run.heartbeat_at).total_seconds() > stale_after:
         status = "interrupted"
@@ -50,6 +57,7 @@ def scan_summary(run: Any, items: list[Any], now: datetime, stale_after: int = S
         "queued": total - done - running,
         "limit": run.sample_limit,
         "error": run.error,
+        "cost_usd": round(run_cost, 4) if run_cost is not None else None,
         "claude": {
             "status": run.claude_status,
             "error": run.claude_error,
@@ -67,6 +75,7 @@ def scan_summary(run: Any, items: list[Any], now: datetime, stale_after: int = S
                 "pages_skipped": i.pages_skipped,
                 "claude_calls": i.claude_calls,
                 "claude_errors": i.claude_errors,
+                "cost_usd": round(costs.get(getattr(i, "id", None), 0.0), 4) if costs is not None else None,
                 "records_found": i.records_found,
                 "deepest": i.deepest,
                 "stopped_by": i.stopped_by,

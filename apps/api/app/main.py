@@ -10,6 +10,7 @@ from app.api.routes import (
     regions,
     reports,
     sources,
+    usage,
     watchlist,
 )
 from app.core.config import get_settings
@@ -56,6 +57,7 @@ app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
 app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+app.include_router(usage.router, prefix="/usage", tags=["usage"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 

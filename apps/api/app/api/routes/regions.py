@@ -8,6 +8,7 @@ from app.services.scan_view import scan_summary
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from shared_models import (
+    ApiUsage,
     Entity,
     JobRun,
     ProcurementRecord,
@@ -285,7 +286,16 @@ async def region_scan(
         ).all()
         keep = {i for i, r in rows if normalize_region(r) == region}
         items = [i for i in items if i.id in keep]
-    return scan_summary(run, items, datetime.now(tz=UTC))
+    cost_rows = (
+        await session.execute(
+            select(ApiUsage.scan_item_id, func.coalesce(func.sum(ApiUsage.cost_usd), 0))
+            .where(ApiUsage.run_id == run.id)
+            .group_by(ApiUsage.scan_item_id)
+        )
+    ).all()
+    costs = {sid: float(c) for sid, c in cost_rows if sid is not None}
+    run_cost = sum(float(c) for _, c in cost_rows)
+    return scan_summary(run, items, datetime.now(tz=UTC), costs=costs, run_cost=run_cost)
 
 
 @router.patch("/{region}/sites/{source_id}")

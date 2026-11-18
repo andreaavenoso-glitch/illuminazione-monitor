@@ -92,6 +92,12 @@ come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione)
   linea del tempo con una barra per comune (da quando inizia a quando finisce la lettura), il segnale di Claude per
   comune (chiamato N volte, non chiamato, errore) e un avviso rosso se l'API di Claude non è disponibile. Si aggiorna
   ogni 3 secondi mentre la raccolta gira. I dati sono in `scan_runs` e `scan_items`.
+- **Contatore dei dollari sull'API di Claude:** ogni chiamata riuscita registra token e costo stimato (`api_usage`,
+  prezzi in `packages/shared_models/shared_models/pricing.py`, modificabili con `ANTHROPIC_PRICE_INPUT_PER_MTOK` e
+  `ANTHROPIC_PRICE_OUTPUT_PER_MTOK`). Il badge in alto mostra oggi e mese; la pagina `/usage` il dettaglio (ultimi 14
+  giorni, per uso, per modello). Con `ANTHROPIC_BUDGET_USD` vedi anche quanto del limite mensile hai usato. È una
+  **stima** che conta solo questa app: la spesa reale è quella della console Anthropic. Nel tab "Raccolta" il costo
+  compare per raccolta e per comune.
 - I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:

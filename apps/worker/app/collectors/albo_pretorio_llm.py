@@ -21,6 +21,7 @@ import anthropic
 import structlog
 from app.collectors.page_gate import safe_join
 from app.config import WorkerSettings
+from app.usage import record_usage
 from bs4 import BeautifulSoup
 from shared_models.services import prompt_block
 
@@ -142,6 +143,7 @@ async def select_relevant_links(
     except anthropic.APIError as exc:
         log.warning("albo_pretorio.link_selection_error", label=label, error=str(exc))
         return []
+    await record_usage(response.usage, model=settings.anthropic_model, purpose="links", label=label)
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text:
@@ -304,6 +306,7 @@ async def extract_albo_records(
         cache_read=getattr(response.usage, "cache_read_input_tokens", 0),
         cache_create=getattr(response.usage, "cache_creation_input_tokens", 0),
     )
+    await record_usage(response.usage, model=settings.anthropic_model, purpose="extract", label=label)
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text:
@@ -397,6 +400,7 @@ async def extract_bando_detail(
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
     )
+    await record_usage(response.usage, model=settings.anthropic_model, purpose="detail", label=label)
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text:

@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { ScanItemView, ScanRunView } from "@/lib/regions";
+import { usd } from "@/lib/usage";
 
 const BAR: Record<ScanItemView["status"], string> = {
   done: "bg-emerald-500",
@@ -106,6 +107,7 @@ export function ScanView({ region }: { region: string }) {
         {claude.status === "ok" && (
           <>
             <b>Claude attivo</b>: {claude.calls} pagine analizzate
+            {data.cost_usd != null && <> · costo stimato di questa raccolta <b>{usd(data.cost_usd)}</b></>}
             {claude.call_errors > 0 && <span className="text-red-700"> · {claude.call_errors} chiamate fallite</span>}
           </>
         )}
@@ -151,6 +153,9 @@ export function ScanView({ region }: { region: string }) {
                 </span>
                 <span className="w-16 shrink-0 text-right tabular-nums text-neutral-500">{i.duration_s != null ? clock(i.duration_s) : ""}</span>
                 <span className="w-16 shrink-0"><ClaudeDot i={i} /></span>
+                <span className="w-14 shrink-0 text-right tabular-nums text-neutral-500">
+                  {i.cost_usd ? usd(i.cost_usd) : ""}
+                </span>
                 <span className="w-20 shrink-0 text-right text-neutral-500">
                   {i.status === "done" || i.status === "error" ? `${i.records_found} record` : ""}
                 </span>

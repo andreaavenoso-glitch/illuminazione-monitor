@@ -18,6 +18,9 @@ class WorkerSettings(BaseSettings):
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-4-5"
+    # Override of the price table (USD per million tokens) for the cost counter; 0 = use the table.
+    anthropic_price_input_per_mtok: float = 0.0
+    anthropic_price_output_per_mtok: float = 0.0
     smart_collector_max_html_chars: int = 80000
     smart_collector_playwright_min_chars: int = 3000
     smart_collector_playwright_wait_ms: int = 4000
