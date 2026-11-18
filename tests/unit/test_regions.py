@@ -132,3 +132,58 @@ class TestSelectSample:
         picked = select_sample(self._items(), 5, random.Random(1))
         assert len(picked) == 5
         assert {i.n for i in picked[:3]} == {0, 1, 2}
+
+
+class TestRealWorldWordings:
+    """Titles modelled on real notices found on the web (comuni's albi,
+    qualenergia listings): they must be in the lighting perimeter and land in
+    the right category."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Manutenzione impianti di illuminazione pubblica a Cernusco sul Naviglio",
+            "Sostituzione corpi illuminanti per impianto illuminazione pubblica",
+            "Fornitura moduli retrofit a led per illuminazione pubblica",
+            "Gestione ed efficientamento energetico impianti di illuminazione pubblica",
+            "Conduzione e manutenzione pubblica illuminazione",
+        ],
+    )
+    def test_maintenance_and_replacement_are_in_perimeter(self, text: str) -> None:
+        from parsing_rules.perimeter import is_in_lighting_perimeter
+
+        assert is_in_lighting_perimeter(text)
+
+    def test_unrelated_text_is_not(self) -> None:
+        from parsing_rules.perimeter import is_in_lighting_perimeter
+
+        assert not is_in_lighting_perimeter("Fornitura di cancelleria per gli uffici comunali")
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Avviso di manifestazione di interesse con richiesta di preventivo per la manutenzione dell'impianto", MANIFESTAZIONE),
+            ("Indagine di mercato per individuare operatori da invitare alla procedura negoziata", MANIFESTAZIONE),
+            ("Avviso per la sollecitazione di proposte di finanza di progetto", PRE_GARA),
+            ("Dichiarazione di pubblico interesse della proposta di project financing", PRE_GARA),
+            ("Incarico di advisor tecnico-finanziario per la valutazione della proposta", PRE_GARA),
+            ("Affidamento del servizio di verifica del PFTE", PRE_GARA),
+            ("Affidamento incarico per la redazione del PRIC e censimento degli impianti", PRE_GARA),
+        ],
+    )
+    def test_categories_from_wording(self, text: str, expected: str) -> None:
+        assert categorize(stato_procedurale="GARA PUBBLICATA", text=text) == expected
+
+    def test_claude_label_beats_wording(self) -> None:
+        # The text alone would read as a tender; the model's label wins.
+        assert categorize(stato_procedurale="PRE-GARA", text="Illuminazione pubblica", atto_tipo="manifestazione_interesse") == MANIFESTAZIONE
+        assert categorize(stato_procedurale="PRE-GARA", text="Illuminazione pubblica", atto_tipo="incarico_ppp") == PRE_GARA
+        assert categorize(stato_procedurale="PRE-GARA", text="x", atto_tipo="sconosciuto") == PRE_GARA
+
+    def test_esito_stays_excluded_even_with_label(self) -> None:
+        assert categorize(stato_procedurale="ESITO-AGGIUDICAZIONE-VARIANTE-REVOCA", text="x", atto_tipo="incarico_ppp") is None
+
+    def test_invented_term_was_removed(self) -> None:
+        from shared_models.categories import PRE_GARA_KEYWORDS
+
+        assert "piccs" not in PRE_GARA_KEYWORDS

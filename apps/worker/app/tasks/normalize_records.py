@@ -140,11 +140,14 @@ async def _upsert(
     )
 
     regione = await _resolve_region(session, raw, normalized)
+    extracted_atto_tipo = (raw.extracted_json or {}).get("atto_tipo")
 
     if existing:
         _merge_fields(existing, normalized, stato=stato, tipo=tipo, now=now)
         if regione and not existing.regione:
             existing.regione = regione
+        if extracted_atto_tipo and not existing.atto_tipo:
+            existing.atto_tipo = extracted_atto_tipo
         return existing
 
     record = ProcurementRecord(
@@ -155,6 +158,7 @@ async def _upsert(
         data_pubblicazione=normalized.data_pubblicazione,
         scadenza=normalized.scadenza,
         regione=regione,
+        atto_tipo=extracted_atto_tipo,
         provincia=normalized.provincia,
         comune=normalized.comune,
         tipologia_gara_procedura=normalized.tipologia_gara_procedura,

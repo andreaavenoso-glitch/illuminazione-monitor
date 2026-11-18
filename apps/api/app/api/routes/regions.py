@@ -66,6 +66,7 @@ def _record_category(r: ProcurementRecord) -> str | None:
         stato_procedurale=r.stato_procedurale,
         text=f"{r.descrizione or ''} {r.tipologia_gara_procedura or ''}",
         flag_pre_gara=r.flag_pre_gara,
+        atto_tipo=r.atto_tipo,
     )
 
 

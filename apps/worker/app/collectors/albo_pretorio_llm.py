@@ -169,6 +169,10 @@ Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "det
 - Indagini di mercato / indagini conoscitive per affidamenti di illuminazione pubblica
 - Avvisi esplorativi per la ricerca di operatori economici nel settore illuminazione pubblica
 - Determine a contrarre che avviano formalmente una procedura di affidamento nel settore illuminazione pubblica
+- Avvisi / manifestazioni di interesse / indagini di mercato per MANUTENZIONE (ordinaria, straordinaria, conduzione), SOSTITUZIONE di corpi illuminanti o apparecchi, retrofit LED, relamping, efficientamento o riqualificazione energetica, servizio luce / gestione del servizio di illuminazione pubblica (anche se l'importo e' piccolo o si procede con affidamento diretto o procedura negoziata)
+- Proposte di finanza di progetto / project financing / partenariato pubblico-privato (PPP) sull'illuminazione pubblica: proposta di un privato, dichiarazione di pubblico interesse, avviso per la sollecitazione di proposte (art. 193 d.lgs. 36/2023), delibere di giunta su queste proposte
+- Incarichi collegati a un PPP o a una futura gara di illuminazione pubblica: advisor tecnico-finanziario o legale, supporto al RUP, valutatore/commissione per la valutazione delle proposte, verifica del PFTE o del progetto di fattibilita'
+- Incarichi tecnici preparatori: piano regolatore dell'illuminazione comunale (PRIC), censimento degli impianti, diagnosi/audit energetico, studio di fattibilita', progettazione di impianti di illuminazione pubblica
 
 NON includere:
 - Bandi di gara già in pubblicazione con scadenza di presentazione offerte (categoria raccolta da altre fonti)
@@ -185,7 +189,7 @@ Restituisci SOLO un JSON con questa struttura:
       "body": "Descrizione/oggetto dell'atto (max 2000 char)",
       "url": "URL assoluto dell'atto (se solo relativo, lascia null)",
       "date": "Data pubblicazione formato ISO YYYY-MM-DD oppure null",
-      "atto_tipo": "manifestazione_interesse | avviso_preinformazione | indagine_mercato | determina_a_contrarre",
+      "atto_tipo": "manifestazione_interesse | avviso_preinformazione | indagine_mercato | determina_a_contrarre | proposta_ppp | incarico_ppp | incarico_tecnico",
       "ente": "Nome dell'ente pubblico",
       "scadenza": "YYYY-MM-DD o null (scadenza per manifestare interesse, se presente)"
     }
