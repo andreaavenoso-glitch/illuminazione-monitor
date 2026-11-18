@@ -35,12 +35,33 @@ _ALIASES = {
 }
 
 
+def _norm_col(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
 def _pick(row: dict, key: str) -> str:
+    """First non-empty value among the known spellings of a column. Matching
+    ignores case, spaces and underscores, since IPA's xlsx and txt releases
+    don't spell the headers identically."""
+    norm = {_norm_col(k): v for k, v in row.items() if k}
     for alias in _ALIASES[key]:
-        v = row.get(alias)
-        if v and str(v).strip() and str(v).strip().lower() != "nan":
+        v = norm.get(_norm_col(alias))
+        if v and str(v).strip() and str(v).strip().lower() not in ("nan", "none"):
             return str(v).strip()
     return ""
+
+
+def xlsx_to_text(path: str) -> str:
+    """First sheet of an .xlsx as tab-separated text (header row first), so
+    the same parser handles IPA's xlsx, txt and csv releases."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    lines = []
+    for row in ws.iter_rows(values_only=True):
+        lines.append("\t".join("" if c is None else str(c).replace("\t", " ").replace("\n", " ") for c in row))
+    return "\n".join(lines)
 
 
 def _clean_url(url: str) -> str | None:
@@ -85,6 +106,10 @@ async def run(region: str, text: str) -> None:
 
     canonical = normalize_region(region)
     rows = parse_ipa_rows(text, region)
+    if not rows:
+        header = text.lstrip("\ufeff").split("\n", 1)[0][:300]
+        print(f"Nessun comune trovato per {canonical}. Colonne del file: {header}")
+        return
     new_e = new_w = no_url = 0
     async with SessionLocal() as session:
         for r in rows:
@@ -122,7 +147,9 @@ def main() -> None:
     g.add_argument("--file")
     g.add_argument("--url")
     a = ap.parse_args()
-    if a.file:
+    if a.file and a.file.lower().endswith((".xlsx", ".xlsm")):
+        text = xlsx_to_text(a.file)
+    elif a.file:
         with open(a.file, encoding="utf-8-sig", errors="replace") as f:
             text = f.read()
     else:

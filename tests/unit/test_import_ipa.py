@@ -1,7 +1,7 @@
 """IPA open-data CSV parsing for the per-region comuni import."""
 from __future__ import annotations
 
-from infra.scripts.import_ipa import parse_ipa_rows
+from infra.scripts.import_ipa import parse_ipa_rows, xlsx_to_text
 from infra.scripts.seed_regions import parse_list
 
 CSV = (
@@ -33,3 +33,23 @@ def test_handles_bom_and_comma_delimiter() -> None:
 def test_parse_list() -> None:
     assert parse_list(" Lombardia, Puglia ,,") == ["Lombardia", "Puglia"]
     assert parse_list(None) == []
+
+
+def test_header_spelling_is_tolerant() -> None:
+    text = "denominazione ente\ttipologia\tregione\tlink amministrazione trasparente\nComune di Lecce\tComuni\tPuglia\thttps://t.lecce.it\n"
+    assert parse_ipa_rows(text, "Puglia")[0]["trasparenza"] == "https://t.lecce.it"
+
+
+def test_xlsx_roundtrip(tmp_path) -> None:
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["Denominazione_ente", "Tipologia", "Regione", "Link_Amministrazione_Trasparente"])
+    ws.append(["Comune di Taranto", "Comuni e loro Consorzi e Associazioni", "Puglia", "https://t.taranto.it"])
+    ws.append(["Comune di Roma", "Comuni", "Lazio", None])
+    path = tmp_path / "amm.xlsx"
+    wb.save(path)
+    rows = parse_ipa_rows(xlsx_to_text(str(path)), "Puglia")
+    assert [r["name"] for r in rows] == ["Comune di Taranto"]
+    assert rows[0]["trasparenza"] == "https://t.taranto.it"

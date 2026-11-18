@@ -71,7 +71,7 @@ come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione)
   Destinatari modificabili per regione; servono le variabili `SMTP_*` (vedi `.env.example`): senza server di posta
   nulla parte e i record restano in attesa.
 - **Comuni di una regione**: `python -m infra.scripts.import_ipa --region Puglia --file amministrazioni.csv`
-  (dataset "Amministrazioni" di IPA, indicepa.gov.it) importa i comuni con il link a Amministrazione Trasparente.
+  (dataset "Amministrazioni" di IPA, indicepa.gov.it; accetta xlsx, txt con tabulazione e csv) importa i comuni con il link a Amministrazione Trasparente.
 - I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:
