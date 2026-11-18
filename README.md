@@ -44,6 +44,7 @@ cp .env.example .env
 docker compose up -d --build
 docker compose exec api alembic upgrade head
 docker compose exec api python -m infra.scripts.seed_watchlist
+docker compose exec api python -m infra.scripts.seed_regions
 ```
 
 Il seed carica anche la watchlist di 73 comuni lombardi target per l'illuminazione
@@ -56,6 +57,22 @@ della pagina) e va quindi considerato da verificare — è segnalato nel campo
 `note` del CSV e nelle note dell'entità in `/admin/watchlist`. Per correggere
 un URL sbagliato: `PATCH /watchlist/{id}` (endpoint API, non ancora esposto
 come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione).
+
+### Struttura per regioni
+
+- **Livello 1** (`/level1`): portali nazionali (TED, ANAC, GURI...), solo analisi e verifica delle fonti. Consip è fuori.
+  I record trovati vengono assegnati a una regione (regione esplicita, codice NUTS di TED, ente già in watchlist,
+  regione citata nel testo) e compaiono nel suo riquadro.
+- **Livello 2** (`/regions`): un riquadro per regione con pre-gare, manifestazioni di interesse e gare, e la vista
+  dei siti (siti regionali del catalogo + comuni con tutti i loro indirizzi e lo stato di raggiungibilità).
+  Solo le regioni *attive* vengono raccolte e notificate (di partenza: Lombardia e Puglia, modificabile dalla UI o con
+  `ENABLED_REGIONS` al seed).
+- **Email ai referenti**: a fine pipeline giornaliera, una mail per regione con le novità non ancora notificate.
+  Destinatari modificabili per regione; servono le variabili `SMTP_*` (vedi `.env.example`): senza server di posta
+  nulla parte e i record restano in attesa.
+- **Comuni di una regione**: `python -m infra.scripts.import_ipa --region Puglia --file amministrazioni.csv`
+  (dataset "Amministrazioni" di IPA, indicepa.gov.it) importa i comuni con il link a Amministrazione Trasparente.
+- I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:
 

@@ -1,0 +1,232 @@
+"use client";
+
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { getUser, hasRole } from "@/lib/auth";
+import {
+  CATEGORIA_LABEL,
+  STATO_CLASS,
+  STATO_LABEL,
+  type Categoria,
+  type RegionDetail,
+} from "@/lib/regions";
+
+type Tab = Categoria | "siti";
+
+const ERROR_LABELS: Record<string, string> = {
+  http_404: "pagina non trovata (404)",
+  http_403: "accesso bloccato (403)",
+  dns: "dominio inesistente",
+  ssl: "certificato non valido",
+  timeout: "nessuna risposta (timeout)",
+  empty: "pagina vuota",
+};
+
+function fmt(d: string | null): string {
+  return d ? new Date(d).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "—";
+}
+
+export default function RegionPage() {
+  const params = useParams<{ region: string }>();
+  const region = decodeURIComponent(params.region);
+  const qc = useQueryClient();
+  const admin = hasRole(getUser(), "admin");
+  const [tab, setTab] = useState<Tab>("pre_gara");
+  const [recipients, setRecipients] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["region", region],
+    queryFn: () => api.get<RegionDetail>(`/regions/${encodeURIComponent(region)}`),
+    refetchInterval: 20000,
+  });
+
+  const save = useMutation({
+    mutationFn: (body: { enabled?: boolean; recipients?: string }) =>
+      api.patch(`/regions/${encodeURIComponent(region)}`, body),
+    onSuccess: () => {
+      setRecipients(null);
+      qc.invalidateQueries({ queryKey: ["region", region] });
+      qc.invalidateQueries({ queryKey: ["regions"] });
+    },
+  });
+  const collect = useMutation({
+    mutationFn: () => api.post(`/regions/${encodeURIComponent(region)}/collect`),
+    onSuccess: () =>
+      setMessage(
+        "Raccolta avviata: siti regionali, poi comuni, poi normalizzazione e punteggio, uno dopo l'altro. " +
+          "Dura circa 10 secondi per comune; la pagina si aggiorna da sola.",
+      ),
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
+  const digest = useMutation({
+    mutationFn: () => api.post(`/regions/${encodeURIComponent(region)}/send-digest`),
+    onSuccess: () =>
+      setMessage(
+        "Invio richiesto. Se il server di posta (SMTP) non è configurato la mail non parte e i record restano in attesa.",
+      ),
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
+
+  if (isLoading) return <p className="text-sm text-neutral-500">Caricamento…</p>;
+  if (error || !data) return <p className="text-sm text-red-600">Regione non trovata.</p>;
+
+  const byCat = (c: Categoria) => data.records.filter((r) => r.categoria === c);
+  const failing = data.comuni.filter((c) => c.stato === "failing").length;
+  const tabs: { key: Tab; label: string; n: number }[] = [
+    { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: byCat("pre_gara").length },
+    { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: byCat("manifestazione_interesse").length },
+    { key: "gara", label: CATEGORIA_LABEL.gara, n: byCat("gara").length },
+    { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <header className="space-y-2">
+        <Link href="/regions" className="text-xs text-neutral-500 hover:underline">← Regioni</Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold">
+            {data.region}{" "}
+            <span className={`ml-2 rounded-full px-2 py-0.5 align-middle text-xs ${data.enabled ? "bg-emerald-100 text-emerald-800" : "bg-neutral-200 text-neutral-600"}`}>
+              {data.enabled ? "attiva" : "spenta"}
+            </span>
+          </h1>
+          {admin && (
+            <div className="flex flex-wrap gap-2 text-sm">
+              <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                onClick={() => save.mutate({ enabled: !data.enabled })}>
+                {data.enabled ? "Spegni regione" : "Attiva regione"}
+              </button>
+              <button type="button" disabled={collect.isPending}
+                className="rounded bg-neutral-900 px-3 py-1 text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+                onClick={() => collect.mutate()}>
+                Raccogli ora
+              </button>
+              <button type="button" disabled={digest.isPending}
+                className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                onClick={() => digest.mutate()}>
+                Invia email ora
+              </button>
+            </div>
+          )}
+        </div>
+        {message && <p className="rounded bg-sky-50 p-2 text-xs text-sky-900 dark:bg-sky-950 dark:text-sky-100">{message}</p>}
+        <div className="text-xs text-neutral-600 dark:text-neutral-400">
+          Referenti email:{" "}
+          {recipients === null ? (
+            <>
+              <b>{data.recipients ?? "nessuno"}</b>
+              {admin && (
+                <button type="button" className="ml-2 underline" onClick={() => setRecipients(data.recipients ?? "")}>
+                  modifica
+                </button>
+              )}
+            </>
+          ) : (
+            <span className="inline-flex gap-2">
+              <input value={recipients} onChange={(e) => setRecipients(e.target.value)}
+                placeholder="mail1@x.it, mail2@x.it"
+                className="w-72 rounded border px-2 py-0.5 dark:bg-neutral-900" />
+              <button type="button" className="underline" onClick={() => save.mutate({ recipients })}>salva</button>
+              <button type="button" className="underline" onClick={() => setRecipients(null)}>annulla</button>
+            </span>
+          )}
+          {" · "}ultima email: {fmt(data.last_digest_at)}
+          {failing > 0 && <> · <span className="text-red-600">{failing} comuni con siti non raggiungibili</span></>}
+        </div>
+      </header>
+
+      <nav className="flex gap-1 border-b text-sm dark:border-neutral-800">
+        {tabs.map((t) => (
+          <button key={t.key} type="button" onClick={() => setTab(t.key)}
+            className={`-mb-px border-b-2 px-3 py-2 ${tab === t.key ? "border-neutral-900 font-medium dark:border-neutral-100" : "border-transparent text-neutral-500"}`}>
+            {t.label} <span className="text-xs text-neutral-500">({t.n})</span>
+          </button>
+        ))}
+      </nav>
+
+      {tab !== "siti" ? (
+        <ul className="space-y-3">
+          {byCat(tab).length === 0 && (
+            <li className="text-sm text-neutral-500">
+              Nessun elemento negli ultimi 60 giorni.
+            </li>
+          )}
+          {byCat(tab).map((r) => (
+            <li key={r.id} className="rounded border p-3 text-sm dark:border-neutral-800">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <b>{r.ente}</b>
+                <span className="text-xs text-neutral-500">
+                  visto il {fmt(r.first_seen_at)}
+                  {r.scadenza && <> · scadenza {fmt(r.scadenza)}</>}
+                  {r.notificato ? " · email inviata" : " · email in attesa"}
+                </span>
+              </div>
+              <p className="mt-1 text-neutral-700 dark:text-neutral-300">{(r.descrizione ?? "").slice(0, 300)}</p>
+              <a href={r.link} target="_blank" rel="noreferrer" className="mt-1 inline-block break-all text-xs text-sky-700 underline dark:text-sky-300">
+                {r.link}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="space-y-6">
+          <section>
+            <h2 className="mb-2 font-semibold">Siti regionali ({data.siti_regionali.length})</h2>
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs text-neutral-500"><tr><th className="py-1">Sito</th><th>Ruolo</th><th>Ultimo controllo</th><th>Esito</th></tr></thead>
+              <tbody>
+                {data.siti_regionali.map((s) => (
+                  <tr key={s.id} className="border-t dark:border-neutral-800">
+                    <td className="py-1.5"><a href={s.url} target="_blank" rel="noreferrer" className="underline">{s.nome}</a></td>
+                    <td>{s.ruolo ?? "—"}</td>
+                    <td>{fmt(s.last_checked_at)}</td>
+                    <td>
+                      {s.ultimo_run == null ? <span className={`rounded-full px-2 py-0.5 text-xs ${STATO_CLASS.unchecked}`}>non verificato</span>
+                        : s.ultimo_run.status === "failed"
+                          ? <span className={`rounded-full px-2 py-0.5 text-xs ${STATO_CLASS.failing}`} title={s.ultimo_run.errore ?? ""}>errore</span>
+                          : <span className={`rounded-full px-2 py-0.5 text-xs ${STATO_CLASS.ok}`}>letto ({s.ultimo_run.found} trovati)</span>}
+                    </td>
+                  </tr>
+                ))}
+                {data.siti_regionali.length === 0 && <tr><td colSpan={4} className="py-2 text-neutral-500">Nessun sito regionale nel catalogo per questa regione.</td></tr>}
+              </tbody>
+            </table>
+          </section>
+          <section>
+            <h2 className="mb-2 font-semibold">Comuni ({data.comuni.length})</h2>
+            {data.comuni.length === 0 && (
+              <p className="text-sm text-neutral-500">
+                Nessun comune caricato. Importa l&apos;elenco da IPA: <code>python -m infra.scripts.import_ipa --region &quot;{data.region}&quot; --file amministrazioni.csv</code>
+              </p>
+            )}
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs text-neutral-500"><tr><th className="py-1">Comune</th><th>Siti da leggere</th><th>Stato</th></tr></thead>
+              <tbody>
+                {data.comuni.map((c) => (
+                  <tr key={c.id} className={`border-t align-top dark:border-neutral-800 ${c.active ? "" : "opacity-60"}`}>
+                    <td className="py-1.5">{c.ente}{c.provincia && <span className="text-xs text-neutral-500"> ({c.provincia})</span>}</td>
+                    <td className="space-y-0.5">
+                      {c.siti.length === 0 && <span className="text-xs text-neutral-500">nessun indirizzo noto (inattivo)</span>}
+                      {c.siti.map((s) => (
+                        <div key={s.url} className="text-xs"><span className="text-neutral-500">{s.ruolo}: </span>
+                          <a href={s.url} target="_blank" rel="noreferrer" className="break-all underline">{s.url}</a></div>
+                      ))}
+                    </td>
+                    <td>
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${STATO_CLASS[c.stato]}`}>{STATO_LABEL[c.stato]}</span>
+                      {c.stato === "failing" && <div className="mt-0.5 text-xs text-red-700 dark:text-red-300">{c.last_error ? (ERROR_LABELS[c.last_error] ?? c.last_error) : "errore"} · {c.consecutive_failures}× di fila</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}

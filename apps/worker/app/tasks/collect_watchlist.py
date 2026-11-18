@@ -52,7 +52,8 @@ from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
-from shared_models import JobRun, RawRecord, WatchlistItem
+from shared_models import Entity, JobRun, RawRecord, RegionSettings, WatchlistItem
+from shared_models.regions import normalize_region
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -228,7 +229,19 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
     apply_scan_outcome(item, now=now, ok=primary_ok, error=first_error)
 
 
-async def _run_watchlist_scan() -> dict[str, int]:
+async def _regions_to_scan(session: AsyncSession, region: str | None) -> set[str] | None:
+    """Regions a scan should cover, or None for "everything" (no region
+    configuration at all, i.e. before the regional setup was seeded)."""
+    if region:
+        r = normalize_region(region)
+        return {r} if r else set()
+    rows = (await session.execute(select(RegionSettings))).scalars().all()
+    if not rows:
+        return None
+    return {r.region for r in rows if r.enabled}
+
+
+async def _run_watchlist_scan(region: str | None = None) -> dict[str, int]:
     totals = {"items_scanned": 0, "records_found": 0, "records_valid": 0, "errors": 0}
     async with SessionLocal() as session:
         job = JobRun(job_name="collect_watchlist_albo", status="running")
@@ -239,7 +252,14 @@ async def _run_watchlist_scan() -> dict[str, int]:
             WatchlistItem.active.is_(True),
             or_(WatchlistItem.url_albo.is_not(None), WatchlistItem.url_trasparenza.is_not(None)),
         )
-        items = (await session.execute(stmt)).scalars().all()
+        stmt = stmt.add_columns(Entity.region).outerjoin(Entity, WatchlistItem.entity_id == Entity.id)
+        rows = (await session.execute(stmt)).all()
+        wanted = await _regions_to_scan(session, region)
+        items = [
+            item for item, item_region in rows
+            if wanted is None or normalize_region(item_region) in wanted
+        ]
+        log.info("collect_watchlist.scope", extra={"region": region, "items": len(items)})
 
         for item in items:
             try:
@@ -265,5 +285,7 @@ async def _run_watchlist_scan() -> dict[str, int]:
 
 
 @celery_app.task(name="app.tasks.collect_watchlist.collect_watchlist_albo")
-def collect_watchlist_albo() -> dict[str, int]:
-    return asyncio.run(_run_watchlist_scan())
+def collect_watchlist_albo(region: str | None = None) -> dict[str, int]:
+    """Scan the watchlist; ``region`` limits it to one region (any, enabled or
+    not), otherwise only the enabled regions are scanned."""
+    return asyncio.run(_run_watchlist_scan(region))

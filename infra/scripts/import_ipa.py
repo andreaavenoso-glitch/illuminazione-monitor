@@ -1,0 +1,135 @@
+"""Import the comuni of one region from the IPA open data (indicepa.gov.it)
+into entities + watchlist_items, with the "Amministrazione Trasparente" link
+every PA must publish (D.Lgs. 33/2013) as the site to scan.
+
+Download the "Amministrazioni" dataset (CSV) from https://indicepa.gov.it
+(Open Data) and pass it with --file, or give a direct link with --url.
+
+Usage (inside the api container):
+    python -m infra.scripts.import_ipa --region Puglia --file /workspace/amministrazioni.csv
+    python -m infra.scripts.import_ipa --region Puglia --url https://...
+
+Idempotent: a comune already on the watchlist is left untouched.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import csv
+import io
+import re
+from decimal import Decimal
+
+# IPA column names vary slightly between releases: accept the known spellings.
+_ALIASES = {
+    "name": ("Denominazione_ente", "denominazione_ente", "Denominazione ente"),
+    "tipo": ("Tipologia", "tipologia", "Tipologia_istat", "tipologia_istat"),
+    "comune": ("Comune", "comune"),
+    "provincia": ("Provincia", "provincia", "Sigla_provincia"),
+    "regione": ("Regione", "regione"),
+    "sito": ("Sito_istituzionale", "sito_istituzionale"),
+    "trasparenza": (
+        "Link_Amministrazione_Trasparente", "link_amministrazione_trasparente",
+        "Amministrazione_trasparente", "Link_amministrazione_trasparente",
+    ),
+}
+
+
+def _pick(row: dict, key: str) -> str:
+    for alias in _ALIASES[key]:
+        v = row.get(alias)
+        if v and str(v).strip() and str(v).strip().lower() != "nan":
+            return str(v).strip()
+    return ""
+
+
+def _clean_url(url: str) -> str | None:
+    url = url.strip()
+    if not url:
+        return None
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        url = "https://" + url
+    return url
+
+
+def parse_ipa_rows(text: str, region: str) -> list[dict]:
+    """Comuni of ``region`` from the IPA CSV text: name, province, site,
+    trasparenza URL. Skips other regions and non-comune bodies."""
+    from shared_models.regions import normalize_region
+
+    target = normalize_region(region)
+    first = text.lstrip("﻿").split("\n", 1)[0]
+    delim = ";" if first.count(";") > first.count(",") else ("\t" if first.count("\t") > first.count(",") else ",")
+    out: list[dict] = []
+    for row in csv.DictReader(io.StringIO(text.lstrip("﻿")), delimiter=delim):
+        if normalize_region(_pick(row, "regione")) != target:
+            continue
+        tipo = _pick(row, "tipo").lower()
+        name = _pick(row, "name")
+        if "comuni" not in tipo and not name.lower().startswith("comune di"):
+            continue
+        out.append({
+            "name": name,
+            "provincia": _pick(row, "provincia") or None,
+            "sito": _clean_url(_pick(row, "sito")),
+            "trasparenza": _clean_url(_pick(row, "trasparenza")),
+        })
+    return out
+
+
+async def run(region: str, text: str) -> None:
+    from app.core.database import SessionLocal
+    from shared_models import Entity, WatchlistItem
+    from shared_models.regions import normalize_region
+    from sqlalchemy import select
+
+    canonical = normalize_region(region)
+    rows = parse_ipa_rows(text, region)
+    new_e = new_w = no_url = 0
+    async with SessionLocal() as session:
+        for r in rows:
+            ent = (await session.execute(
+                select(Entity).where(Entity.name == r["name"], Entity.region == canonical)
+            )).scalar_one_or_none()
+            if ent is None:
+                ent = Entity(name=r["name"], region=canonical, province=r["provincia"],
+                             municipality=r["name"], entity_type="comune")
+                session.add(ent)
+                await session.flush()
+                new_e += 1
+            if (await session.execute(
+                select(WatchlistItem).where(WatchlistItem.entity_id == ent.id)
+            )).scalar_one_or_none():
+                continue
+            url = r["trasparenza"]
+            if not url:
+                no_url += 1
+            session.add(WatchlistItem(
+                entity_id=ent.id, url_trasparenza=url, frequency="daily", priority="B",
+                reliability_score=Decimal("0.70"), publication_model="html_scraping",
+                active=bool(url),
+            ))
+            new_w += 1
+        await session.commit()
+    print(f"import_ipa {canonical}: comuni nel file={len(rows)} nuovi_enti={new_e} "
+          f"nuovi_siti={new_w} senza_link_trasparenza={no_url} (inattivi)")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--region", required=True)
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--file")
+    g.add_argument("--url")
+    a = ap.parse_args()
+    if a.file:
+        with open(a.file, encoding="utf-8-sig", errors="replace") as f:
+            text = f.read()
+    else:
+        import httpx
+        text = httpx.get(a.url, follow_redirects=True, timeout=120).text
+    asyncio.run(run(a.region, text))
+
+
+if __name__ == "__main__":
+    main()

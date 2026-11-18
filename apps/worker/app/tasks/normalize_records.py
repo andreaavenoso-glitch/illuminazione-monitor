@@ -25,13 +25,46 @@ from app.celery_app import celery_app
 from app.db import SessionLocal
 from app.domain.classification import classify_stato_procedurale, classify_tipo_novita
 from app.domain.normalization import NormalizerInput, normalize
-from shared_models import JobRun, ProcurementRecord, RawRecord, Source
+from shared_models import Entity, JobRun, ProcurementRecord, RawRecord, Source
+from shared_models.regions import entity_key, infer_region, normalize_region
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
 BATCH_SIZE = 200
+
+
+async def _resolve_region(session: AsyncSession, raw: RawRecord, normalized) -> str | None:
+    """Region a record belongs to, so national findings (TED, ANAC, GURI...)
+    land in the right regional box. Strongest signal first: the watchlist
+    entity the record was scraped from, then the record's own region, TED
+    NUTS code, a known entity with the same name, a region named in the text.
+    """
+    if raw.entity_id:
+        entity = await session.get(Entity, raw.entity_id)
+        r = normalize_region(entity.region) if entity else None
+        if r:
+            return r
+    extracted = raw.extracted_json or {}
+    entity_regions: dict[str, str] = {}
+    ente = normalized.ente
+    if ente:
+        row = (
+            await session.execute(
+                select(Entity.region).where(Entity.name.ilike(ente.strip())).limit(1)
+            )
+        ).scalar_one_or_none()
+        r = normalize_region(row)
+        if r:
+            entity_regions[entity_key(ente)] = r
+    return infer_region(
+        regione=normalized.regione,
+        ente=ente,
+        entity_regions=entity_regions,
+        nuts=extracted.get("nuts"),
+        provincia_text=normalized.provincia,
+    )
 
 
 async def _process_batch(session: AsyncSession, job: JobRun) -> None:
@@ -106,8 +139,12 @@ async def _upsert(
         now=now,
     )
 
+    regione = await _resolve_region(session, raw, normalized)
+
     if existing:
         _merge_fields(existing, normalized, stato=stato, tipo=tipo, now=now)
+        if regione and not existing.regione:
+            existing.regione = regione
         return existing
 
     record = ProcurementRecord(
@@ -117,7 +154,7 @@ async def _upsert(
         cig=normalized.cig,
         data_pubblicazione=normalized.data_pubblicazione,
         scadenza=normalized.scadenza,
-        regione=normalized.regione,
+        regione=regione,
         provincia=normalized.provincia,
         comune=normalized.comune,
         tipologia_gara_procedura=normalized.tipologia_gara_procedura,

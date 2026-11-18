@@ -22,6 +22,16 @@ class WorkerSettings(BaseSettings):
     smart_collector_playwright_min_chars: int = 3000
     smart_collector_playwright_wait_ms: int = 4000
 
+    # Outbound email for the regional digests. Empty smtp_host = email off:
+    # digests are built and logged but never marked as sent.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
+    web_base_url: str = "http://localhost:3000"
+
     @property
     def database_url(self) -> str:
         return (

@@ -88,6 +88,7 @@ fi
 
 echo "==> API pronta. Carico la watchlist (73 comuni lombardi + enti nazionali)..."
 docker compose exec -T api python -m infra.scripts.seed_watchlist
+docker compose exec -T api python -m infra.scripts.seed_regions
 
 echo "==> Creo l'utente amministratore..."
 docker compose exec -T api python -m infra.scripts.seed_admin

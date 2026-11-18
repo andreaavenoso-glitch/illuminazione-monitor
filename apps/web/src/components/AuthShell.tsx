@@ -58,6 +58,8 @@ export function AuthShell({ children }: { children: ReactNode }) {
             Lighting Procurement Monitor
           </Link>
           <ul className="flex items-center gap-4 text-sm text-neutral-600 dark:text-neutral-400">
+            <li><Link href="/regions" className="font-medium hover:underline">Regioni</Link></li>
+            <li><Link href="/level1" className="hover:underline">Nazionali</Link></li>
             <li><Link href="/records" className="hover:underline">Records</Link></li>
             <li><Link href="/reports" className="hover:underline">Reports</Link></li>
             <li><Link href="/alerts" className="hover:underline">Alerts</Link></li>

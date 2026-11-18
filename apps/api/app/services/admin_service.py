@@ -97,3 +97,29 @@ def dispatch_backfill(days: int) -> str:
     app = _celery_app()
     result = app.send_task("app.tasks.backfill.run_backfill", kwargs={"days": days})
     return str(result.id)
+
+
+def dispatch_region_scan(region: str) -> dict[str, str]:
+    """One region end to end, strictly in order: regional sites, then its
+    comuni, then normalize and score -- so nothing is normalized before the
+    scan that feeds it has finished. ``task_id`` is the last step: when it is
+    SUCCESS the whole run is done."""
+    from celery import chain
+
+    app = _celery_app()
+    sig = app.signature
+    result = chain(
+        sig("app.tasks.collect_sources.collect_regional_sites", kwargs={"region": region}, immutable=True),
+        sig("app.tasks.collect_watchlist.collect_watchlist_albo", kwargs={"region": region}, immutable=True),
+        sig("app.tasks.normalize_records.normalize_records", immutable=True),
+        sig("app.tasks.score_and_dedupe.score_and_dedupe", immutable=True),
+    ).apply_async()
+    return {"task_id": str(result.id)}
+
+
+def dispatch_region_digest(region: str) -> str:
+    app = _celery_app()
+    result = app.send_task(
+        "app.tasks.send_region_digests.send_region_digests", kwargs={"region": region}
+    )
+    return str(result.id)

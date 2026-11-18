@@ -7,6 +7,7 @@ from app.api.routes import (
     entities,
     health,
     records,
+    regions,
     reports,
     sources,
     watchlist,
@@ -48,6 +49,8 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(sources.router, prefix="/sources", tags=["sources"])
 app.include_router(entities.router, prefix="/entities", tags=["entities"])
 app.include_router(watchlist.router, prefix="/watchlist", tags=["watchlist"])
+app.include_router(regions.router, prefix="/regions", tags=["regions"])
+app.include_router(regions.level1_router, prefix="/level1", tags=["level1"])
 app.include_router(records.router, prefix="/records", tags=["records"])
 app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
