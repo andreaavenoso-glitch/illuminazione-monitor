@@ -50,7 +50,7 @@ from app.collectors.albo_pretorio_llm import (
     merge_detail_into_record,
     select_relevant_links,
 )
-from app.collectors.page_gate import gate_page, pick_section_links
+from app.collectors.page_gate import GateResult, gate_page, pick_section_links
 from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
@@ -104,7 +104,7 @@ async def _process_page(
     now: datetime,
     seen: set[str],
     stats: Counter,
-) -> None:
+) -> GateResult:
     """Extract records from one already-fetched page and persist the new
     ones. Shared by every page a watchlist item's scan touches, whether
     that's the single url_albo page or one of several url_trasparenza pages
@@ -119,11 +119,11 @@ async def _process_page(
     stats[f"template_{gated.template}"] += 1
     if gated.action == "skip":
         stats["pages_skipped_no_keywords"] += 1
-        return
+        return gated
     hashes = dict(item.content_hashes or {})
     if hashes.get(target_url) == gated.digest:
         stats["pages_unchanged"] += 1
-        return
+        return gated
     stats[f"pages_to_claude_{gated.action}"] += 1
 
     status = {"ok": True}
@@ -171,6 +171,7 @@ async def _process_page(
         # Only after a successful analysis: a failed call must be retried.
         hashes[target_url] = gated.digest
         item.content_hashes = hashes
+    return gated
 
 
 async def _trasparenza_pages(
@@ -199,6 +200,52 @@ async def _trasparenza_pages(
     stats["links_from_claude"] += 1
     selected = await select_relevant_links(cleaned, base_url=url, settings=settings, label=label)
     return [u for u in dict.fromkeys(selected) if u and u != url][:MAX_EXTRA_PAGES]
+
+
+# How many clicks deep the crawl goes from the first page of a comune. From a
+# home page the path is home -> Amministrazione Trasparente -> Bandi di gara,
+# so one hop is not enough; the total number of pages stays capped.
+MAX_CRAWL_DEPTH = 2
+LINKS_PER_MENU = 4
+
+
+async def _crawl_extra_pages(
+    session: AsyncSession,
+    item: WatchlistItem,
+    job: JobRun,
+    first_pages: list[str],
+    *,
+    start_url: str,
+    label: str,
+    settings: WorkerSettings,
+    now: datetime,
+    seen: set[str],
+    stats: Counter,
+) -> None:
+    """Read ``first_pages`` and, for pages that turn out to be menus (no
+    lighting wording on them), follow the legal section names one level
+    further. At most MAX_EXTRA_PAGES pages are fetched in total."""
+    visited = {start_url, *first_pages}
+    queue = [(u, 1) for u in first_pages]
+    fetched = 0
+    while queue and fetched < MAX_EXTRA_PAGES:
+        page_url, depth = queue.pop(0)
+        page_label = f"{label}:{page_url}"
+        page_html = await _fetch_page(page_url, settings=settings, label=page_label)
+        fetched += 1
+        if not page_html:
+            continue
+        gated = await _process_page(
+            session, item, job,
+            target_url=page_url, target_html=page_html, label=page_label,
+            settings=settings, now=now, seen=seen, stats=stats,
+        )
+        if depth < MAX_CRAWL_DEPTH and gated.action == "skip":
+            for nxt in pick_section_links(page_html, base_url=page_url, limit=LINKS_PER_MENU):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append((nxt, depth + 1))
+                    stats["pages_followed_deeper"] += 1
 
 
 async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, stats: Counter) -> None:
@@ -254,16 +301,10 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, st
             continue
 
         log.info("collect_watchlist.extra_pages item=%s count=%d", item.id, len(extra_pages))
-        for page_url in extra_pages:
-            page_label = f"{label}:{page_url}"
-            page_html = await _fetch_page(page_url, settings=settings, label=page_label)
-            if not page_html:
-                continue
-            await _process_page(
-                session, item, job,
-                target_url=page_url, target_html=page_html, label=page_label,
-                settings=settings, now=now, seen=seen, stats=stats,
-            )
+        await _crawl_extra_pages(
+            session, item, job, extra_pages,
+            start_url=url, label=label, settings=settings, now=now, seen=seen, stats=stats,
+        )
 
     item.last_scan_at = now
     apply_scan_outcome(item, now=now, ok=primary_ok, error=first_error)

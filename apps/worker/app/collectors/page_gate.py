@@ -39,7 +39,7 @@ SECTION_LABELS = (
     "bandi di gara e contratti", "bandi di gara", "bandi e avvisi", "avvisi pubblici",
     "avvisi di preinformazione", "atti delle amministrazioni aggiudicatrici",
     "manifestazioni di interesse", "provvedimenti", "determinazioni", "determine",
-    "delibere", "albo pretorio",
+    "delibere", "albo pretorio", "amministrazione trasparente",
 )
 
 

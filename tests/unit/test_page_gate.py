@@ -148,3 +148,58 @@ class TestScanIntegration:
         await run(DESIGN_ITALIA_LIST, stats)
         await run(DESIGN_ITALIA_LIST, stats)
         assert len(calls) == 2 and not item.content_hashes
+
+
+@pytest.mark.asyncio
+class TestCrawlDepth:
+    """home -> menu page -> the page that actually lists acts."""
+
+    HOME = "<a href='/trasparenza'>Amministrazione trasparente</a><a href='/contatti'>Contatti utili qui</a>"
+    MENU = "<ul><li><a href='/trasparenza/bandi'>Bandi di gara e contratti</a></li><li><a href='/trasparenza/personale'>Personale</a></li></ul>"
+    BANDI = (
+        "<ul><li><a href='/trasparenza/bandi/1'>Avviso di manifestazione di interesse per la "
+        "manutenzione dell'illuminazione pubblica</a> 12/11/2026</li></ul>"
+    )
+
+    async def _run(self, monkeypatch, pages):
+        from collections import Counter
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from app.tasks import collect_watchlist as cw
+
+        fetched: list[str] = []
+        sent: list[str] = []
+
+        async def fake_fetch(url, *, settings, label):
+            fetched.append(url)
+            return pages.get(url, "")
+
+        async def fake_extract(html, *, url, settings, label, status=None):
+            sent.append(url)
+            return []
+
+        monkeypatch.setattr(cw, "_fetch_page", fake_fetch)
+        monkeypatch.setattr(cw, "extract_albo_records", fake_extract)
+        item = SimpleNamespace(content_hashes=None, source_id=None, entity_id=None)
+        job = SimpleNamespace(records_found=0, records_valid=0, duplicates_removed=0)
+        stats = Counter()
+        await cw._crawl_extra_pages(
+            SimpleNamespace(add=lambda *_: None), item, job, ["https://c.it/trasparenza"],
+            start_url="https://c.it/", label="t", settings=None,
+            now=datetime.now(tz=UTC), seen=set(), stats=stats,
+        )
+        return fetched, sent, stats
+
+    async def test_follows_menu_to_the_real_listing(self, monkeypatch) -> None:
+        pages = {"https://c.it/trasparenza": self.MENU, "https://c.it/trasparenza/bandi": self.BANDI}
+        fetched, sent, stats = await self._run(monkeypatch, pages)
+        assert fetched == ["https://c.it/trasparenza", "https://c.it/trasparenza/bandi"]
+        assert sent == ["https://c.it/trasparenza/bandi"]  # only the page with matches reaches Claude
+        assert stats["pages_followed_deeper"] == 1
+
+    async def test_does_not_follow_beyond_two_levels_or_visited_pages(self, monkeypatch) -> None:
+        loop = "<a href='/trasparenza'>Amministrazione trasparente</a><a href='/l3'>Bandi di gara e contratti</a>"
+        pages = {"https://c.it/trasparenza": loop, "https://c.it/l3": "<a href='/l4'>Bandi di gara</a>"}
+        fetched, _, _ = await self._run(monkeypatch, pages)
+        assert fetched == ["https://c.it/trasparenza", "https://c.it/l3"]
