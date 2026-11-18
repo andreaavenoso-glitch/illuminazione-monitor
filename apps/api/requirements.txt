@@ -11,6 +11,10 @@ httpx==0.28.0
 redis==5.2.0
 boto3==1.35.71
 celery[redis]==5.4.0
+# celery 5.4.0 accepts any kombu<6.0; kombu 5.7.0 (2026-11-03) needs redis-py>=6.1
+# and fails at startup with redis==5.2.0 (VersionMismatch). 5.6.2 was the latest
+# release until then, i.e. the combination this project always ran with.
+kombu==5.6.2
 python-multipart==0.0.18
 openpyxl==3.1.5
 bcrypt==4.0.1
