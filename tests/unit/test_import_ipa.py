@@ -63,3 +63,19 @@ def test_old_txt_release_columns() -> None:
     )
     rows = parse_ipa_rows(text, "Puglia")
     assert rows == [{"name": "Comune di Bari", "provincia": "BA", "sito": "https://www.comune.bari.it", "trasparenza": None}]
+
+
+def test_capture_samples_summary() -> None:
+    from infra.scripts.capture_samples import slug, summarize
+
+    reports = [
+        {"ente": "A", "error": "reset"},
+        {"ente": "B", "template": "halley", "links_source": "labels",
+         "pages": [{"gate": "skip"}, {"gate": "compact"}]},
+        {"ente": "C", "template": "design_italia", "links_source": "none_would_ask_claude", "pages": []},
+    ]
+    s = summarize(reports)
+    assert s["counts"]["comuni"] == 3 and s["counts"]["unreachable"] == 1
+    assert s["counts"]["comuni_with_a_gated_page"] == 1 and s["counts"]["comuni_with_no_extra_page"] == 1
+    assert s["templates"] == {"halley": 1, "design_italia": 1} and s["errors"] == {"reset": 1}
+    assert slug("Comune di Sant'Agata (FG)") == "comune-di-sant-agata-fg"
