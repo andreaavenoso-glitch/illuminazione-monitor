@@ -26,7 +26,18 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    # minio/minio and minio/mc are no longer pullable from Docker Hub ("pull
+    # access denied ... repository does not exist": that is what made the
+    # Codespace postCreateCommand fail). bitnamilegacy/* are frozen copies of
+    # the last Bitnami builds of the same MinIO server: fine for a trial
+    # environment, but they receive no updates and may be removed -- switch
+    # to a maintained S3-compatible server before any real deployment.
+    # The Bitnami entrypoint wraps its own start script, so it is overridden
+    # to run the binary directly (same command line as the official image),
+    # as root so the named volume mounted at /data is writable.
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    user: "0:0"
+    entrypoint: ["/opt/bitnami/minio/bin/minio"]
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY}
@@ -37,13 +48,15 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # Port-open check: the Bitnami image is not guaranteed to ship curl.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000'"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   minio-init:
-    image: minio/mc:latest
+    image: bitnamilegacy/minio-client:2025.7.21-debian-12-r3
+    user: "0:0"
     depends_on:
       minio:
         condition: service_healthy
