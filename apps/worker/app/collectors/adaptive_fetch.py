@@ -103,8 +103,12 @@ async def adaptive_fetch_result(
             resp.raise_for_status()
             html = resp.text
         except (httpx.HTTPError, httpx.TimeoutException) as exc:
-            log.warning("adaptive_fetch.fetch_failed", label=label, url=url, error=str(exc))
             http_error = classify_fetch_error(exc)
+            # str(exc) is empty for timeouts: log the kind and type instead.
+            log.warning(
+                "adaptive_fetch.fetch_failed", label=label, url=url,
+                kind=http_error, exc_type=type(exc).__name__, error=str(exc),
+            )
             html = ""
 
     cleaned = clean_html(html, max_html_chars) if html else ""

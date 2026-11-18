@@ -138,3 +138,24 @@ class TestMoreErrorKinds:
 
     def test_dns_still_wins_over_connect(self) -> None:
         assert af.classify_fetch_error(httpx.ConnectError("[Errno -2] Name or service not known")) == "dns"
+
+
+class TestSmartCollectorUnreadablePage:
+    @pytest.mark.asyncio
+    async def test_unreachable_page_is_an_error_not_an_empty_success(self, monkeypatch) -> None:
+        from uuid import uuid4
+
+        from app.collectors import smart_llm
+        from app.collectors.base import CollectorError
+
+        async def fake_fetch(*a, **kw):
+            return af.FetchResult(text="", error="timeout")
+
+        monkeypatch.setattr(smart_llm, "adaptive_fetch_result", fake_fetch)
+        collector = smart_llm.SmartLLMCollector(uuid4(), "https://example.invalid", platform_type="generic_html")
+        collector.settings = SimpleNamespace(
+            anthropic_api_key="k", smart_collector_max_html_chars=1000,
+            smart_collector_playwright_min_chars=10, smart_collector_playwright_wait_ms=1,
+        )
+        with pytest.raises(CollectorError, match="timeout"):
+            await collector.fetch()
