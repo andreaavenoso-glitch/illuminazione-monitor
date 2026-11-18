@@ -25,6 +25,7 @@ from app.collectors.page_gate import GateResult, host_of, normalize_url, rank_li
 
 SEED_SCORE = 100  # links already chosen by the caller (sitemap, section names)
 LINKS_PER_PAGE = 6
+SECTION_SCORE = 20  # see page_gate.score_link: a link named like a legal section
 
 
 class _Fetched(Protocol):
@@ -85,10 +86,11 @@ async def crawl(
         if depth >= max_depth:
             return
         for link, score in rank_links(html, base_url=page_url, limit=LINKS_PER_PAGE):
-            # Stay on the comune's own site, except for links named like a
-            # section ("Albo pretorio", "Amministrazione trasparente"): those
-            # often live on the platform vendor's host.
-            if same_site(link, start_url) or same_site(link, page_url) or score >= 10:
+            # Stay on the comune's own site, except for links named exactly like
+            # a section ("Albo pretorio", "Amministrazione trasparente", score
+            # 20+): those often live on the platform vendor's host. A vendor's
+            # marketing page (maggioli.com, joomla.it) is not one of them.
+            if same_site(link, start_url) or same_site(link, page_url) or score >= SECTION_SCORE:
                 push(link, score, depth + 1)
 
     gated = await on_page(start_url, start_html, 0)

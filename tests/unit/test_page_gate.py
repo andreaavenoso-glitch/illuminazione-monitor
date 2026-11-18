@@ -41,10 +41,32 @@ class TestGate:
         assert first.date == "12/11/2026"
         assert "https://www.comune.example.it/novita/avviso-1" in res.html
 
-    def test_keywords_outside_links_fall_back_to_full_page(self) -> None:
-        html = "<html><body><p>Il Comune intende affidare il servizio di illuminazione pubblica.</p></body></html>"
+    def test_keywords_outside_links_send_only_the_matching_row(self) -> None:
+        html = (
+            "<html><body><p>Il Comune intende affidare il servizio di illuminazione pubblica.</p>"
+            "<p>Orari di apertura degli uffici comunali al pubblico.</p></body></html>"
+        )
+        res = gate_page(html, base_url=BASE)
+        assert res.action == "compact" and len(res.candidates) == 1
+        assert "illuminazione pubblica" in res.candidates[0].snippet and "Orari" not in res.html
+
+    def test_very_long_text_blocks_still_fall_back_to_the_full_page(self) -> None:
+        html = "<html><body><p>" + "Servizio di illuminazione pubblica del comune. " * 40 + "</p></body></html>"
         res = gate_page(html, base_url=BASE)
         assert res.action == "full" and res.html == html
+
+    def test_menu_entries_are_navigation_not_content(self) -> None:
+        """"Finanza di progetto" is a fixed entry of every Amministrazione Trasparente menu."""
+        menu = "<ul><li><a href='/fp'>Finanza di progetto</a></li><li><a href='/pers'>Personale</a></li></ul>"
+        res = gate_page(menu, base_url=BASE)
+        assert res.action == "skip"  # nothing to read: the crawl follows the link instead
+        from app.collectors.page_gate import rank_links
+
+        assert "https://www.comune.example.it/fp" in [u for u, _ in rank_links(menu, base_url=BASE)]
+
+    def test_a_link_with_context_is_content_not_menu(self) -> None:
+        item = "<ul><li><a href='/x'>Finanza di progetto</a> proposta del 12/11/2026 per la gestione degli impianti di illuminazione pubblica</li></ul>"
+        assert gate_page(item, base_url=BASE).action == "compact"
 
     def test_table_layout_uses_the_row_as_context(self) -> None:
         html = (
@@ -64,8 +86,9 @@ class TestGate:
 
     def test_candidates_are_capped_and_deduplicated(self) -> None:
         links = "".join(
-            f"<li><a href='/a{i}'>Avviso illuminazione pubblica numero {i}</a></li>" for i in range(100)
-        ) + "<li><a href='/a0'>Avviso illuminazione pubblica numero 0</a></li>"
+            f"<li><a href='/a{i}'>Avviso illuminazione pubblica numero {i}</a> pubblicato il 12/11/2026</li>"
+            for i in range(100)
+        ) + "<li><a href='/a0'>Avviso illuminazione pubblica numero 0</a> pubblicato il 12/11/2026</li>"
         res = gate_page(f"<ul>{links}</ul>", base_url=BASE)
         assert len(res.candidates) == 60
 

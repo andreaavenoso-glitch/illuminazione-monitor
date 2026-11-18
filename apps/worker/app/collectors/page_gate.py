@@ -169,17 +169,82 @@ def _compact_html(cands: list[Candidate]) -> str:
     return "<ul>" + "".join(rows) + "</ul>"
 
 
+_MENU_TITLE_MAX = 45
+_MENU_CONTEXT_SLACK = 12
+_BLOCK_MIN_TEXT = 25
+_BLOCK_MAX_TEXT = 700
+
+
+def _is_menu_entry(title: str, snippet: str) -> bool:
+    """A short link with nothing around it ("Finanza di progetto", "Albo
+    pretorio" in a menu) is navigation, not content: it is something to
+    follow, never a notice to analyse."""
+    return len(title) <= _MENU_TITLE_MAX and len(snippet) <= len(title) + _MENU_CONTEXT_SLACK
+
+
+def _drop_menu_entries(soup: BeautifulSoup) -> int:
+    """Remove menu-like anchors from the tree; returns how many. Done before
+    the keyword test, so a page whose only mention of the topic is a menu item
+    ("Finanza di progetto" appears in every Amministrazione Trasparente menu)
+    counts as a menu to expand and not as a page with something to read."""
+    menu = []
+    for a in soup.find_all("a", href=True):
+        title = _norm(a.get_text(" ", strip=True))
+        if not title:
+            continue
+        _, snippet = _container(a)
+        if _is_menu_entry(title, snippet):
+            menu.append(a)
+    for a in menu:
+        a.decompose()
+    return len(menu)
+
+
+def extract_block_candidates(soup: BeautifulSoup, base_url: str) -> list[Candidate]:
+    """Entries whose title is plain text and not a link (typical of albo tables
+    and lists): the smallest row / item / paragraph that matches. Replaces
+    sending the whole page to Claude."""
+    matched = [
+        n for n in soup.find_all(["tr", "li", "article", "p", "dd"])
+        if _BLOCK_MIN_TEXT <= len(_norm(n.get_text(" ", strip=True))) <= _BLOCK_MAX_TEXT
+        and _has_gate_keyword(_norm(n.get_text(" ", strip=True)).lower())
+    ]
+    ids = {id(n) for n in matched}
+    out: list[Candidate] = []
+    seen: set[str] = set()
+    for n in matched:
+        if any(id(d) in ids for d in n.descendants):  # keep only the innermost match
+            continue
+        text = _norm(n.get_text(" ", strip=True))
+        if text in seen:
+            continue
+        seen.add(text)
+        href = base_url
+        a = n.find("a", href=True)
+        if a is not None:
+            href = safe_join(base_url, a["href"].strip()) or base_url
+        m = _DATE_RE.search(text)
+        out.append(Candidate(title=text[:150], href=href, snippet=text[:_MAX_SNIPPET], date=m.group(1) if m else None))
+        if len(out) >= MAX_CANDIDATES:
+            break
+    return out
+
+
 def gate_page(html: str, *, base_url: str, full_limit: int = 80_000) -> GateResult:
-    """Decide what, if anything, goes to Claude for this page. The page is
-    analysed whole here (it can be far longer than what Claude may receive:
-    the entries of interest are often past the first 80 000 characters), and
-    only the "full" fallback is cut to ``full_limit``."""
+    """Decide what, if anything, goes to Claude for this page.
+
+    Menu-like links are set aside first (they are for the crawl to follow). Then
+    entries are looked for in links, then in plain-text rows/items; the whole
+    page goes to Claude only as a last resort, cut to ``full_limit``. The page
+    itself is read whole here: the entries of interest are often past the first
+    80 000 characters."""
     template = detect_template(html)
     soup = BeautifulSoup(html, "lxml")
+    _drop_menu_entries(soup)
     text = _norm(soup.get_text(" ", strip=True)).lower()
     if not _has_gate_keyword(text):
         return GateResult("skip", "", template)
-    cands = extract_candidates(soup, base_url)
+    cands = extract_candidates(soup, base_url) or extract_block_candidates(soup, base_url)
     if cands:
         return GateResult("compact", _compact_html(cands), template, cands)
     return GateResult("full", html[:full_limit], template)
@@ -293,7 +358,7 @@ def score_link(text: str, href: str) -> int:
         return 0
     score = 0
     if any(label in t for label in SECTION_LABELS):
-        score += 10
+        score += 20  # a named section: also the only kind of link allowed to leave the site
     if _has_gate_keyword(t):
         score += 6
     if _TOPIC.search(t):
