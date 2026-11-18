@@ -72,7 +72,8 @@ class TestClassifyFetchError:
         assert af.classify_fetch_error(exc) == "dns"
 
     def test_anything_else(self) -> None:
-        assert af.classify_fetch_error(httpx.ConnectError("connection refused")) == "error"
+        # Only truly unknown failures stay "error"; connection problems have their own kind.
+        assert af.classify_fetch_error(ValueError("boom")) == "error"
 
 
 async def _no_browser(*args, **kwargs):
@@ -123,3 +124,17 @@ class TestAdaptiveFetchResult:
         result = await af.adaptive_fetch_result("https://example.test/albo", **_KW)
         assert "Avviso" in result.text
         assert result.error is None
+
+
+class TestMoreErrorKinds:
+    def test_connect_refused(self) -> None:
+        assert af.classify_fetch_error(httpx.ConnectError("All connection attempts failed")) == "connect"
+
+    def test_too_many_redirects(self) -> None:
+        assert af.classify_fetch_error(httpx.TooManyRedirects("Exceeded maximum allowed redirects.")) == "redirect"
+
+    def test_protocol_error(self) -> None:
+        assert af.classify_fetch_error(httpx.RemoteProtocolError("Server disconnected without sending a response.")) == "protocol"
+
+    def test_dns_still_wins_over_connect(self) -> None:
+        assert af.classify_fetch_error(httpx.ConnectError("[Errno -2] Name or service not known")) == "dns"

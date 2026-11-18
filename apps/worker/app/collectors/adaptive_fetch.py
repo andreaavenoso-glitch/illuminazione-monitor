@@ -60,6 +60,8 @@ def classify_fetch_error(exc: BaseException) -> str:
         return f"http_{exc.response.status_code}"
     if isinstance(exc, httpx.TimeoutException):
         return "timeout"
+    if isinstance(exc, httpx.TooManyRedirects):
+        return "redirect"
     msg = str(exc).lower()
     if "certificate" in msg or "ssl" in msg:
         return "ssl"
@@ -70,6 +72,11 @@ def classify_fetch_error(exc: BaseException) -> str:
         or "getaddrinfo" in msg
     ):
         return "dns"
+    if isinstance(exc, httpx.ConnectError):
+        # The server exists but refused or dropped the connection.
+        return "connect"
+    if isinstance(exc, httpx.RemoteProtocolError):
+        return "protocol"
     return "error"
 
 

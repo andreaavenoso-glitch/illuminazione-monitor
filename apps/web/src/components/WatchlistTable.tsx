@@ -18,6 +18,10 @@ const ERROR_LABELS: Record<string, string> = {
   ssl: "certificato non valido",
   timeout: "nessuna risposta (timeout)",
   empty: "pagina vuota",
+  connect: "connessione rifiutata",
+  redirect: "troppi reindirizzamenti",
+  protocol: "risposta non valida dal server",
+  error: "errore non classificato (vedi log)",
 };
 
 function errorLabel(kind: string | null): string {
