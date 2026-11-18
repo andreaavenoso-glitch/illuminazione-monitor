@@ -230,7 +230,7 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, st
         if fetched.url and fetched.url != url:
             # A variant (www on/off, http) answered: resolve links against it
             # and remember it, so the next scan goes straight there.
-            log.info("collect_watchlist.url_repaired", extra={"item": str(item.id), "old": url, "new": fetched.url})
+            log.info("collect_watchlist.url_repaired item=%s old=%s new=%s", item.id, url, fetched.url)
             setattr(item, "url_albo" if kind == "albo" else "url_trasparenza", fetched.url)
             url = fetched.url
 
@@ -253,10 +253,7 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, st
             )
             continue
 
-        log.info(
-            "collect_watchlist.extra_pages",
-            extra={"item": str(item.id), "count": len(extra_pages)},
-        )
+        log.info("collect_watchlist.extra_pages item=%s count=%d", item.id, len(extra_pages))
         for page_url in extra_pages:
             page_label = f"{label}:{page_url}"
             page_html = await _fetch_page(page_url, settings=settings, label=page_label)
@@ -318,7 +315,7 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
             if wanted is None or normalize_region(item_region) in wanted
         ]
         items = select_sample(items, limit)
-        log.info("collect_watchlist.scope", extra={"region": region, "items": len(items), "limit": limit})
+        log.info("collect_watchlist.scope region=%s items=%d limit=%s", region, len(items), limit)
 
         for item in items:
             try:
@@ -340,7 +337,7 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
         totals["records_found"] = job.records_found
         totals["records_valid"] = job.records_valid
         await session.commit()
-    log.info("collect_watchlist.stats", extra={"stats": dict(stats)})
+    log.info("collect_watchlist.stats %s", dict(sorted(stats.items())))
     # Pre-filter savings and platform mix, visible in the task result.
     totals.update(dict(stats))
     return totals
