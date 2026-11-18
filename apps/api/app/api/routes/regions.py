@@ -166,6 +166,11 @@ async def region_detail(
         for item, ent in rows
         if normalize_region(ent.region) == region
     ]
+    # Problems first, then the ones already read, then the rest (stable, so
+    # each group stays alphabetical): the trial run touches a few comuni out
+    # of hundreds and they would otherwise be lost in the list.
+    order = {"failing": 0, "ok": 1, "unchecked": 2}
+    comuni.sort(key=lambda c: order[c["stato"]])
     sources = (
         await session.execute(select(Source).where(Source.regione == region).order_by(Source.name))
     ).scalars().all()
