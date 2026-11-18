@@ -14,11 +14,12 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 from uuid import UUID
 
 import anthropic
 import structlog
+from app.collectors.page_gate import safe_join
 from app.config import WorkerSettings
 from bs4 import BeautifulSoup
 
@@ -52,7 +53,7 @@ def find_bandi_link(html: str, *, base_url: str) -> str | None:
         if any(pattern in text for pattern in BANDI_LINK_PATTERNS):
             href = a["href"].strip()
             if href and not href.startswith("#") and not href.lower().startswith("javascript:"):
-                return urljoin(base_url, href)
+                return safe_join(base_url, href)
     return None
 
 
@@ -72,8 +73,8 @@ def extract_links(html: str, *, base_url: str, limit: int = 200) -> list[tuple[s
             continue
         if href.startswith("#") or href.lower().startswith("javascript:"):
             continue
-        url = urljoin(base_url, href)
-        if url in seen:
+        url = safe_join(base_url, href)
+        if url is None or url in seen:
             continue
         seen.add(url)
         out.append((text, url))

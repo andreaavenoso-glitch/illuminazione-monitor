@@ -79,3 +79,18 @@ def test_capture_samples_summary() -> None:
     assert s["counts"]["comuni_with_a_gated_page"] == 1 and s["counts"]["comuni_with_no_extra_page"] == 1
     assert s["templates"] == {"halley": 1, "design_italia": 1} and s["errors"] == {"reset": 1}
     assert slug("Comune di Sant'Agata (FG)") == "comune-di-sant-agata-fg"
+
+
+def test_only_comuni_and_unioni_by_default() -> None:
+    from infra.scripts.import_ipa import is_comune_name
+
+    text = (
+        "Denominazione_ente\tTipologia\tRegione\tSito_istituzionale\n"
+        "Comune di Bari\tComuni e loro Consorzi e Associazioni\tPuglia\twww.comune.bari.it\n"
+        "Unione dei Comuni della Messapia\tComuni e loro Consorzi e Associazioni\tPuglia\twww.u.it\n"
+        "Consorzio Tutela e Prevenzione Randagismo San Francesco\tComuni e loro Consorzi e Associazioni\tPuglia\twww.c.it\n"
+        "C.E.A. Centro di Educazione Ambientale\tComuni e loro Consorzi e Associazioni\tPuglia\twww.cea.it\n"
+    )
+    assert [r["name"] for r in parse_ipa_rows(text, "Puglia")] == ["Comune di Bari", "Unione dei Comuni della Messapia"]
+    assert len(parse_ipa_rows(text, "Puglia", only_comuni=False)) == 4
+    assert is_comune_name("Comune di Diso") and not is_comune_name("Consorzio X")

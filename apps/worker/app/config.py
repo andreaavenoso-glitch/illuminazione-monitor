@@ -26,6 +26,9 @@ class WorkerSettings(BaseSettings):
     crawl_max_pages: int = 20
     crawl_max_depth: int = 5
     crawl_time_budget_s: float = 150.0
+    # Pages are fetched up to this size and read whole by the page gate; only
+    # what is sent to Claude is cut to smart_collector_max_html_chars.
+    crawl_max_html_chars: int = 600000
 
     # Outbound email for the regional digests. Empty smtp_host = email off:
     # digests are built and logged but never marked as sent.

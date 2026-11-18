@@ -71,7 +71,7 @@ async def run(region: str, limit: int, out: Path) -> None:
 
     async def fetch(url: str, label: str):
         return await adaptive_fetch_result(
-            url, timeout=60.0, max_html_chars=settings.smart_collector_max_html_chars,
+            url, timeout=60.0, max_html_chars=settings.crawl_max_html_chars,
             playwright_min_chars=settings.smart_collector_playwright_min_chars,
             playwright_wait_ms=settings.smart_collector_playwright_wait_ms, label=label,
         )
@@ -88,7 +88,7 @@ async def run(region: str, limit: int, out: Path) -> None:
     by_id = {i.id: e for i, e in pairs}
 
     reports: list[dict] = []
-    for n, item in enumerate(sample, 1):
+    async def one(n: int, item) -> dict:
         ente = by_id[item.id].name
         start = item.url_trasparenza or item.url_albo
         base = f"{n:02d}-{slug(ente)}"
@@ -97,8 +97,7 @@ async def run(region: str, limit: int, out: Path) -> None:
         first = await fetch(start, base)
         if not first.text:
             rep["error"] = first.error or "empty"
-            reports.append(rep)
-            continue
+            return rep
         rep["final_url"] = first.url or start
         rep["template"] = detect_template(first.text)
         (out / f"{base}__00_start.html").write_text(first.text, encoding="utf-8")
@@ -136,7 +135,14 @@ async def run(region: str, limit: int, out: Path) -> None:
         rep["unreadable"] = [{"url": v.url, "error": v.error} for v in result.visits if v.action == "unreadable"]
         rep["stopped_by"] = result.stopped_by
         rep["deepest"] = max(v.depth for v in result.visits)
-        reports.append(rep)
+        return rep
+
+    for n, item in enumerate(sample, 1):
+        try:
+            reports.append(await one(n, item))
+        except Exception as exc:  # noqa: BLE001  one bad site must not stop the dry run
+            print(f"   ERRORE su questo comune: {type(exc).__name__}: {exc}", flush=True)
+            reports.append({"ente": by_id[item.id].name, "error": f"crash: {type(exc).__name__}", "pages": []})
 
     summary = summarize(reports)
     (out / "report.json").write_text(json.dumps({"summary": summary, "comuni": reports}, ensure_ascii=False, indent=1), encoding="utf-8")

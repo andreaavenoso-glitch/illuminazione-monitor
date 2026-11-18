@@ -38,7 +38,6 @@ import logging
 import random
 from collections import Counter
 from datetime import UTC, datetime
-from urllib.parse import urljoin
 
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import FetchResult, adaptive_fetch, adaptive_fetch_result
@@ -51,7 +50,7 @@ from app.collectors.albo_pretorio_llm import (
     select_relevant_links,
 )
 from app.collectors.crawler import crawl
-from app.collectors.page_gate import GateResult, gate_page, pick_section_links, rank_links
+from app.collectors.page_gate import GateResult, gate_page, pick_section_links, rank_links, safe_join
 from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
@@ -82,11 +81,13 @@ async def _fetch_page(url: str, *, settings: WorkerSettings, label: str) -> str:
 
 
 async def _fetch_page_result(url: str, *, settings: WorkerSettings, label: str) -> FetchResult:
-    """Like _fetch_page but keeps why a fetch failed, for source health."""
+    """Like _fetch_page but keeps why a fetch failed, for source health. Pages
+    are kept far longer than what Claude may receive: the gate reads them whole
+    (entries often sit past the first 80 000 characters) and cuts what it sends."""
     return await adaptive_fetch_result(
         url,
         timeout=60.0,
-        max_html_chars=settings.smart_collector_max_html_chars,
+        max_html_chars=settings.crawl_max_html_chars,
         playwright_min_chars=settings.smart_collector_playwright_min_chars,
         playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
         label=label,
@@ -116,7 +117,9 @@ async def _process_page(
     list, and a page unchanged since its last successful analysis is skipped.
     """
     stats["pages_read"] += 1
-    gated = gate_page(target_html, base_url=target_url)
+    gated = gate_page(
+        target_html, base_url=target_url, full_limit=settings.smart_collector_max_html_chars
+    )
     stats[f"template_{gated.template}"] += 1
     if gated.action == "skip":
         stats["pages_skipped_no_keywords"] += 1
@@ -141,7 +144,7 @@ async def _process_page(
         # as-is in raw_url, where it would be unusable to a reader.
         detail_url = record.get("url")
         if detail_url:
-            detail_url = urljoin(target_url, detail_url)
+            detail_url = safe_join(target_url, detail_url)
             record = {**record, "url": detail_url}
         if detail_url and detail_url != target_url:
             detail_html = await _fetch_page(detail_url, settings=settings, label=f"{label}:detail")

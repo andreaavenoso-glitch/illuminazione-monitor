@@ -26,6 +26,19 @@ from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup
 from shared_models.categories import GATE_KEYWORDS
 
+
+def safe_join(base: str, href: str) -> str | None:
+    """urljoin that returns None for hrefs Python cannot parse (for instance
+    "http://[broken", which raises "Invalid IPv6 URL") instead of crashing a
+    whole comune's scan on one bad link."""
+    try:
+        url = urljoin(base, href)
+        urlsplit(url)
+    except ValueError:
+        return None
+    return url
+
+
 MAX_CANDIDATES = 60
 _MIN_ANCHOR_TEXT = 12
 _MAX_SNIPPET = 500
@@ -101,8 +114,9 @@ def _container(a):
             if len(txt) <= 700:
                 return node, txt
         node = node.parent
-    txt = _norm(a.parent.get_text(" ", strip=True)) if a.parent else ""
-    return a.parent or a, txt[:_MAX_SNIPPET]
+    # No block around the anchor: use its own text only, never the surrounding
+    # body (neighbouring links would make an unrelated link look relevant).
+    return a, _norm(a.get_text(" ", strip=True))[:_MAX_SNIPPET]
 
 
 def extract_candidates(soup: BeautifulSoup, base_url: str) -> list[Candidate]:
@@ -119,7 +133,9 @@ def extract_candidates(soup: BeautifulSoup, base_url: str) -> list[Candidate]:
         blob = f"{title} {snippet}".lower()
         if not _has_gate_keyword(blob):
             continue
-        absolute = urljoin(base_url, href)
+        absolute = safe_join(base_url, href)
+        if absolute is None:
+            continue
         key = (absolute, title)
         if key in seen:
             continue
@@ -142,8 +158,11 @@ def _compact_html(cands: list[Candidate]) -> str:
     return "<ul>" + "".join(rows) + "</ul>"
 
 
-def gate_page(html: str, *, base_url: str) -> GateResult:
-    """Decide what, if anything, goes to Claude for this page."""
+def gate_page(html: str, *, base_url: str, full_limit: int = 80_000) -> GateResult:
+    """Decide what, if anything, goes to Claude for this page. The page is
+    analysed whole here (it can be far longer than what Claude may receive:
+    the entries of interest are often past the first 80 000 characters), and
+    only the "full" fallback is cut to ``full_limit``."""
     template = detect_template(html)
     soup = BeautifulSoup(html, "lxml")
     text = _norm(soup.get_text(" ", strip=True)).lower()
@@ -152,7 +171,7 @@ def gate_page(html: str, *, base_url: str) -> GateResult:
     cands = extract_candidates(soup, base_url)
     if cands:
         return GateResult("compact", _compact_html(cands), template, cands)
-    return GateResult("full", html, template)
+    return GateResult("full", html[:full_limit], template)
 
 
 def pick_section_links(html: str, *, base_url: str, limit: int) -> list[str]:
@@ -169,8 +188,8 @@ def pick_section_links(html: str, *, base_url: str, limit: int) -> list[str]:
         if href.startswith("#") or href.lower().startswith(("javascript:", "mailto:", "tel:")):
             continue
         if any(label in text for label in SECTION_LABELS):
-            url = urljoin(base_url, href)
-            if url not in out and url != base_url:
+            url = safe_join(base_url, href)
+            if url and url not in out and url != base_url:
                 out.append(url)
         if len(out) >= limit:
             break
@@ -186,25 +205,41 @@ _FILE_EXT = (
     ".mp3", ".mp4", ".odt", ".ods", ".p7m", ".xml", ".json", ".csv", ".svg",
 )
 _JUNK = re.compile(
+    # Site chrome and social links.
     r"contatt|privacy|cookie|login|accedi|area riservata|mappa del sito|rubrica|organigramma|"
     r"sindaco|giunta|consiglio comunale|eventi|turismo|cultura|sport|scuol|biblioteca|rss|"
     r"facebook|twitter|instagram|youtube|whatsapp|telegram|newsletter|accessibilit|credits|"
-    r"note legali|\burp\b|dichiarazione di accessibilit",
+    r"note legali|\burp\b|"
+    # Sections of Amministrazione Trasparente that never hold procurement acts.
+    r"corruzion|personale|contrattazion|rendicont|sanzion|consulent|bilanc|concors|dotazione|"
+    r"performance|patrimonio|beni immobili|pagament|organizzazione|enti controllati|incarichi|"
+    r"tassi di assenza|dirigenti cessati|"
+    # Everyday news that also says "avviso".
+    r"elettor|elezion|servizio civile|matrimon|tessera",
     re.IGNORECASE,
 )
+# Topic words for a *menu entry*. Deliberately narrow: "trasparen", "contratt",
+# "avvis(o)" or "determin" alone match unrelated sections (piano per la
+# trasparenza, contrattazione, personale a tempo determinato, avviso agli elettori).
 _TOPIC = re.compile(
-    r"bandi|\bgare\b|\bgara\b|avvis|contratt|affidament|procedur|determin|delibera|provvediment|"
-    r"manifestazion|trasparen|albo|appalt|concession|finanza di progetto|partenariato|"
-    r"illuminazione|manutenzion|lavori pubblici|opere pubbliche",
+    r"bandi di gara|bandi e|\bgare\b|\bgara\b|\bavvisi\b|contratti pubblici|affidament|"
+    r"determinazion|\bdetermine\b|delibere|manifestazioni di interesse|\balbo\b|appalt|"
+    r"finanza di progetto|partenariato|illuminazione|manutenzion|lavori pubblici|opere pubbliche|"
+    r"atti delle amministrazioni",
     re.IGNORECASE,
 )
 _NEXT_TEXT = re.compile(r"^(pagina successiva|successiva|avanti|next|next page|»|›|>>)$", re.IGNORECASE)
-MAX_LINK_TEXT = 100
+# Menu entries are short ('Bandi di gara e contratti' = 25 characters); longer
+# text is an act's own title, which the listing page already shows to the gate.
+MAX_LINK_TEXT = 60
 MIN_LINK_SCORE = 4
 
 
 def _host(url: str) -> str:
-    h = urlsplit(url).netloc.lower().split("@")[-1].split(":")[0]
+    try:
+        h = urlsplit(url).netloc.lower().split("@")[-1].split(":")[0]
+    except ValueError:
+        return ""
     return h[4:] if h.startswith("www.") else h
 
 
@@ -215,7 +250,10 @@ def same_site(a: str, b: str) -> bool:
 
 
 def normalize_url(url: str) -> str:
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url.lower()
     path = parts.path.rstrip("/") or "/"
     query = f"?{parts.query}" if parts.query else ""
     return f"{parts.scheme}://{_host(url)}{path}{query}".lower()
@@ -227,9 +265,13 @@ def score_link(text: str, href: str) -> int:
     if not t or len(t) > MAX_LINK_TEXT:
         return 0  # empty, or an act's own title rather than a menu entry
     h = href.lower()
-    if _JUNK.search(t) or _JUNK.search(urlsplit(h).path):
+    try:
+        path = urlsplit(h).path
+    except ValueError:
         return 0
-    if urlsplit(h).path.endswith(_FILE_EXT):
+    if _JUNK.search(t) or _JUNK.search(path):
+        return 0
+    if path.endswith(_FILE_EXT):
         return 0
     score = 0
     if any(label in t for label in SECTION_LABELS):
@@ -238,7 +280,7 @@ def score_link(text: str, href: str) -> int:
         score += 6
     if _TOPIC.search(t):
         score += 4
-    if _TOPIC.search(urlsplit(h).path):
+    if _TOPIC.search(path):
         score += 2
     return score
 
@@ -255,7 +297,9 @@ def rank_links(html: str, *, base_url: str, limit: int = 12) -> list[tuple[str, 
         href = a["href"].strip()
         if not href or href.startswith("#") or href.lower().startswith(("javascript:", "mailto:", "tel:")):
             continue
-        url = urljoin(base_url, href)
+        url = safe_join(base_url, href)
+        if url is None:
+            continue
         text = a.get_text(" ", strip=True)
         rel = [r.lower() for r in (a.get("rel") or [])]
         score = 7 if ("next" in rel or _NEXT_TEXT.match(_norm(text))) else score_link(text, url)

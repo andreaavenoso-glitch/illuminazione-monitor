@@ -73,9 +73,20 @@ def _clean_url(url: str) -> str | None:
     return url
 
 
-def parse_ipa_rows(text: str, region: str) -> list[dict]:
+_COMUNE_NAME = re.compile(r"^\s*(comune|unione)\b", re.IGNORECASE)
+
+
+def is_comune_name(name: str) -> bool:
+    """"Comune di X", "Unione dei Comuni...": the bodies that run public
+    lighting. IPA's category also holds consortia, associations and
+    environmental centres, which only waste scans."""
+    return bool(_COMUNE_NAME.match(name))
+
+
+def parse_ipa_rows(text: str, region: str, *, only_comuni: bool = True) -> list[dict]:
     """Comuni of ``region`` from the IPA CSV text: name, province, site,
-    trasparenza URL. Skips other regions and non-comune bodies."""
+    trasparenza URL. Skips other regions and, by default, bodies that are
+    not comuni or unioni di comuni."""
     from shared_models.regions import normalize_region
 
     target = normalize_region(region)
@@ -89,6 +100,8 @@ def parse_ipa_rows(text: str, region: str) -> list[dict]:
         name = _pick(row, "name")
         if "comuni" not in tipo and not name.lower().startswith("comune di"):
             continue
+        if only_comuni and not is_comune_name(name):
+            continue
         out.append({
             "name": name,
             "provincia": _pick(row, "provincia") or None,
@@ -98,14 +111,14 @@ def parse_ipa_rows(text: str, region: str) -> list[dict]:
     return out
 
 
-async def run(region: str, text: str) -> None:
+async def run(region: str, text: str, *, prune: bool = False, only_comuni: bool = True) -> None:
     from app.core.database import SessionLocal
     from shared_models import Entity, WatchlistItem
     from shared_models.regions import normalize_region
     from sqlalchemy import select
 
     canonical = normalize_region(region)
-    rows = parse_ipa_rows(text, region)
+    rows = parse_ipa_rows(text, region, only_comuni=only_comuni)
     if text.lstrip("\ufeff").lstrip()[:15].lower().startswith(("<!doctype", "<html")):
         print("Il file scaricato e' una pagina web, non un elenco di dati: l'indirizzo non e' quello "
               "del dataset. Scarica il file a mano da indicepa.gov.it (Open Data -> dataset "
@@ -143,7 +156,18 @@ async def run(region: str, text: str) -> None:
                 active=bool(url),
             ))
             new_w += 1
+        pruned = 0
+        if prune:
+            # Switch off already-imported bodies that are not comuni (consortia...).
+            stmt = select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id)
+            for item, ent in (await session.execute(stmt)).all():
+                if (normalize_region(ent.region) == canonical and ent.entity_type == "comune"
+                        and item.active and not is_comune_name(ent.name)):
+                    item.active = False
+                    pruned += 1
         await session.commit()
+    if prune:
+        print(f"disattivati {pruned} enti che non sono comuni")
     print(f"import_ipa {canonical}: comuni nel file={len(rows)} nuovi_enti={new_e} "
           f"nuovi_siti={new_w} senza_link_trasparenza={no_url} (usata la home del sito)")
 
@@ -154,6 +178,9 @@ def main() -> None:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--file")
     g.add_argument("--url")
+    ap.add_argument("--prune", action="store_true",
+                    help="disattiva gli enti gia importati che non sono comuni (consorzi, associazioni...)")
+    ap.add_argument("--include-all", action="store_true", help="importa anche consorzi e associazioni")
     a = ap.parse_args()
     if a.file and a.file.lower().endswith((".xlsx", ".xlsm")):
         text = xlsx_to_text(a.file)
@@ -163,7 +190,7 @@ def main() -> None:
     else:
         import httpx
         text = httpx.get(a.url, follow_redirects=True, timeout=120).text
-    asyncio.run(run(a.region, text))
+    asyncio.run(run(a.region, text, prune=a.prune, only_comuni=not a.include_all))
 
 
 if __name__ == "__main__":

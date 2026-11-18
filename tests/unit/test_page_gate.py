@@ -123,7 +123,8 @@ class TestScanIntegration:
         async def run(html, stats):
             await cw._process_page(
                 SimpleNamespace(add=lambda *_: None), item, job,
-                target_url=BASE, target_html=html, label="t", settings=None,
+                target_url=BASE, target_html=html, label="t",
+                settings=SimpleNamespace(smart_collector_max_html_chars=80_000),
                 now=datetime.now(tz=UTC), seen=set(), stats=stats,
             )
 
@@ -158,6 +159,33 @@ class TestLinkScoring:
         assert score_link("Avvisi pubblici", "/x") >= 10
         assert score_link("Manutenzione illuminazione pubblica", "/x") >= 10  # keyword + topic
         assert score_link("Determinazioni dirigenziali 2026", "/x") >= 4
+
+    def test_real_world_noise_seen_in_the_first_dry_run(self) -> None:
+        """Sections and news that wasted a whole page budget (Puglia dry run)."""
+        from app.collectors.page_gate import score_link
+
+        noise = [
+            "Piano triennale per la prevenzione della corruzione e della trasparenza",
+            "Personale non a tempo indeterminato",
+            "Contrattazione collettiva",
+            "Contrattazione integrativa",
+            "Rendiconti gruppi consiliari regionali provinciali",
+            "Sanzioni per mancata comunicazione dei dati",
+            "Bandi di concorso",
+            "Criteri e modalita",
+            "Avviso agli elettori affetti da infermita",
+            "Avviso tessera elettorale",
+            "Avviso di convocazione per la selezione dei candidati volontari al servizio civile",
+            "Avviso pubblico esplorativo per manifestazione d'interesse per la celebrazione di matrimoni",
+        ]
+        for text in noise:
+            assert score_link(text, "/x") == 0, text
+        useful = [
+            "Bandi di gara e contratti", "Avvisi pubblici", "Avvisi", "Atti delle amministrazioni aggiudicatrici",
+            "Provvedimenti dirigenti", "Determinazioni", "Delibere", "Albo pretorio", "Amministrazione trasparente",
+        ]
+        for text in useful:
+            assert score_link(text, "/x") >= 4, text
 
     def test_junk_files_and_act_titles_score_zero(self) -> None:
         from app.collectors.page_gate import score_link
@@ -277,3 +305,33 @@ class TestBestFirstCrawl:
     async def test_seeds_are_opened_first(self) -> None:
         _, fetched, _ = await self._run(self._site(), seeds=["https://c.it/avvisi"])
         assert fetched[0] == "https://c.it/avvisi"
+
+
+class TestRobustness:
+    def test_malformed_hrefs_do_not_crash(self) -> None:
+        """A real site had an href Python cannot parse ("Invalid IPv6 URL")."""
+        from app.collectors.page_gate import extract_candidates, pick_section_links, rank_links, safe_join
+
+        assert safe_join("https://c.it/", "http://[broken") is None
+        assert safe_join("https://c.it/a/", "../b") == "https://c.it/b"
+        html = (
+            "<a href='http://[broken'>Bandi di gara e contratti</a>"
+            "<a href='/ok'>Avvisi pubblici</a>"
+            "<li><a href='http://[x'>Manutenzione illuminazione pubblica impianti</a></li>"
+        )
+        assert [u for u, _ in rank_links(html, base_url="https://c.it/")] == ["https://c.it/ok"]
+        assert pick_section_links(html, base_url="https://c.it/", limit=5) == ["https://c.it/ok"]
+        from bs4 import BeautifulSoup
+
+        assert extract_candidates(BeautifulSoup(html, "lxml"), "https://c.it/") == []
+
+    def test_entries_past_the_first_80000_characters_are_seen(self) -> None:
+        filler = "<p>" + "testo di riempimento " * 6000 + "</p>"  # ~126k characters
+        tail = "<ul><li><a href='/a'>Avviso di manifestazione di interesse per l'illuminazione pubblica</a></li></ul>"
+        res = gate_page(filler + tail, base_url=BASE)
+        assert res.action == "compact" and len(res.candidates) == 1
+
+    def test_full_fallback_is_cut_to_the_limit(self) -> None:
+        text = "<p>" + "Servizio di illuminazione pubblica. " * 5000 + "</p>"
+        res = gate_page(text, base_url=BASE, full_limit=1000)
+        assert res.action == "full" and len(res.html) == 1000
