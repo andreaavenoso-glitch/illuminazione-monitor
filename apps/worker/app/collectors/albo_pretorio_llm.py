@@ -245,7 +245,7 @@ _FATAL_HINTS = ("usage limit", "credit balance", "billing", "insufficient", "spe
 
 def is_fatal_api_error(exc: BaseException) -> bool:
     """Errors that no retry on another page can fix."""
-    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+    if isinstance(exc, anthropic.AuthenticationError | anthropic.PermissionDeniedError):
         return True
     return any(h in str(exc).lower() for h in _FATAL_HINTS)
 
