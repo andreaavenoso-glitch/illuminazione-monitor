@@ -523,3 +523,43 @@ class TestRunLimited:
 
         await run_limited([1, 2, 3, 4], worker, 2)
         assert sorted(done) == [1, 3, 4]
+
+
+class TestThirdDryRunFindings:
+    def test_votive_lamps_and_sports_lighting_are_not_public_lighting(self) -> None:
+        html = (
+            "<ul><li><a href='/a'>Avviso ai cittadini: servizio illuminazione lampade votive esercizio 2026</a></li>"
+            "<li><a href='/b'>Lavori di adeguamento illuminazione impianti sportivi comunali</a></li></ul>"
+        )
+        assert gate_page(html, base_url=BASE).action == "skip"
+        # ...but real public lighting next to them still passes.
+        real = html + "<li><a href='/c'>Manutenzione degli impianti di illuminazione pubblica</a></li>"
+        res = gate_page(real, base_url=BASE)
+        assert res.action == "compact" and len(res.candidates) == 1
+
+    def test_comune_tenant_on_a_vendor_platform_is_not_a_regional_site(self) -> None:
+        from app.collectors.page_gate import discovered_platforms
+
+        found = discovered_platforms(
+            ["https://comunesansevero.traspare.com/albo", "https://www.traspare.com/home"],
+            "https://www.comune.san-severo.fg.it",
+        )
+        assert list(found) == ["traspare.com"]  # hosts are reported without "www."
+
+
+class TestSitemapFilter:
+    def test_words_match_at_the_start_of_a_word_only(self) -> None:
+        from app.collectors.sitemap import _filter_relevant
+
+        urls = [
+            "https://c.it/wp-content/uploads/2023/11/Chiesa-Madre-Sgaramella.jpg",  # "gara" inside a name + a file
+            "https://c.it/biblioteche-digitali/chiesa-madre-sgaramella/",            # same name, not a tender
+            "https://c.it/amministrazione-trasparente/bandi-di-gara-e-contratti",
+            "https://c.it/gare-e-appalti",
+            "https://c.it/wp-content/uploads/trasparenza_rifiuti.png",
+            "https://c.it/amministrazione/elezioni/avviso-tessera-elettorale",
+        ]
+        assert _filter_relevant(urls) == [
+            "https://c.it/amministrazione-trasparente/bandi-di-gara-e-contratti",
+            "https://c.it/gare-e-appalti",
+        ]

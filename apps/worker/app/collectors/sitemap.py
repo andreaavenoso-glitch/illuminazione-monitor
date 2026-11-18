@@ -9,11 +9,13 @@ might be filed than crawling links by hand.
 """
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 
 import httpx
 import structlog
+from app.collectors.page_gate import _FILE_EXT
 
 log = structlog.get_logger(__name__)
 
@@ -38,6 +40,7 @@ _SITEMAP_PATHS = ("/sitemap.xml", "/sitemap_index.xml")
 _STRONG_KEYWORDS = (
     "bandi",
     "gara",
+    "gare",
     "appalt",
     "manifestazion",
     "indagin",
@@ -117,17 +120,38 @@ def _parse_locs(xml_text: str) -> list[str]:
     ]
 
 
+# Sections that never hold procurement acts. Narrower than the menu-link junk
+# list on purpose: a "delibera di giunta" URL stays (a PPP public-interest
+# declaration is a giunta act).
+_SITEMAP_NOISE = re.compile(
+    r"elettor|elezion|servizio-civile|matrimon|tessera|contatt|privacy|cookie|personale|concors",
+    re.IGNORECASE,
+)
+
+
+def _tokens(url: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", url.lower()) if t]
+
+
 def _filter_relevant(urls: list[str]) -> list[str]:
     """Relevant URLs, strong-keyword matches first (each tier keeps the
     sitemap's own order), so a downstream cap on how many get read favors
     procurement-specific pages over generic transparency ones.
+
+    Keywords match the *start of a word* of the URL, not any substring: "gara"
+    is inside "Sgaramella" (Chiesa-Madre-Sgaramella.jpg was fetched as a
+    page). Files (images, PDFs...) and sections that never hold procurement
+    acts (elections, personnel, events...) are dropped.
     """
     strong: list[str] = []
     weak: list[str] = []
     for u in urls:
-        lowered = u.lower()
-        if any(k in lowered for k in _STRONG_KEYWORDS):
+        path = urlparse(u).path.lower()
+        if path.endswith(_FILE_EXT) or _SITEMAP_NOISE.search(path):
+            continue
+        tokens = _tokens(path)
+        if any(t.startswith(k) for t in tokens for k in _STRONG_KEYWORDS):
             strong.append(u)
-        elif any(k in lowered for k in _WEAK_KEYWORDS):
+        elif any(t.startswith(k) for t in tokens for k in _WEAK_KEYWORDS):
             weak.append(u)
     return strong + weak

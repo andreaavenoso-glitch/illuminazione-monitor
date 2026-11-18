@@ -83,7 +83,18 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Wordings that contain a lighting keyword but are not public lighting:
+# the cemetery votive-lamp service ("servizio illuminazione lampade votive"),
+# lighting of sports facilities, interior lighting.
+_NOT_PUBLIC_LIGHTING = re.compile(
+    r"illuminazione\s+(delle\s+)?lampade\s+votive|lampade\s+votive|illuminazione\s+votiva|"
+    r"illuminazione\s+(degli\s+|dei\s+)?(impianti|campi)\s+sportivi|illuminazione\s+interna",
+    re.IGNORECASE,
+)
+
+
 def _has_gate_keyword(text_lower: str) -> bool:
+    text_lower = _NOT_PUBLIC_LIGHTING.sub(" ", text_lower)
     return any(re.search(r"(?<!\w)" + re.escape(k) + r"(?!\w)", text_lower) for k in GATE_KEYWORDS)
 
 
@@ -335,6 +346,9 @@ _PLATFORM_HOST = re.compile(
 # platform shared by many bodies: never offered as a regional site.
 _COMUNE_LEVEL_HOST = re.compile(r"trasparen|\balbo\b|\balbo\.|amministrazione", re.IGNORECASE)
 _PLATFORM_PATH = re.compile(r"portaleappalti|ppgare|bandi_lista", re.IGNORECASE)
+# <comune>.traspare.com, <comune>.tuttogare.it: the tenant of ONE comune on a
+# vendor platform, not a portal shared across a region (www.traspare.com is).
+_TENANT_HOST = re.compile(r"^(?!www\.)[^.]+\.(traspare\.(com|it|net)|tuttogare\.it)$", re.IGNORECASE)
 
 
 def discovered_platforms(urls: list[str], start_url: str) -> dict[str, str]:
@@ -345,7 +359,7 @@ def discovered_platforms(urls: list[str], start_url: str) -> dict[str, str]:
         if not url or same_site(url, start_url):
             continue
         host = _host(url)
-        if not host or _COMUNE_LEVEL_HOST.search(host):
+        if not host or _COMUNE_LEVEL_HOST.search(host) or _TENANT_HOST.match(host):
             continue
         try:
             path = urlsplit(url).path
