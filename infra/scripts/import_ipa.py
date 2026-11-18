@@ -106,6 +106,11 @@ async def run(region: str, text: str) -> None:
 
     canonical = normalize_region(region)
     rows = parse_ipa_rows(text, region)
+    if text.lstrip("\ufeff").lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+        print("Il file scaricato e' una pagina web, non un elenco di dati: l'indirizzo non e' quello "
+              "del dataset. Scarica il file a mano da indicepa.gov.it (Open Data -> dataset "
+              "'Amministrazioni') e usa --file.")
+        return
     if not rows:
         header = text.lstrip("\ufeff").split("\n", 1)[0][:300]
         print(f"Nessun comune trovato per {canonical}. Colonne del file: {header}")
