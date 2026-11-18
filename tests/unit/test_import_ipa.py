@@ -94,3 +94,22 @@ def test_only_comuni_and_unioni_by_default() -> None:
     assert [r["name"] for r in parse_ipa_rows(text, "Puglia")] == ["Comune di Bari", "Unione dei Comuni della Messapia"]
     assert len(parse_ipa_rows(text, "Puglia", only_comuni=False)) == 4
     assert is_comune_name("Comune di Diso") and not is_comune_name("Consorzio X")
+
+
+def test_check_extraction_evaluation() -> None:
+    from infra.scripts.check_extraction import CASES, SAMPLE_HTML, evaluate
+
+    assert len(CASES) == 10 and SAMPLE_HTML.count("<li>") == 10
+    ok_records = [
+        {"title": "Avviso ... manutenzione degli impianti di pubblica illuminazione", "body": ""},
+        {"title": "sollecitazione di proposte di finanza di progetto", "body": ""},
+        {"title": "sistemi di videosorveglianza urbana", "body": ""},
+        {"title": "colonnine di ricarica per veicoli elettrici", "body": ""},
+        {"title": "efficientamento energetico degli edifici scolastici", "body": ""},
+        {"title": "incarico di advisor tecnico-finanziario", "body": ""},
+    ]
+    assert all(ok for _, ok, _ in evaluate(ok_records))
+    # a record that should have been left out is a failure; a missing one too
+    bad = evaluate(ok_records[:-1] + [{"title": "rilascio della tessera elettorale", "body": ""}])
+    failed = {label for label, ok, _ in bad if not ok}
+    assert failed == {"incarico advisor per proposta PPP", "notizia elettorale"}
