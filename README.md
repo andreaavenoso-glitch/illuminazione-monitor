@@ -88,6 +88,10 @@ come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione)
   efficientamento di edifici e scuole, fotovoltaico e comunità energetiche, ricarica EV, 5G, digital advertising,
   smart city. Si attivano con `ENABLED_SERVICES` (vuoto = tutti). Il filtro delle pagine, le istruzioni a Claude e il
   controllo di pertinenza usano i servizi attivi; ogni avviso riporta i servizi di cui parla.
+- **Vista dell'avanzamento** (pagina della regione, tab "Raccolta"): barra di avanzamento con ora di fine stimata, una
+  linea del tempo con una barra per comune (da quando inizia a quando finisce la lettura), il segnale di Claude per
+  comune (chiamato N volte, non chiamato, errore) e un avviso rosso se l'API di Claude non è disponibile. Si aggiorna
+  ogni 3 secondi mentre la raccolta gira. I dati sono in `scan_runs` e `scan_items`.
 - I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:

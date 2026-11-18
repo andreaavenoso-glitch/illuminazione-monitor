@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { ScanView } from "@/components/ScanView";
 import { getUser, hasRole } from "@/lib/auth";
 import {
   CATEGORIA_LABEL,
@@ -15,7 +16,7 @@ import {
   type RegionDetail,
 } from "@/lib/regions";
 
-type Tab = Categoria | "siti";
+type Tab = Categoria | "siti" | "scan";
 
 const ERROR_LABELS: Record<string, string> = {
   http_404: "pagina non trovata (404)",
@@ -67,15 +68,14 @@ export default function RegionPage() {
   const collect = useMutation({
     mutationFn: (limit?: number) =>
       api.post(`/regions/${encodeURIComponent(region)}/collect${limit ? `?limit=${limit}` : ""}`),
-    onSuccess: (_d, limit) =>
+    onSuccess: (_d, limit) => {
+      setTab("scan");
       setMessage(
         limit
-          ? `Prova avviata su ${limit} comuni (prima quelli mai scansionati): circa ${Math.ceil(limit / 6)} minuti. ` +
-              "Poi guarda il tab Siti per lo stato dei comuni e i tab delle categorie per i risultati."
-          :
-        "Raccolta avviata: siti regionali, poi comuni, poi normalizzazione e punteggio, uno dopo l'altro. " +
-          "Dura circa 10 secondi per comune; la pagina si aggiorna da sola.",
-      ),
+          ? `Prova avviata su ${limit} comuni (prima quelli mai scansionati). Segui l'avanzamento qui sotto: parte dopo la lettura dei siti regionali.`
+          : "Raccolta avviata: siti regionali, poi comuni, poi normalizzazione e punteggio. Segui l'avanzamento qui sotto: parte dopo la lettura dei siti regionali.",
+      );
+    },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
   const digest = useMutation({
@@ -92,11 +92,12 @@ export default function RegionPage() {
 
   const byCat = (c: Categoria) => data.records.filter((r) => r.categoria === c);
   const failing = data.comuni.filter((c) => c.stato === "failing").length;
-  const tabs: { key: Tab; label: string; n: number }[] = [
+  const tabs: { key: Tab; label: string; n?: number }[] = [
     { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: byCat("pre_gara").length },
     { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: byCat("manifestazione_interesse").length },
     { key: "gara", label: CATEGORIA_LABEL.gara, n: byCat("gara").length },
     { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length },
+    { key: "scan", label: "Raccolta" },
   ];
 
   return (
@@ -170,12 +171,14 @@ export default function RegionPage() {
         {tabs.map((t) => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)}
             className={`-mb-px border-b-2 px-3 py-2 ${tab === t.key ? "border-neutral-900 font-medium dark:border-neutral-100" : "border-transparent text-neutral-500"}`}>
-            {t.label} <span className="text-xs text-neutral-500">({t.n})</span>
+            {t.label} {t.n !== undefined && <span className="text-xs text-neutral-500">({t.n})</span>}
           </button>
         ))}
       </nav>
 
-      {tab !== "siti" ? (
+      {tab === "scan" ? (
+        <ScanView region={region} />
+      ) : tab !== "siti" ? (
         <ul className="space-y-3">
           {byCat(tab).length === 0 && (
             <li className="text-sm text-neutral-500">

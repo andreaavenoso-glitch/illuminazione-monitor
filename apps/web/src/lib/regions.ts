@@ -109,3 +109,38 @@ export const STATO_CLASS = {
   failing: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
   unchecked: "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
 } as const;
+
+export interface ScanItemView {
+  ente: string;
+  status: "queued" | "running" | "done" | "error" | "skipped";
+  started_at: string | null;
+  ended_at: string | null;
+  duration_s: number | null;
+  pages_read: number;
+  pages_skipped: number;
+  claude_calls: number;
+  claude_errors: number;
+  records_found: number;
+  deepest: number;
+  stopped_by: string | null;
+  error: string | null;
+}
+
+export interface ScanRunView {
+  id: string;
+  region: string | null;
+  status: "running" | "done" | "failed" | "interrupted";
+  started_at: string;
+  ended_at: string | null;
+  elapsed_s: number;
+  eta_s: number | null;
+  total: number;
+  done: number;
+  running: number;
+  errors: number;
+  queued: number;
+  limit: number | null;
+  error: string | null;
+  claude: { status: "unused" | "ok" | "down"; error: string | null; calls: number; call_errors: number };
+  items: ScanItemView[];
+}

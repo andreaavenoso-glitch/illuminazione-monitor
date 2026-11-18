@@ -66,11 +66,20 @@ from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
-from shared_models import Entity, JobRun, RawRecord, RegionSettings, Source, WatchlistItem
+from shared_models import (
+    Entity,
+    JobRun,
+    RawRecord,
+    RegionSettings,
+    ScanItem,
+    ScanRun,
+    Source,
+    WatchlistItem,
+)
 from shared_models.regions import normalize_region
 from shared_models.services import configure as configure_services
 from shared_models.services import parse_enabled
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -164,6 +173,7 @@ async def _process_page(
         gated.html, url=target_url, settings=settings, label=label, status=status
     )
     job.records_found += len(records)
+    stats["records_found"] += len(records)
 
     for record in records:
         # The extraction prompt asks for absolute URLs only, but Claude
@@ -420,6 +430,60 @@ async def _regions_to_scan(session: AsyncSession, region: str | None) -> set[str
     return {r.region for r in rows if r.enabled}
 
 
+# Stats keys that are a maximum, not a count, when per-comune counters are merged.
+_MAX_STAT_KEYS = frozenset({"max_depth_reached"})
+
+
+def merge_stats(total: Counter, local: Counter) -> None:
+    """Add one comune's counters to the run's: counts are summed, maxima kept."""
+    for key, value in local.items():
+        if key in _MAX_STAT_KEYS:
+            total[key] = max(total[key], value)
+        else:
+            total[key] += value
+
+
+def item_progress(local: Counter) -> dict:
+    """What the progress view shows for one finished comune (pure)."""
+    stopped = next(
+        (k.removeprefix("crawl_stopped_by_") for k, v in local.items() if k.startswith("crawl_stopped_by_") and v),
+        None,
+    )
+    return {
+        "pages_read": local["pages_read"],
+        "pages_skipped": local["pages_skipped_no_keywords"] + local["pages_unchanged"] + local["pages_duplicate_content"],
+        "claude_calls": local["pages_to_claude_compact"] + local["pages_to_claude_full"],
+        "claude_errors": local["claude_errors"],
+        "records_found": local["records_found"],
+        "deepest": local["max_depth_reached"],
+        "stopped_by": stopped,
+    }
+
+
+async def _update_scan_item(run_id, scan_item_id, **values) -> None:
+    """Short session of its own: progress must be visible at once and must not
+    depend on the state of the comune's working session."""
+    try:
+        async with SessionLocal() as s:
+            await s.execute(update(ScanItem).where(ScanItem.id == scan_item_id).values(**values))
+            await s.execute(update(ScanRun).where(ScanRun.id == run_id).values(heartbeat_at=datetime.now(tz=UTC)))
+            await s.commit()
+    except Exception:  # noqa: BLE001  the progress view must never break the scan
+        log.exception("collect_watchlist.progress_update_failed")
+
+
+async def _set_run_claude(run_id, status: str, error: str | None, *, only_if_unused: bool = False) -> None:
+    try:
+        async with SessionLocal() as s:
+            stmt = update(ScanRun).where(ScanRun.id == run_id)
+            if only_if_unused:
+                stmt = stmt.where(ScanRun.claude_status == "unused")
+            await s.execute(stmt.values(claude_status=status, claude_error=error))
+            await s.commit()
+    except Exception:  # noqa: BLE001
+        log.exception("collect_watchlist.progress_update_failed")
+
+
 async def _run_watchlist_scan(region: str | None = None, limit: int | None = None) -> dict[str, int]:
     configure_services(parse_enabled(get_worker_settings().enabled_services))
     totals = {"items_scanned": 0, "records_found": 0, "records_valid": 0, "errors": 0}
@@ -433,15 +497,32 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
             WatchlistItem.active.is_(True),
             or_(WatchlistItem.url_albo.is_not(None), WatchlistItem.url_trasparenza.is_not(None)),
         )
-        stmt = stmt.add_columns(Entity.region).outerjoin(Entity, WatchlistItem.entity_id == Entity.id)
+        stmt = stmt.add_columns(Entity.region, Entity.name).outerjoin(Entity, WatchlistItem.entity_id == Entity.id)
         rows = (await session.execute(stmt)).all()
         wanted = await _regions_to_scan(session, region)
+        names = {item.id: (name or "comune") for item, _, name in rows}
         items = [
-            item for item, item_region in rows
+            item for item, item_region, _ in rows
             if wanted is None or normalize_region(item_region) in wanted
         ]
         items = select_sample(items, limit)
         log.info("collect_watchlist.scope region=%s items=%d limit=%s", region, len(items), limit)
+
+        # The progress view: one run, and one row per comune, visible as
+        # "queued" from the first second.
+        run = ScanRun(
+            region=normalize_region(region) if region else None,
+            sample_limit=limit, total=len(items), status="running", heartbeat_at=datetime.now(tz=UTC),
+        )
+        session.add(run)
+        await session.flush()
+        scan_item_ids = {}
+        for item in items:
+            si = ScanItem(run_id=run.id, item_id=item.id, ente=names.get(item.id, "comune"))
+            session.add(si)
+            await session.flush()
+            scan_item_ids[item.id] = si.id
+        await session.commit()
 
         settings = get_worker_settings()
         site_lock = asyncio.Lock()
@@ -454,27 +535,36 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
             # by the Celery time limit or a restart loses at most what is in
             # flight. The shared JobRun is only touched by plain attribute
             # updates, which is safe on one event loop.
+            sid = scan_item_ids[item_id]
             if claude_down.is_set():
                 stats["items_skipped_claude_down"] += 1
+                await _update_scan_item(run.id, sid, status="skipped", error="Claude non disponibile")
                 return
+            local: Counter = Counter()
+            await _update_scan_item(run.id, sid, status="running", started_at=datetime.now(tz=UTC))
+            outcome, error = "done", None
             async with SessionLocal() as item_session:
                 item = await item_session.get(WatchlistItem, item_id)
                 if item is None:
+                    await _update_scan_item(run.id, sid, status="error", ended_at=datetime.now(tz=UTC), error="comune non trovato")
                     return
                 try:
-                    await _scan_item(item_session, item, job, stats, site_lock)
+                    await _scan_item(item_session, item, job, local, site_lock)
                     totals["items_scanned"] += 1
                 except ClaudeUnavailable as exc:
                     # Every other comune would fail the same way: stop the run
                     # and say so, instead of crawling for an hour to report "0".
+                    outcome, error = "error", f"Claude non disponibile: {exc}"
                     if not claude_down.is_set():
                         claude_down.set()
-                        job.error_message = f"Claude non disponibile: {exc}"
+                        job.error_message = error
                         totals["claude_unavailable"] = 1
                         log.error("collect_watchlist.claude_unavailable %s", exc)
+                        await _set_run_claude(run.id, "down", str(exc)[:500])
                     totals["errors"] += 1
                     await item_session.rollback()
                 except Exception as exc:  # noqa: BLE001
+                    outcome, error = "error", f"{type(exc).__name__}: {exc}"[:500]
                     totals["errors"] += 1
                     job.error_message = f"{type(exc).__name__}: {exc}"
                     log.exception("collect_watchlist.item_crashed", extra={"item": str(item_id), "err": str(exc)})
@@ -484,6 +574,13 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
                 except Exception:  # noqa: BLE001
                     log.exception("collect_watchlist.commit_failed item=%s", item_id)
                     await item_session.rollback()
+            merge_stats(stats, local)
+            progress = item_progress(local)
+            await _update_scan_item(
+                run.id, sid, status=outcome, ended_at=datetime.now(tz=UTC), error=error, **progress
+            )
+            if progress["claude_calls"] and not progress["claude_errors"] and not claude_down.is_set():
+                await _set_run_claude(run.id, "ok", None, only_if_unused=True)
 
         await run_limited(item_ids, scan_one, settings.scan_concurrency)
         await session.commit()
@@ -493,10 +590,25 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
         totals["records_found"] = job.records_found
         totals["records_valid"] = job.records_valid
         await session.commit()
+        await _finish_run(run.id, job.error_message)
     log.info("collect_watchlist.stats %s", dict(sorted(stats.items())))
     # Pre-filter savings and platform mix, visible in the task result.
     totals.update(dict(stats))
     return totals
+
+
+async def _finish_run(run_id, error: str | None) -> None:
+    try:
+        async with SessionLocal() as s:
+            await s.execute(
+                update(ScanRun).where(ScanRun.id == run_id).values(
+                    ended_at=datetime.now(tz=UTC), heartbeat_at=datetime.now(tz=UTC),
+                    status="failed" if error else "done", error=error,
+                )
+            )
+            await s.commit()
+    except Exception:  # noqa: BLE001
+        log.exception("collect_watchlist.progress_update_failed")
 
 
 # A region can have hundreds of comuni (Puglia ~250 at ~11 s each), well past

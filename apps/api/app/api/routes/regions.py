@@ -4,6 +4,7 @@ from uuid import UUID
 
 from app.auth import current_user, require_role
 from app.core.database import get_session
+from app.services.scan_view import scan_summary
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from shared_models import (
@@ -12,6 +13,8 @@ from shared_models import (
     ProcurementRecord,
     RawRecord,
     RegionSettings,
+    ScanItem,
+    ScanRun,
     Source,
     User,
     WatchlistItem,
@@ -247,6 +250,42 @@ async def update_region(
         rs.recipients = (data["recipients"] or "").strip() or None
     await session.commit()
     return {"region": region, "enabled": rs.enabled, "recipients": rs.recipients}
+
+
+@router.get("/{region}/scan")
+async def region_scan(
+    region: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> dict | None:
+    """Per-comune progress of the latest scan that covered this region: the
+    region's own run, or the latest all-regions run (daily), whichever is newer."""
+    region = _canonical(region)
+    own = (
+        await session.execute(
+            select(ScanRun).where(ScanRun.region == region).order_by(ScanRun.started_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    general = (
+        await session.execute(
+            select(ScanRun).where(ScanRun.region.is_(None)).order_by(ScanRun.started_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    run = max((r for r in (own, general) if r is not None), key=lambda r: r.started_at, default=None)
+    if run is None:
+        return None
+    items = list((await session.execute(select(ScanItem).where(ScanItem.run_id == run.id))).scalars().all())
+    if run.region is None:
+        # An all-regions run: keep this region's comuni only.
+        rows = (
+            await session.execute(
+                select(ScanItem.id, Entity.region)
+                .join(WatchlistItem, ScanItem.item_id == WatchlistItem.id)
+                .join(Entity, WatchlistItem.entity_id == Entity.id)
+                .where(ScanItem.run_id == run.id)
+            )
+        ).all()
+        keep = {i for i, r in rows if normalize_region(r) == region}
+        items = [i for i in items if i.id in keep]
+    return scan_summary(run, items, datetime.now(tz=UTC))
 
 
 @router.patch("/{region}/sites/{source_id}")
