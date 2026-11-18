@@ -50,7 +50,8 @@ from app.collectors.albo_pretorio_llm import (
     merge_detail_into_record,
     select_relevant_links,
 )
-from app.collectors.page_gate import GateResult, gate_page, pick_section_links
+from app.collectors.crawler import crawl
+from app.collectors.page_gate import GateResult, gate_page, pick_section_links, rank_links
 from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
@@ -197,55 +198,13 @@ async def _trasparenza_pages(
         stats["links_from_labels"] += 1
         return pages[:MAX_EXTRA_PAGES]
 
+    if rank_links(cleaned, base_url=url, limit=1):
+        # No section named as such, but the crawl can score the page's links.
+        stats["links_from_ranking"] += 1
+        return []
     stats["links_from_claude"] += 1
     selected = await select_relevant_links(cleaned, base_url=url, settings=settings, label=label)
     return [u for u in dict.fromkeys(selected) if u and u != url][:MAX_EXTRA_PAGES]
-
-
-# How many clicks deep the crawl goes from the first page of a comune. From a
-# home page the path is home -> Amministrazione Trasparente -> Bandi di gara,
-# so one hop is not enough; the total number of pages stays capped.
-MAX_CRAWL_DEPTH = 2
-LINKS_PER_MENU = 4
-
-
-async def _crawl_extra_pages(
-    session: AsyncSession,
-    item: WatchlistItem,
-    job: JobRun,
-    first_pages: list[str],
-    *,
-    start_url: str,
-    label: str,
-    settings: WorkerSettings,
-    now: datetime,
-    seen: set[str],
-    stats: Counter,
-) -> None:
-    """Read ``first_pages`` and, for pages that turn out to be menus (no
-    lighting wording on them), follow the legal section names one level
-    further. At most MAX_EXTRA_PAGES pages are fetched in total."""
-    visited = {start_url, *first_pages}
-    queue = [(u, 1) for u in first_pages]
-    fetched = 0
-    while queue and fetched < MAX_EXTRA_PAGES:
-        page_url, depth = queue.pop(0)
-        page_label = f"{label}:{page_url}"
-        page_html = await _fetch_page(page_url, settings=settings, label=page_label)
-        fetched += 1
-        if not page_html:
-            continue
-        gated = await _process_page(
-            session, item, job,
-            target_url=page_url, target_html=page_html, label=page_label,
-            settings=settings, now=now, seen=seen, stats=stats,
-        )
-        if depth < MAX_CRAWL_DEPTH and gated.action == "skip":
-            for nxt in pick_section_links(page_html, base_url=page_url, limit=LINKS_PER_MENU):
-                if nxt not in visited:
-                    visited.add(nxt)
-                    queue.append((nxt, depth + 1))
-                    stats["pages_followed_deeper"] += 1
 
 
 async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, stats: Counter) -> None:
@@ -281,29 +240,32 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun, st
             setattr(item, "url_albo" if kind == "albo" else "url_trasparenza", fetched.url)
             url = fetched.url
 
-        if kind != "trasparenza":
-            await _process_page(
+        seeds: list[str] = []
+        if kind == "trasparenza":
+            seeds = await _trasparenza_pages(cleaned, url, settings=settings, label=label, stats=stats)
+
+        async def on_page(page_url: str, page_html: str, depth: int, _label=label) -> GateResult:
+            return await _process_page(
                 session, item, job,
-                target_url=url, target_html=cleaned, label=label,
+                target_url=page_url, target_html=page_html,
+                label=_label if depth == 0 else f"{_label}:{page_url}",
                 settings=settings, now=now, seen=seen, stats=stats,
             )
-            continue
 
-        extra_pages = await _trasparenza_pages(cleaned, url, settings=settings, label=label, stats=stats)
-        if not extra_pages:
-            # Nothing more specific found: extract from the landing page
-            # itself, same as before this went looking further.
-            await _process_page(
-                session, item, job,
-                target_url=url, target_html=cleaned, label=label,
-                settings=settings, now=now, seen=seen, stats=stats,
-            )
-            continue
+        async def fetch(page_url: str, _label=label) -> FetchResult:
+            return await _fetch_page_result(page_url, settings=settings, label=f"{_label}:{page_url}")
 
-        log.info("collect_watchlist.extra_pages item=%s count=%d", item.id, len(extra_pages))
-        await _crawl_extra_pages(
-            session, item, job, extra_pages,
-            start_url=url, label=label, settings=settings, now=now, seen=seen, stats=stats,
+        result = await crawl(
+            start_url=url, start_html=cleaned, seeds=seeds, fetch=fetch, on_page=on_page,
+            max_pages=settings.crawl_max_pages, max_depth=settings.crawl_max_depth,
+            time_budget_s=settings.crawl_time_budget_s,
+        )
+        stats[f"crawl_stopped_by_{result.stopped_by}"] += 1
+        stats["pages_followed_deeper"] += sum(1 for v in result.visits if v.depth >= 2)
+        stats["max_depth_reached"] = max(stats["max_depth_reached"], max(v.depth for v in result.visits))
+        log.info(
+            "collect_watchlist.crawl item=%s pages=%d deepest=%d stopped_by=%s",
+            item.id, len(result.visits), max(v.depth for v in result.visits), result.stopped_by,
         )
 
     item.last_scan_at = now

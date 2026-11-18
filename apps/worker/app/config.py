@@ -22,6 +22,11 @@ class WorkerSettings(BaseSettings):
     smart_collector_playwright_min_chars: int = 3000
     smart_collector_playwright_wait_ms: int = 4000
 
+    # Deep crawl of one comune's site (see app.collectors.crawler).
+    crawl_max_pages: int = 20
+    crawl_max_depth: int = 5
+    crawl_time_budget_s: float = 150.0
+
     # Outbound email for the regional digests. Empty smtp_host = email off:
     # digests are built and logged but never marked as sent.
     smtp_host: str = ""

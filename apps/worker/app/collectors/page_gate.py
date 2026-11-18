@@ -21,7 +21,7 @@ import hashlib
 import html as htmllib
 import re
 from dataclasses import dataclass, field
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 from shared_models.categories import GATE_KEYWORDS
@@ -175,3 +175,93 @@ def pick_section_links(html: str, *, base_url: str, limit: int) -> list[str]:
         if len(out) >= limit:
             break
     return out
+
+
+# --- Link ranking for the deep crawl -----------------------------------------
+# Public bodies bury notices several clicks down (home -> Amministrazione
+# Trasparente -> Bandi di gara e contratti -> Avvisi -> year -> list), so the
+# crawl follows the most promising links first instead of a fixed depth.
+_FILE_EXT = (
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".rar", ".jpg", ".jpeg", ".png", ".gif",
+    ".mp3", ".mp4", ".odt", ".ods", ".p7m", ".xml", ".json", ".csv", ".svg",
+)
+_JUNK = re.compile(
+    r"contatt|privacy|cookie|login|accedi|area riservata|mappa del sito|rubrica|organigramma|"
+    r"sindaco|giunta|consiglio comunale|eventi|turismo|cultura|sport|scuol|biblioteca|rss|"
+    r"facebook|twitter|instagram|youtube|whatsapp|telegram|newsletter|accessibilit|credits|"
+    r"note legali|\burp\b|dichiarazione di accessibilit",
+    re.IGNORECASE,
+)
+_TOPIC = re.compile(
+    r"bandi|\bgare\b|\bgara\b|avvis|contratt|affidament|procedur|determin|delibera|provvediment|"
+    r"manifestazion|trasparen|albo|appalt|concession|finanza di progetto|partenariato|"
+    r"illuminazione|manutenzion|lavori pubblici|opere pubbliche",
+    re.IGNORECASE,
+)
+_NEXT_TEXT = re.compile(r"^(pagina successiva|successiva|avanti|next|next page|»|›|>>)$", re.IGNORECASE)
+MAX_LINK_TEXT = 100
+MIN_LINK_SCORE = 4
+
+
+def _host(url: str) -> str:
+    h = urlsplit(url).netloc.lower().split("@")[-1].split(":")[0]
+    return h[4:] if h.startswith("www.") else h
+
+
+def same_site(a: str, b: str) -> bool:
+    """Same host, or one a subdomain of the other (albo.comune.x.it)."""
+    ha, hb = _host(a), _host(b)
+    return bool(ha and hb) and (ha == hb or ha.endswith("." + hb) or hb.endswith("." + ha))
+
+
+def normalize_url(url: str) -> str:
+    parts = urlsplit(url)
+    path = parts.path.rstrip("/") or "/"
+    query = f"?{parts.query}" if parts.query else ""
+    return f"{parts.scheme}://{_host(url)}{path}{query}".lower()
+
+
+def score_link(text: str, href: str) -> int:
+    """How promising a link is for finding pre-tender acts (0 = ignore)."""
+    t = _norm(text).lower()
+    if not t or len(t) > MAX_LINK_TEXT:
+        return 0  # empty, or an act's own title rather than a menu entry
+    h = href.lower()
+    if _JUNK.search(t) or _JUNK.search(urlsplit(h).path):
+        return 0
+    if urlsplit(h).path.endswith(_FILE_EXT):
+        return 0
+    score = 0
+    if any(label in t for label in SECTION_LABELS):
+        score += 10
+    if _has_gate_keyword(t):
+        score += 6
+    if _TOPIC.search(t):
+        score += 4
+    if _TOPIC.search(urlsplit(h).path):
+        score += 2
+    return score
+
+
+def rank_links(html: str, *, base_url: str, limit: int = 12) -> list[tuple[str, int]]:
+    """Promising links of a page, best first: (absolute url, score).
+    Pagination links ("pagina successiva", rel=next) are kept with a fixed
+    score so a listing can be followed past its first page."""
+    soup = BeautifulSoup(html, "lxml")
+    scores: dict[str, int] = {}
+    urls: dict[str, str] = {}
+    here = normalize_url(base_url)
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith("#") or href.lower().startswith(("javascript:", "mailto:", "tel:")):
+            continue
+        url = urljoin(base_url, href)
+        text = a.get_text(" ", strip=True)
+        rel = [r.lower() for r in (a.get("rel") or [])]
+        score = 7 if ("next" in rel or _NEXT_TEXT.match(_norm(text))) else score_link(text, url)
+        key = normalize_url(url)
+        if score >= MIN_LINK_SCORE and key != here and score > scores.get(key, 0):
+            scores[key] = score
+            urls[key] = url
+    ranked = sorted(((urls[k], sc) for k, sc in scores.items()), key=lambda x: -x[1])
+    return ranked[:limit]

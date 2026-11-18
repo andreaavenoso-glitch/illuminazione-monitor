@@ -150,56 +150,130 @@ class TestScanIntegration:
         assert len(calls) == 2 and not item.content_hashes
 
 
-@pytest.mark.asyncio
-class TestCrawlDepth:
-    """home -> menu page -> the page that actually lists acts."""
+class TestLinkScoring:
+    def test_section_names_and_topics_score_high(self) -> None:
+        from app.collectors.page_gate import score_link
 
-    HOME = "<a href='/trasparenza'>Amministrazione trasparente</a><a href='/contatti'>Contatti utili qui</a>"
-    MENU = "<ul><li><a href='/trasparenza/bandi'>Bandi di gara e contratti</a></li><li><a href='/trasparenza/personale'>Personale</a></li></ul>"
-    BANDI = (
-        "<ul><li><a href='/trasparenza/bandi/1'>Avviso di manifestazione di interesse per la "
-        "manutenzione dell'illuminazione pubblica</a> 12/11/2026</li></ul>"
-    )
+        assert score_link("Bandi di gara e contratti", "/x") >= 10
+        assert score_link("Avvisi pubblici", "/x") >= 10
+        assert score_link("Manutenzione illuminazione pubblica", "/x") >= 10  # keyword + topic
+        assert score_link("Determinazioni dirigenziali 2026", "/x") >= 4
 
-    async def _run(self, monkeypatch, pages):
-        from collections import Counter
-        from datetime import UTC, datetime
-        from types import SimpleNamespace
+    def test_junk_files_and_act_titles_score_zero(self) -> None:
+        from app.collectors.page_gate import score_link
 
-        from app.tasks import collect_watchlist as cw
+        assert score_link("Contatti", "/contatti") == 0
+        assert score_link("Privacy e cookie", "/privacy") == 0
+        assert score_link("Avvisi", "/docs/avvisi.pdf") == 0
+        assert score_link("Eventi culturali dell'estate", "/eventi") == 0
+        long_title = "Avviso pubblico per la manifestazione di interesse " + "x" * 80
+        assert score_link(long_title, "/a") == 0  # an act's own title, not a menu entry
 
-        fetched: list[str] = []
-        sent: list[str] = []
+    def test_rank_links_orders_dedups_and_keeps_pagination(self) -> None:
+        from app.collectors.page_gate import rank_links
 
-        async def fake_fetch(url, *, settings, label):
-            fetched.append(url)
-            return pages.get(url, "")
-
-        async def fake_extract(html, *, url, settings, label, status=None):
-            sent.append(url)
-            return []
-
-        monkeypatch.setattr(cw, "_fetch_page", fake_fetch)
-        monkeypatch.setattr(cw, "extract_albo_records", fake_extract)
-        item = SimpleNamespace(content_hashes=None, source_id=None, entity_id=None)
-        job = SimpleNamespace(records_found=0, records_valid=0, duplicates_removed=0)
-        stats = Counter()
-        await cw._crawl_extra_pages(
-            SimpleNamespace(add=lambda *_: None), item, job, ["https://c.it/trasparenza"],
-            start_url="https://c.it/", label="t", settings=None,
-            now=datetime.now(tz=UTC), seen=set(), stats=stats,
+        html = (
+            "<a href='/personale'>Personale</a><a href='/a'>Avvisi</a>"
+            "<a href='/b'>Bandi di gara e contratti</a><a href='/b/'>Bandi di gara e contratti</a>"
+            "<a href='/contatti'>Contatti</a><a href='/p2' rel='next'>2</a>"
+            "<a href='/p3'>Pagina successiva</a>"
         )
-        return fetched, sent, stats
+        ranked = rank_links(html, base_url="https://c.it/x", limit=10)
+        urls = [u for u, _ in ranked]
+        assert urls[0] == "https://c.it/b"
+        assert "https://c.it/contatti" not in urls and "https://c.it/personale" not in urls
+        assert urls.count("https://c.it/b") + urls.count("https://c.it/b/") == 1
+        assert "https://c.it/p2" in urls and "https://c.it/p3" in urls
 
-    async def test_follows_menu_to_the_real_listing(self, monkeypatch) -> None:
-        pages = {"https://c.it/trasparenza": self.MENU, "https://c.it/trasparenza/bandi": self.BANDI}
-        fetched, sent, stats = await self._run(monkeypatch, pages)
-        assert fetched == ["https://c.it/trasparenza", "https://c.it/trasparenza/bandi"]
-        assert sent == ["https://c.it/trasparenza/bandi"]  # only the page with matches reaches Claude
-        assert stats["pages_followed_deeper"] == 1
+    def test_same_site_and_normalize(self) -> None:
+        from app.collectors.page_gate import normalize_url, same_site
 
-    async def test_does_not_follow_beyond_two_levels_or_visited_pages(self, monkeypatch) -> None:
-        loop = "<a href='/trasparenza'>Amministrazione trasparente</a><a href='/l3'>Bandi di gara e contratti</a>"
-        pages = {"https://c.it/trasparenza": loop, "https://c.it/l3": "<a href='/l4'>Bandi di gara</a>"}
-        fetched, _, _ = await self._run(monkeypatch, pages)
-        assert fetched == ["https://c.it/trasparenza", "https://c.it/l3"]
+        assert same_site("https://www.c.it/a", "https://c.it/b")
+        assert same_site("https://albo.c.it/a", "https://www.c.it/")
+        assert not same_site("https://x.halleyweb.com/", "https://c.it/")
+        assert normalize_url("https://WWW.c.it/a/#top") == normalize_url("https://c.it/a")
+
+
+class FakeFetched:
+    def __init__(self, text="", url=None, error=None):
+        self.text, self.url, self.error = text, url, error
+
+
+@pytest.mark.asyncio
+class TestBestFirstCrawl:
+    """The crawl goes as deep as the links lead, best link first, within budgets."""
+
+    def _site(self):
+        # home -> trasparenza -> bandi -> avvisi -> 2026 -> list with the notice (5 levels)
+        link = lambda href, text: f"<a href='{href}'>{text}</a>"  # noqa: E731
+        return {
+            "https://c.it/": link("/trasparenza", "Amministrazione trasparente") + link("/contatti", "Contatti"),
+            "https://c.it/trasparenza": link("/bandi", "Bandi di gara e contratti") + link("/personale", "Personale"),
+            "https://c.it/bandi": link("/avvisi", "Avvisi pubblici"),
+            "https://c.it/avvisi": link("/avvisi/2026", "Avvisi 2026"),
+            "https://c.it/avvisi/2026": link("/avvisi/2026/lista", "Elenco avvisi 2026"),
+            "https://c.it/avvisi/2026/lista": (
+                "<ul><li><a href='/a/1'>Avviso di manifestazione di interesse per la manutenzione "
+                "dell'illuminazione pubblica</a></li></ul>"
+            ),
+        }
+
+    async def _run(self, pages, *, max_pages=20, max_depth=5, budget=150.0, clock=None, seeds=()):
+        from app.collectors.crawler import crawl
+        from app.collectors.page_gate import gate_page
+
+        fetched_urls, analysed = [], []
+
+        async def fetch(url):
+            fetched_urls.append(url)
+            return FakeFetched(pages.get(url, ""), url, None if url in pages else "http_404")
+
+        async def on_page(url, html, depth):
+            g = gate_page(html, base_url=url)
+            if g.action != "skip":
+                analysed.append((url, depth))
+            return g
+
+        kwargs = {"clock": clock} if clock else {}
+        res = await crawl(
+            start_url="https://c.it/", start_html=pages["https://c.it/"], seeds=list(seeds),
+            fetch=fetch, on_page=on_page, max_pages=max_pages, max_depth=max_depth,
+            time_budget_s=budget, **kwargs,
+        )
+        return res, fetched_urls, analysed
+
+    async def test_reaches_a_notice_five_levels_down(self) -> None:
+        res, fetched, analysed = await self._run(self._site())
+        assert analysed == [("https://c.it/avvisi/2026/lista", 5)]
+        assert "https://c.it/contatti" not in fetched and "https://c.it/personale" not in fetched
+        assert max(v.depth for v in res.visits) == 5
+
+    async def test_depth_cap_stops_the_descent(self) -> None:
+        res, _, analysed = await self._run(self._site(), max_depth=3)
+        assert analysed == []
+        assert max(v.depth for v in res.visits) == 3
+
+    async def test_page_budget_stops_the_crawl(self) -> None:
+        res, fetched, _ = await self._run(self._site(), max_pages=2)
+        assert len(fetched) == 2 and res.stopped_by == "pages"
+
+    async def test_time_budget_stops_the_crawl(self) -> None:
+        ticks = iter(range(0, 1000, 100))
+        res, fetched, _ = await self._run(self._site(), budget=150.0, clock=lambda: next(ticks))
+        assert res.stopped_by == "time" and len(fetched) < 5
+
+    async def test_unreadable_pages_are_recorded_and_skipped(self) -> None:
+        pages = self._site()
+        del pages["https://c.it/bandi"]
+        res, _, _ = await self._run(pages)
+        assert any(v.action == "unreadable" and v.error == "http_404" for v in res.visits)
+
+    async def test_pages_are_visited_once(self) -> None:
+        pages = self._site()
+        pages["https://c.it/bandi"] = "<a href='/trasparenza'>Amministrazione trasparente</a><a href='/avvisi'>Avvisi pubblici</a>"
+        _, fetched, _ = await self._run(pages)
+        assert len(fetched) == len(set(fetched))
+
+    async def test_seeds_are_opened_first(self) -> None:
+        _, fetched, _ = await self._run(self._site(), seeds=["https://c.it/avvisi"])
+        assert fetched[0] == "https://c.it/avvisi"

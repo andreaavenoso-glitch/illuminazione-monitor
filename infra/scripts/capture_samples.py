@@ -41,6 +41,8 @@ def summarize(reports: list[dict]) -> dict:
         s[f"links_{r.get('links_source', 'none')}"] += 1
         pages = r.get("pages", [])
         s["pages"] += len(pages)
+        s[f"stopped_by_{r.get('stopped_by', 'none')}"] += 1
+        s["deepest_max"] = max(s["deepest_max"], r.get("deepest", 0))
         if any(p["gate"] != "skip" for p in pages):
             s["comuni_with_a_gated_page"] += 1
         if not pages:
@@ -53,16 +55,12 @@ def summarize(reports: list[dict]) -> dict:
 async def run(region: str, limit: int, out: Path) -> None:
     from app.collectors.adaptive_fetch import adaptive_fetch_result
     from app.collectors.albo_pretorio_llm import find_bandi_link
+    from app.collectors.crawler import crawl
     from app.collectors.page_gate import detect_template, gate_page, pick_section_links
     from app.collectors.sitemap import discover_sitemap_urls
     from app.config import get_worker_settings
     from app.db import SessionLocal
-    from app.tasks.collect_watchlist import (
-        LINKS_PER_MENU,
-        MAX_CRAWL_DEPTH,
-        MAX_EXTRA_PAGES,
-        select_sample,
-    )
+    from app.tasks.collect_watchlist import MAX_EXTRA_PAGES, select_sample
     from shared_models import Entity, WatchlistItem
     from shared_models.regions import normalize_region
     from sqlalchemy import or_, select
@@ -115,28 +113,29 @@ async def run(region: str, limit: int, out: Path) -> None:
                  *pick_section_links(first.text, base_url=url, limit=MAX_EXTRA_PAGES)]) if u and u != url]
             pages, rep["links_source"] = labelled[:MAX_EXTRA_PAGES], ("labels" if labelled else "none_would_ask_claude")
 
-        # The start page itself is gated too (it is analysed when nothing else is found).
-        g0 = gate_page(first.text, base_url=url)
-        rep["start_gate"] = {"action": g0.action, "candidates": [c.title for c in g0.candidates[:5]]}
+        pages_seen: list[dict] = []
 
-        visited, queue, fetched = {url, *pages}, [(u, 1) for u in pages], 0
-        while queue and fetched < MAX_EXTRA_PAGES:
-            purl, depth = queue.pop(0)
-            res = await fetch(purl, base)
-            fetched += 1
-            entry = {"url": purl, "depth": depth, "chars": len(res.text), "error": res.error if not res.text else None}
-            if res.text:
-                g = gate_page(res.text, base_url=purl)
-                entry.update(gate=g.action, template=g.template, candidates=[c.title for c in g.candidates[:5]])
-                (out / f"{base}__{fetched:02d}_d{depth}.html").write_text(res.text, encoding="utf-8")
-                if depth < MAX_CRAWL_DEPTH and g.action == "skip":
-                    for nxt in pick_section_links(res.text, base_url=purl, limit=LINKS_PER_MENU):
-                        if nxt not in visited:
-                            visited.add(nxt)
-                            queue.append((nxt, depth + 1))
-            else:
-                entry["gate"] = "unreadable"
-            rep["pages"].append(entry)
+        async def on_page(purl: str, html: str, depth: int, _base=base, pages_seen=pages_seen):
+            g = gate_page(html, base_url=purl)
+            pages_seen.append({
+                "url": purl, "depth": depth, "chars": len(html), "gate": g.action,
+                "template": g.template, "candidates": [c.title for c in g.candidates[:5]],
+            })
+            (out / f"{_base}__{len(pages_seen):02d}_d{depth}.html").write_text(html, encoding="utf-8")
+            return g
+
+        async def fetch_page(purl: str, _base=base):
+            return await fetch(purl, _base)
+
+        result = await crawl(
+            start_url=url, start_html=first.text, seeds=pages, fetch=fetch_page, on_page=on_page,
+            max_pages=settings.crawl_max_pages, max_depth=settings.crawl_max_depth,
+            time_budget_s=settings.crawl_time_budget_s,
+        )
+        rep["pages"] = pages_seen
+        rep["unreadable"] = [{"url": v.url, "error": v.error} for v in result.visits if v.action == "unreadable"]
+        rep["stopped_by"] = result.stopped_by
+        rep["deepest"] = max(v.depth for v in result.visits)
         reports.append(rep)
 
     summary = summarize(reports)
@@ -144,9 +143,14 @@ async def run(region: str, limit: int, out: Path) -> None:
     lines = ["# Dry run scansione comuni (senza Claude)", "", f"Regione: {canonical}, comuni: {len(reports)}", "",
              "```", json.dumps(summary, ensure_ascii=False, indent=1), "```", ""]
     for r in reports:
-        lines.append(f"- **{r['ente']}** — {r.get('error') or r.get('template')} — pagine: {len(r['pages'])} — link: {r.get('links_source', '-')}")
+        lines.append(
+            f"- **{r['ente']}** — {r.get('error') or r.get('template')} — pagine: {len(r['pages'])} — "
+            f"profondita max: {r.get('deepest', '-')} — stop: {r.get('stopped_by', '-')} — link: {r.get('links_source', '-')}"
+        )
         for p in r["pages"]:
             lines.append(f"    - d{p['depth']} {p['gate']} {p['url']} {p.get('candidates', '')}")
+        for u in r.get("unreadable", []):
+            lines.append(f"    - ILLEGGIBILE {u['error']} {u['url']}")
     (out / "report.md").write_text("\n".join(lines), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=1))
     print(f"\nSalvato in {out} (report.md, report.json e le pagine .html)")
