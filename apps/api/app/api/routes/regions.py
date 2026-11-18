@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.auth import current_user, require_role
 from app.core.database import get_session
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from shared_models import (
     Entity,
@@ -227,11 +227,15 @@ async def update_region(
 
 
 @router.post("/{region}/collect")
-async def collect_region(region: str, _: User = Depends(require_role("admin"))) -> dict:
+async def collect_region(
+    region: str,
+    limit: int | None = Query(None, ge=1, le=500, description="Trial run: scan at most this many comuni"),
+    _: User = Depends(require_role("admin")),
+) -> dict:
     from app.services.admin_service import dispatch_region_scan
 
     region = _canonical(region)
-    return {"status": "dispatched", "region": region, **dispatch_region_scan(region)}
+    return {"status": "dispatched", "region": region, "limit": limit, **dispatch_region_scan(region, limit)}
 
 
 @router.post("/{region}/send-digest")

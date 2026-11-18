@@ -54,9 +54,14 @@ export default function RegionPage() {
     },
   });
   const collect = useMutation({
-    mutationFn: () => api.post(`/regions/${encodeURIComponent(region)}/collect`),
-    onSuccess: () =>
+    mutationFn: (limit?: number) =>
+      api.post(`/regions/${encodeURIComponent(region)}/collect${limit ? `?limit=${limit}` : ""}`),
+    onSuccess: (_d, limit) =>
       setMessage(
+        limit
+          ? `Prova avviata su ${limit} comuni (prima quelli mai scansionati): circa ${Math.ceil(limit / 6)} minuti. ` +
+              "Poi guarda il tab Siti per lo stato dei comuni e i tab delle categorie per i risultati."
+          :
         "Raccolta avviata: siti regionali, poi comuni, poi normalizzazione e punteggio, uno dopo l'altro. " +
           "Dura circa 10 secondi per comune; la pagina si aggiorna da sola.",
       ),
@@ -102,8 +107,14 @@ export default function RegionPage() {
               </button>
               <button type="button" disabled={collect.isPending}
                 className="rounded bg-neutral-900 px-3 py-1 text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
-                onClick={() => collect.mutate()}>
+                onClick={() => collect.mutate(undefined)}>
                 Raccogli ora
+              </button>
+              <button type="button" disabled={collect.isPending}
+                className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                title="Scansiona solo 10 comuni: per verificare che tutto funzioni senza spendere un giro intero"
+                onClick={() => collect.mutate(10)}>
+                Prova con 10 comuni
               </button>
               <button type="button" disabled={digest.isPending}
                 className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"

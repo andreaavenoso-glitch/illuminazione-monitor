@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import UTC, datetime
 from urllib.parse import urljoin
 
@@ -229,6 +230,20 @@ async def _scan_item(session: AsyncSession, item: WatchlistItem, job: JobRun) ->
     apply_scan_outcome(item, now=now, ok=primary_ok, error=first_error)
 
 
+def select_sample(items: list, limit: int | None, rng: random.Random | None = None) -> list:
+    """At most ``limit`` items for a trial run: never-scanned ones first, then
+    the rest, random within each group, so repeating a trial covers new
+    comuni instead of the same ones. ``None`` means no limit."""
+    if limit is None or limit >= len(items):
+        return items
+    rng = rng or random.Random()
+    fresh = [i for i in items if i.last_scan_at is None]
+    seen = [i for i in items if i.last_scan_at is not None]
+    rng.shuffle(fresh)
+    rng.shuffle(seen)
+    return (fresh + seen)[:limit]
+
+
 async def _regions_to_scan(session: AsyncSession, region: str | None) -> set[str] | None:
     """Regions a scan should cover, or None for "everything" (no region
     configuration at all, i.e. before the regional setup was seeded)."""
@@ -241,7 +256,7 @@ async def _regions_to_scan(session: AsyncSession, region: str | None) -> set[str
     return {r.region for r in rows if r.enabled}
 
 
-async def _run_watchlist_scan(region: str | None = None) -> dict[str, int]:
+async def _run_watchlist_scan(region: str | None = None, limit: int | None = None) -> dict[str, int]:
     totals = {"items_scanned": 0, "records_found": 0, "records_valid": 0, "errors": 0}
     async with SessionLocal() as session:
         job = JobRun(job_name="collect_watchlist_albo", status="running")
@@ -259,7 +274,8 @@ async def _run_watchlist_scan(region: str | None = None) -> dict[str, int]:
             item for item, item_region in rows
             if wanted is None or normalize_region(item_region) in wanted
         ]
-        log.info("collect_watchlist.scope", extra={"region": region, "items": len(items)})
+        items = select_sample(items, limit)
+        log.info("collect_watchlist.scope", extra={"region": region, "items": len(items), "limit": limit})
 
         for item in items:
             try:
@@ -291,7 +307,8 @@ async def _run_watchlist_scan(region: str | None = None) -> dict[str, int]:
     soft_time_limit=4 * 3600,
     time_limit=4 * 3600 + 300,
 )
-def collect_watchlist_albo(region: str | None = None) -> dict[str, int]:
+def collect_watchlist_albo(region: str | None = None, limit: int | None = None) -> dict[str, int]:
     """Scan the watchlist; ``region`` limits it to one region (any, enabled or
-    not), otherwise only the enabled regions are scanned."""
-    return asyncio.run(_run_watchlist_scan(region))
+    not), otherwise only the enabled regions are scanned. ``limit`` caps the
+    number of comuni (trial run)."""
+    return asyncio.run(_run_watchlist_scan(region, limit))

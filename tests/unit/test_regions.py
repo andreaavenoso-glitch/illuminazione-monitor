@@ -109,3 +109,26 @@ class TestDigest:
     def test_parse_recipients(self) -> None:
         assert parse_recipients("a@x.it; b@y.it, a@x.it , nope") == ["a@x.it", "b@y.it"]
         assert parse_recipients(None) == []
+
+
+class TestSelectSample:
+    def _items(self):
+        from types import SimpleNamespace
+
+        return [SimpleNamespace(n=i, last_scan_at=None if i < 3 else "x") for i in range(8)]
+
+    def test_no_limit_returns_all(self) -> None:
+        from app.tasks.collect_watchlist import select_sample
+
+        items = self._items()
+        assert select_sample(items, None) == items
+        assert select_sample(items, 50) == items
+
+    def test_never_scanned_come_first(self) -> None:
+        import random
+
+        from app.tasks.collect_watchlist import select_sample
+
+        picked = select_sample(self._items(), 5, random.Random(1))
+        assert len(picked) == 5
+        assert {i.n for i in picked[:3]} == {0, 1, 2}

@@ -99,7 +99,7 @@ def dispatch_backfill(days: int) -> str:
     return str(result.id)
 
 
-def dispatch_region_scan(region: str) -> dict[str, str]:
+def dispatch_region_scan(region: str, limit: int | None = None) -> dict[str, str]:
     """One region end to end, strictly in order: regional sites, then its
     comuni, then normalize and score -- so nothing is normalized before the
     scan that feeds it has finished. ``task_id`` is the last step: when it is
@@ -110,7 +110,11 @@ def dispatch_region_scan(region: str) -> dict[str, str]:
     sig = app.signature
     result = chain(
         sig("app.tasks.collect_sources.collect_regional_sites", kwargs={"region": region}, immutable=True),
-        sig("app.tasks.collect_watchlist.collect_watchlist_albo", kwargs={"region": region}, immutable=True),
+        sig(
+            "app.tasks.collect_watchlist.collect_watchlist_albo",
+            kwargs={"region": region, "limit": limit},
+            immutable=True,
+        ),
         sig("app.tasks.normalize_records.normalize_records", immutable=True),
         sig("app.tasks.score_and_dedupe.score_and_dedupe", immutable=True),
     ).apply_async()
