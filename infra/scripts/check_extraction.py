@@ -70,7 +70,13 @@ async def main() -> int:
     configure(parse_enabled(settings.enabled_services))
     status = {"ok": True}
     records = await extract_albo_records(SAMPLE_HTML, url=BASE, settings=settings, label="check", status=status)
-    print(f"Chiamata a Claude: {'ok' if status['ok'] else 'FALLITA (vedi log: albo_pretorio.claude_error)'}")
+    if not status["ok"]:
+        print("Chiamata a Claude FALLITA, la prova non e' valida (nessun PASS/FAIL significativo).")
+        print(f"Motivo: {status.get('error', 'sconosciuto')}")
+        if status.get("fatal"):
+            print("L'errore blocca tutte le chiamate (limite di spesa, credito o chiave): va risolto sul conto API.")
+        return 2
+    print("Chiamata a Claude: ok")
     print(f"Record restituiti: {len(records)}\n")
     for r in records:
         print(f"  - [{r.get('atto_tipo')}] {str(r.get('title'))[:110]}")
@@ -80,7 +86,7 @@ async def main() -> int:
         print(f"  {'PASS' if ok else 'FAIL'}  {label}: {detail}")
     failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} corretti")
-    return 1 if failed or not status["ok"] else 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

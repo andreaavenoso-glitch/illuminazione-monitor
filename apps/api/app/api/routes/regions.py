@@ -190,6 +190,12 @@ async def region_detail(
             last_runs[s.id] = {
                 "status": j.status, "errore": j.error_message, "found": j.records_found, "at": j.started_at,
             }
+    last_scan = (
+        await session.execute(
+            select(JobRun).where(JobRun.job_name == "collect_watchlist_albo")
+            .order_by(JobRun.started_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
     records = []
     for rec in await _recent_records(session, region):
         cat = _record_category(rec)
@@ -208,6 +214,10 @@ async def region_detail(
         "enabled": rs.enabled if rs else False,
         "recipients": rs.recipients if rs else None,
         "last_digest_at": rs.last_digest_at if rs else None,
+        "ultimo_scan": None if last_scan is None else {
+            "status": last_scan.status, "errore": last_scan.error_message,
+            "at": last_scan.started_at, "trovati": last_scan.records_found,
+        },
         "comuni": comuni,
         "siti_regionali": [
             {"id": str(s.id), "nome": s.name, "url": s.base_url, "ruolo": s.ruolo,

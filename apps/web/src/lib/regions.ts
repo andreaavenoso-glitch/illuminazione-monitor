@@ -76,6 +76,7 @@ export const SERVIZIO_LABEL: Record<string, string> = {
 };
 
 export interface RegionDetail {
+  ultimo_scan: { status: string; errore: string | null; at: string; trovati: number } | null;
   region: string;
   enabled: boolean;
   recipients: string | null;

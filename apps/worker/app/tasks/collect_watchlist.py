@@ -44,6 +44,7 @@ from decimal import Decimal
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import FetchResult, adaptive_fetch, adaptive_fetch_result
 from app.collectors.albo_pretorio_llm import (
+    ClaudeUnavailable,
     build_raw_record_kwargs,
     extract_albo_records,
     extract_bando_detail,
@@ -199,6 +200,10 @@ async def _process_page(
         session.add(RawRecord(**kwargs))
         job.records_valid += 1
 
+    if not status["ok"]:
+        stats["claude_errors"] += 1
+        if status.get("fatal"):
+            raise ClaudeUnavailable(status.get("error", "errore sconosciuto"))
     if status["ok"]:
         # Only after a successful analysis: a failed call must be retried.
         hashes[target_url] = gated.digest
@@ -440,6 +445,7 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
 
         settings = get_worker_settings()
         site_lock = asyncio.Lock()
+        claude_down = asyncio.Event()
         item_ids = [item.id for item in items]
 
         async def scan_one(item_id) -> None:
@@ -448,6 +454,9 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
             # by the Celery time limit or a restart loses at most what is in
             # flight. The shared JobRun is only touched by plain attribute
             # updates, which is safe on one event loop.
+            if claude_down.is_set():
+                stats["items_skipped_claude_down"] += 1
+                return
             async with SessionLocal() as item_session:
                 item = await item_session.get(WatchlistItem, item_id)
                 if item is None:
@@ -455,6 +464,16 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
                 try:
                     await _scan_item(item_session, item, job, stats, site_lock)
                     totals["items_scanned"] += 1
+                except ClaudeUnavailable as exc:
+                    # Every other comune would fail the same way: stop the run
+                    # and say so, instead of crawling for an hour to report "0".
+                    if not claude_down.is_set():
+                        claude_down.set()
+                        job.error_message = f"Claude non disponibile: {exc}"
+                        totals["claude_unavailable"] = 1
+                        log.error("collect_watchlist.claude_unavailable %s", exc)
+                    totals["errors"] += 1
+                    await item_session.rollback()
                 except Exception as exc:  # noqa: BLE001
                     totals["errors"] += 1
                     job.error_message = f"{type(exc).__name__}: {exc}"

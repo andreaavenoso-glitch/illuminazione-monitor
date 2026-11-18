@@ -636,3 +636,61 @@ class TestServicesCatalog:
             raw_title="Fornitura di cancelleria", raw_body="uffici", raw_url="https://x/2",
             raw_date=None, extracted={}, source_priority_rank=2,
         )) is None
+
+
+@pytest.mark.asyncio
+class TestClaudeUnavailable:
+    async def test_a_fatal_api_error_stops_the_comune_instead_of_returning_zero(self, monkeypatch) -> None:
+        from collections import Counter
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from app.collectors.albo_pretorio_llm import ClaudeUnavailable
+        from app.tasks import collect_watchlist as cw
+
+        async def failing_extract(html, *, url, settings, label, status=None):
+            status.update(ok=False, fatal=True, error="You have reached your specified API usage limits")
+            return []
+
+        monkeypatch.setattr(cw, "extract_albo_records", failing_extract)
+        item = SimpleNamespace(content_hashes=None, source_id=None, entity_id=None)
+        stats = Counter()
+        with pytest.raises(ClaudeUnavailable, match="usage limits"):
+            await cw._process_page(
+                SimpleNamespace(add=lambda *_: None), item,
+                SimpleNamespace(records_found=0, records_valid=0, duplicates_removed=0),
+                target_url=BASE, target_html=DESIGN_ITALIA_LIST, label="t",
+                settings=SimpleNamespace(smart_collector_max_html_chars=80_000),
+                now=datetime.now(tz=UTC), seen=set(), stats=stats,
+            )
+        assert stats["claude_errors"] == 1 and not item.content_hashes  # not remembered: retried later
+
+    async def test_a_transient_error_is_counted_but_does_not_stop_the_run(self, monkeypatch) -> None:
+        from collections import Counter
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from app.tasks import collect_watchlist as cw
+
+        async def flaky_extract(html, *, url, settings, label, status=None):
+            status.update(ok=False, fatal=False, error="overloaded")
+            return []
+
+        monkeypatch.setattr(cw, "extract_albo_records", flaky_extract)
+        stats = Counter()
+        await cw._process_page(
+            SimpleNamespace(add=lambda *_: None), SimpleNamespace(content_hashes=None, source_id=None, entity_id=None),
+            SimpleNamespace(records_found=0, records_valid=0, duplicates_removed=0),
+            target_url=BASE, target_html=DESIGN_ITALIA_LIST, label="t",
+            settings=SimpleNamespace(smart_collector_max_html_chars=80_000),
+            now=datetime.now(tz=UTC), seen=set(), stats=stats,
+        )
+        assert stats["claude_errors"] == 1
+
+    async def test_which_api_errors_are_fatal(self) -> None:
+        from app.collectors.albo_pretorio_llm import is_fatal_api_error
+
+        assert is_fatal_api_error(Exception("You have reached your specified API usage limits."))
+        assert is_fatal_api_error(Exception("Your credit balance is too low"))
+        assert not is_fatal_api_error(Exception("Overloaded"))
+        assert not is_fatal_api_error(Exception("Error code: 500 internal server error"))

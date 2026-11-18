@@ -135,6 +135,11 @@ export default function RegionPage() {
             </div>
           )}
         </div>
+        {data.ultimo_scan?.errore && (
+          <p className="rounded border border-red-300 bg-red-50 p-2 text-xs text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100">
+            Ultima raccolta ({fmt(data.ultimo_scan.at)}) non riuscita: {data.ultimo_scan.errore.slice(0, 300)}
+          </p>
+        )}
         {message && <p className="rounded bg-sky-50 p-2 text-xs text-sky-900 dark:bg-sky-950 dark:text-sky-100">{message}</p>}
         <div className="text-xs text-neutral-600 dark:text-neutral-400">
           Referenti email:{" "}

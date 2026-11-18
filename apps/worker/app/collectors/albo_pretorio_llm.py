@@ -234,6 +234,22 @@ ALBO_RECORDS_SCHEMA: dict[str, Any] = {
 }
 
 
+class ClaudeUnavailable(RuntimeError):
+    """The API refuses every call (spending limit reached, no credit, bad or
+    revoked key): going on only wastes time, since each page would fail the
+    same way. Raised so the scan stops instead of reporting "0 records"."""
+
+
+_FATAL_HINTS = ("usage limit", "credit balance", "billing", "insufficient", "spend limit", "quota")
+
+
+def is_fatal_api_error(exc: BaseException) -> bool:
+    """Errors that no retry on another page can fix."""
+    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return True
+    return any(h in str(exc).lower() for h in _FATAL_HINTS)
+
+
 def albo_system_prompt() -> str:
     """The extraction prompt with the currently active services listed."""
     return ALBO_SYSTEM_PROMPT.replace("{{SERVIZI}}", prompt_block())
@@ -245,10 +261,12 @@ async def extract_albo_records(
     url: str,
     settings: WorkerSettings,
     label: str,
-    status: dict[str, bool] | None = None,
+    status: dict | None = None,
 ) -> list[dict[str, Any]]:
     """``status["ok"]`` is set False when the call failed (API error, bad
-    JSON), so a caller can tell "nothing relevant" from "could not analyse"."""
+    JSON), so a caller can tell "nothing relevant" from "could not analyse";
+    then ``status["error"]`` has the message and ``status["fatal"]`` says whether
+    every other call will fail too (see ClaudeUnavailable)."""
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     user_msg = (
         f"Fonte: {label}\n"
@@ -274,6 +292,8 @@ async def extract_albo_records(
         log.warning("albo_pretorio.claude_error", label=label, error=str(exc))
         if status is not None:
             status["ok"] = False
+            status["error"] = str(exc)
+            status["fatal"] = is_fatal_api_error(exc)
         return []
 
     log.info(

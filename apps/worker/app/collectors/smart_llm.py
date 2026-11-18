@@ -21,6 +21,7 @@ from uuid import UUID
 import anthropic
 import structlog
 from app.collectors.adaptive_fetch import adaptive_fetch_result
+from app.collectors.albo_pretorio_llm import is_fatal_api_error
 from app.collectors.base import BaseCollector, CollectorError, CollectorResult, RawRecordDraft
 from app.config import get_worker_settings
 from shared_models import RawRecord
@@ -229,6 +230,9 @@ class SmartLLMCollector(BaseCollector):
                 platform=self.platform_type,
                 error=str(exc),
             )
+            if is_fatal_api_error(exc):
+                # Not "0 records found": the run failed, and the job says why.
+                raise CollectorError(f"Claude non disponibile: {exc}") from exc
             return []
 
         log.info(
