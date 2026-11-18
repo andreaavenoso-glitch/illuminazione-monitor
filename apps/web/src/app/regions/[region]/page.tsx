@@ -24,6 +24,7 @@ const ERROR_LABELS: Record<string, string> = {
   timeout: "nessuna risposta (timeout)",
   empty: "pagina vuota",
   connect: "connessione rifiutata",
+  reset: "connessione interrotta dal server (probabile blocco)",
   redirect: "troppi reindirizzamenti",
   protocol: "risposta non valida dal server",
   error: "errore non classificato (vedi log)",

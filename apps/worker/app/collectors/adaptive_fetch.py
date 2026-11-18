@@ -80,6 +80,27 @@ def classify_fetch_error(exc: BaseException) -> str:
     return "error"
 
 
+_BROWSER_ERROR_KINDS = (
+    ("ERR_CONNECTION_RESET", "reset"),
+    ("ERR_NAME_NOT_RESOLVED", "dns"),
+    ("ERR_CERT", "ssl"),
+    ("ERR_SSL", "ssl"),
+    ("ERR_CONNECTION_REFUSED", "connect"),
+    ("ERR_TIMED_OUT", "timeout"),
+    ("Timeout", "timeout"),
+)
+
+
+def classify_browser_error(message: str) -> str | None:
+    """Kind for a Playwright navigation error, or None when unrecognised.
+    ``reset`` (the server cut the connection) is the usual signature of a
+    firewall/WAF refusing automated or datacenter clients."""
+    for needle, kind in _BROWSER_ERROR_KINDS:
+        if needle in message:
+            return kind
+    return None
+
+
 async def adaptive_fetch_result(
     url: str,
     *,
@@ -114,6 +135,7 @@ async def adaptive_fetch_result(
     cleaned = clean_html(html, max_html_chars) if html else ""
     log.info("adaptive_fetch.fetched", label=label, url=url, chars=len(cleaned))
 
+    browser_errors: list[str] = []
     if len(cleaned) < playwright_min_chars:
         rendered = await _fetch_with_playwright(
             url,
@@ -121,6 +143,7 @@ async def adaptive_fetch_result(
             wait_ms=playwright_wait_ms,
             max_html_chars=max_html_chars,
             label=label,
+            errors=browser_errors,
         )
         if rendered and len(rendered) > len(cleaned):
             cleaned = rendered
@@ -128,7 +151,12 @@ async def adaptive_fetch_result(
 
     if cleaned:
         return FetchResult(text=cleaned)
-    return FetchResult(text="", error=http_error or "empty")
+    # An HTTP status (404, 403...) is the most specific; otherwise the
+    # browser's own message says more than a bare "connect"/"error".
+    if http_error and http_error.startswith("http_"):
+        return FetchResult(text="", error=http_error)
+    browser_kind = classify_browser_error(browser_errors[0]) if browser_errors else None
+    return FetchResult(text="", error=browser_kind or http_error or "empty")
 
 
 async def adaptive_fetch(
@@ -159,6 +187,7 @@ async def _fetch_with_playwright(
     wait_ms: int,
     max_html_chars: int,
     label: str,
+    errors: list[str] | None = None,
 ) -> str | None:
     try:
         from playwright.async_api import async_playwright
@@ -178,6 +207,8 @@ async def _fetch_with_playwright(
                 await browser.close()
     except Exception as exc:  # noqa: BLE001 — browser automation has many failure modes
         log.warning("adaptive_fetch.playwright_failed", label=label, url=url, error=str(exc))
+        if errors is not None:
+            errors.append(str(exc))
         return None
 
     return clean_html(html, max_html_chars)

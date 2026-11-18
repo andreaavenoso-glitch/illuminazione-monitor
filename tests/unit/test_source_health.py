@@ -159,3 +159,43 @@ class TestSmartCollectorUnreadablePage:
         )
         with pytest.raises(CollectorError, match="timeout"):
             await collector.fetch()
+
+
+class TestBrowserErrorKinds:
+    def test_connection_reset_is_recognised(self) -> None:
+        assert af.classify_browser_error("Page.goto: net::ERR_CONNECTION_RESET at https://x/") == "reset"
+
+    def test_other_kinds_and_unknown(self) -> None:
+        assert af.classify_browser_error("net::ERR_NAME_NOT_RESOLVED") == "dns"
+        assert af.classify_browser_error("net::ERR_CERT_DATE_INVALID") == "ssl"
+        assert af.classify_browser_error("something odd") is None
+
+    @pytest.mark.asyncio
+    async def test_reset_reported_when_http_and_browser_both_fail(self, monkeypatch, httpx_mock) -> None:
+        httpx_mock.add_exception(httpx.ConnectError("All connection attempts failed"))
+
+        async def browser(url, **kw):
+            kw["errors"].append("Page.goto: net::ERR_CONNECTION_RESET at https://x/")
+            return None
+
+        monkeypatch.setattr(af, "_fetch_with_playwright", browser)
+        res = await af.adaptive_fetch_result(
+            "https://x/", timeout=5, max_html_chars=1000, playwright_min_chars=10,
+            playwright_wait_ms=1, label="t",
+        )
+        assert res.text == "" and res.error == "reset"
+
+    @pytest.mark.asyncio
+    async def test_http_status_beats_browser_message(self, monkeypatch, httpx_mock) -> None:
+        httpx_mock.add_response(url="https://x/", status_code=404)
+
+        async def browser(url, **kw):
+            kw["errors"].append("net::ERR_CONNECTION_RESET")
+            return None
+
+        monkeypatch.setattr(af, "_fetch_with_playwright", browser)
+        res = await af.adaptive_fetch_result(
+            "https://x/", timeout=5, max_html_chars=1000, playwright_min_chars=10,
+            playwright_wait_ms=1, label="t",
+        )
+        assert res.error == "http_404"
