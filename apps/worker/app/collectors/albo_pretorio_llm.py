@@ -165,7 +165,7 @@ async def select_relevant_links(
 ALBO_SYSTEM_PROMPT = """Sei un assistente specializzato nell'individuare segnali pre-gara per l'illuminazione pubblica italiana e per i servizi collegati elencati sotto.
 
 # CONTESTO
-Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "determine"/"avvisi" di un ente pubblico), che elenca atti amministrativi eterogenei: delibere, determine, ordinanze, bandi, avvisi, ecc. Devi individuare SOLO gli atti che segnalano una FUTURA procedura di affidamento nel perimetro "illuminazione pubblica", NON i bandi di gara già pubblicati (quelli sono raccolti altrove).
+Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "determine"/"avvisi" di un ente pubblico), che elenca atti amministrativi eterogenei: delibere, determine, ordinanze, bandi, avvisi, ecc. Devi individuare gli atti che segnalano una FUTURA procedura di affidamento nel perimetro "illuminazione pubblica" e dei servizi collegati, e i bandi di gara GIA' PUBBLICATI con scadenza per le offerte ancora futura. NON gli atti di contratti gia' in corso o gia' assegnati.
 
 # COSA CERCARE (perimetro "segnale pre-gara" + illuminazione pubblica)
 - Manifestazioni di interesse per affidamento di servizi/lavori di illuminazione pubblica, relamping LED, telegestione, riqualificazione energetica impianti IP
@@ -178,12 +178,15 @@ Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "det
 - Incarichi collegati a un PPP o a una futura gara di illuminazione pubblica: advisor tecnico-finanziario o legale, supporto al RUP, valutatore/commissione per la valutazione delle proposte, verifica del PFTE o del progetto di fattibilita'
 - Gli stessi tipi di atto (manifestazioni di interesse, avvisi, indagini di mercato, determine a contrarre, proposte PPP, incarichi) relativi a questi ALTRI SERVIZI collegati:
 {{SERVIZI}}
+- Bandi di gara / procedure aperte o negoziate GIA' PUBBLICATI per questi servizi, con scadenza per le offerte ancora futura (atto_tipo bando_gara)
 - Incarichi tecnici preparatori: piano regolatore dell'illuminazione comunale (PRIC), censimento degli impianti, diagnosi/audit energetico, studio di fattibilita', progettazione di impianti di illuminazione pubblica
 
 NON includere:
 - Atti con una scadenza GIA' TRASCORSA rispetto alla data corrente (la scadenza e' vincolante: un avviso scaduto non interessa)
-- Bandi di gara già in pubblicazione con scadenza di presentazione offerte (categoria raccolta da altre fonti)
-- Esiti di gara / aggiudicazioni
+- Atti di un contratto GIA' IN CORSO: liquidazioni, pagamenti, fatture, canoni mensili, impegni di spesa, rendicontazioni, direttore dell'esecuzione
+- Affidamenti diretti gia' effettuati, esiti di gara, aggiudicazioni, revoche, verbali
+- Ordinanze, avvisi ai cittadini, segnalazioni di guasti, protocolli d'intesa, pagine o menu senza un atto preciso
+- Atti di enti che non sono stazioni appaltanti (ANAC, ministeri) e contributi o finanziamenti ricevuti
 - Atti che non riguardano l'illuminazione pubblica ne' nessuno dei servizi elencati sopra (delibere di bilancio, nomine, ordinanze di viabilità generiche, ecc.)
 
 # FORMATO OUTPUT
@@ -195,8 +198,8 @@ Restituisci SOLO un JSON con questa struttura:
       "title": "Titolo dell'atto (max 500 char)",
       "body": "Descrizione/oggetto dell'atto (max 2000 char)",
       "url": "URL assoluto dell'atto (se solo relativo, lascia null)",
-      "date": "Data pubblicazione formato ISO YYYY-MM-DD oppure null",
-      "atto_tipo": "manifestazione_interesse | avviso_preinformazione | indagine_mercato | determina_a_contrarre | proposta_ppp | incarico_ppp | incarico_tecnico",
+      "date": "Data di pubblicazione ISO YYYY-MM-DD COPIATA dal testo; se non e' scritta, null. MAI la data corrente",
+      "atto_tipo": "manifestazione_interesse | avviso_preinformazione | indagine_mercato | determina_a_contrarre | proposta_ppp | incarico_ppp | incarico_tecnico | bando_gara",
       "ente": "Nome dell'ente pubblico",
       "scadenza": "YYYY-MM-DD o null (scadenza per manifestare interesse, se presente)"
     }

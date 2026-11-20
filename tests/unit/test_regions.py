@@ -164,7 +164,7 @@ class TestRealWorldWordings:
         [
             ("Avviso di manifestazione di interesse con richiesta di preventivo per la manutenzione dell'impianto", MANIFESTAZIONE),
             ("Indagine di mercato per individuare operatori da invitare alla procedura negoziata", MANIFESTAZIONE),
-            ("Avviso per la sollecitazione di proposte di finanza di progetto", PRE_GARA),
+            ("Avviso per la sollecitazione di proposte di finanza di progetto", MANIFESTAZIONE),  # an open call, not a preliminary act
             ("Dichiarazione di pubblico interesse della proposta di project financing", PRE_GARA),
             ("Incarico di advisor tecnico-finanziario per la valutazione della proposta", PRE_GARA),
             ("Affidamento del servizio di verifica del PFTE", PRE_GARA),

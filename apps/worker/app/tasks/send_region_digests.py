@@ -20,7 +20,7 @@ from app.db import SessionLocal
 from app.digest import DigestItem, build_digest, parse_recipients
 from shared_models import ProcurementRecord, RegionSettings
 from shared_models.categories import categorize
-from shared_models.relevance import MAX_AGE_DAYS, is_actionable
+from shared_models.relevance import MAX_AGE_DAYS, act_signature, collapse_duplicates, is_actionable
 from sqlalchemy import and_, or_, select
 
 log = logging.getLogger(__name__)
@@ -80,7 +80,13 @@ async def _run(region: str | None = None) -> dict:
                 )
             ).scalars().all()
             items: list[tuple[ProcurementRecord, DigestItem]] = []
-            for r in recs:
+            # Several copies of one act (albo, transparency page, news): one line.
+            deduped = collapse_duplicates(
+                list(recs),
+                lambda r: act_signature(r.ente, r.descrizione),
+                lambda r: (r.scadenza is not None, len(r.descrizione or "")),
+            )
+            for r in deduped:
                 if not is_actionable(r.scadenza, r.data_pubblicazione):
                     continue
                 cat = categorize(
@@ -88,6 +94,7 @@ async def _run(region: str | None = None) -> dict:
                     text=f"{r.descrizione or ''} {r.tipologia_gara_procedura or ''}",
                     flag_pre_gara=r.flag_pre_gara,
                     atto_tipo=r.atto_tipo,
+                    ente=r.ente,
                 )
                 if cat is None:
                     continue

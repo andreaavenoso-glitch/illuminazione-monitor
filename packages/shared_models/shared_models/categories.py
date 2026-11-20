@@ -29,6 +29,7 @@ ATTO_TIPO_CATEGORY = {
     "proposta_ppp": PRE_GARA,      # proposta di finanza di progetto / dichiarazione di pubblico interesse
     "incarico_ppp": PRE_GARA,      # advisor, valutatore, verifica PFTE for a PPP proposal
     "incarico_tecnico": PRE_GARA,  # PRIC, censimento impianti, diagnosi, progettazione
+    "bando_gara": GARA,            # a tender already published, with offers still open
 }
 
 # Wording taken from real acts found on the web (comuni's own albi, ANAC
@@ -96,26 +97,86 @@ def mentions_lighting(text: str | None) -> bool:
     return bool(text) and _has(text.lower(), LIGHTING_KEYWORDS)
 
 
+# --- What is NOT an opportunity ------------------------------------------------
+# Found by reading a real run (128 records from 78 Puglia comuni): about a third
+# were acts of a contract already running or already awarded, or not notices at all.
+_EXCLUDE = re.compile(
+    # paying or managing a contract in progress
+    r"liquidazion|pagamento (delle )?fattur|\bfattur[ae]\b|canone (del )?mese|canone mensile|extracanone|"
+    r"impegno di spesa|saldo (incarico|competenze)|rendicontazion|"
+    r"comunicazione contributo|contributi per investimenti|"
+    # already awarded / closed / cancelled
+    r"aggiudicazion|\besito\b|affidamento diretto|affidamento e impegno|presa d.atto|\brevoca\b|"
+    r"approvazione verbale|\bverbale\b|"
+    # running the contract, not winning it
+    r"direttore (dell.|dell\u2019)?esecuzione|"
+    # not a procurement notice
+    r"segnalazione guasti|\bordinanza\b|avviso ai cittadini|protocollo d.intesa|protocollo d\u2019intesa|"
+    r"assicurativ|polizza|batterie",
+    re.IGNORECASE,
+)
+# A body that is not a stazione appaltante: its decisions are commentary, not tenders.
+_EXCLUDED_ENTI = re.compile(r"anticorruzione|\banac\b", re.IGNORECASE)
+# A page or menu title, not an act.
+_GENERIC_TITLES = frozenset({
+    "finanza di progetto", "avviso", "avvisi", "bandi di gara", "bandi di gara e contratti", "delibere",
+    "determine", "determinazioni", "provvedimenti", "albo pretorio", "notizie", "comunicazioni",
+})
+
+# A published tender, as opposed to a call for interest or a preliminary act.
+_GARA_STRONG = re.compile(
+    r"bando di gara|procedura aperta|disciplinare di gara|avviso di gara|gara (europea|telematica|a procedura)",
+    re.IGNORECASE,
+)
+_GARA_WEAK = re.compile(r"procedura negoziata|\brdo\b|lettera d.invito|lettera di invito", re.IGNORECASE)
+# An open call for interest / proposals (art. 193 c.16 soliciting PPP proposals included).
+_MANIFESTAZIONE_WORDING = re.compile(
+    r"manifestazion\w* d.interesse|avviso (pubblico )?esplorativo|indagine (di mercato|esplorativa)|"
+    r"sollecitazione di (manifestazion|proposte)|selezione di proposte|consultazione preliminare",
+    re.IGNORECASE,
+)
+
+
+def is_noise(text: str | None, ente: str | None = None) -> bool:
+    """True for acts that are not opportunities (payments, awards, generic pages,
+    non-procuring bodies). Used on its own at ingestion; ``categorize`` applies it too."""
+    if ente and _EXCLUDED_ENTI.search(ente):
+        return True
+    low = " ".join((text or "").lower().split())
+    if low in _GENERIC_TITLES:
+        return True
+    return bool(_EXCLUDE.search(low))
+
+
 def categorize(
     *,
     stato_procedurale: str | None,
     text: str | None,
     flag_pre_gara: str | None = None,
     atto_tipo: str | None = None,
+    ente: str | None = None,
 ) -> str | None:
-    """pre_gara | manifestazione_interesse | gara, or None for esiti.
+    """pre_gara | manifestazione_interesse | gara, or None (not an opportunity).
 
-    Order: esito excluded; Claude's ``atto_tipo`` label when present; then the
-    wording of the text; PRE-GARA state/flag; otherwise a published tender.
+    Order: awards and esiti out; payments, running contracts and non-notices out;
+    then the *wording* of the title (a published tender is a gara, an open call is
+    a manifestazione) which beats Claude's ``atto_tipo`` label -- the label said
+    "avviso_preinformazione" for "avviso esplorativo per manifestazione di
+    interesse", and "proposta_ppp" for a "bando di gara"; then the label; then
+    pre-tender signals; otherwise a published tender.
     """
     stato = (stato_procedurale or "").upper()
-    if stato.startswith("ESITO"):
+    if stato.startswith("ESITO") or is_noise(text, ente):
         return None
+    low = (text or "").lower()
+    if _GARA_STRONG.search(low):
+        return GARA
+    if _MANIFESTAZIONE_WORDING.search(low) or _has(low, MANIFESTAZIONE_KEYWORDS):
+        return MANIFESTAZIONE
+    if _GARA_WEAK.search(low):
+        return GARA
     if atto_tipo and atto_tipo in ATTO_TIPO_CATEGORY:
         return ATTO_TIPO_CATEGORY[atto_tipo]
-    low = (text or "").lower()
-    if _has(low, MANIFESTAZIONE_KEYWORDS):
-        return MANIFESTAZIONE
     if stato == "PRE-GARA" or flag_pre_gara == "Yes" or _has(low, PRE_GARA_KEYWORDS):
         return PRE_GARA
     return GARA

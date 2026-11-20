@@ -23,7 +23,7 @@ from shared_models import (
 )
 from shared_models.categories import CATEGORIES, categorize
 from shared_models.regions import REGIONS, normalize_region
-from shared_models.relevance import is_actionable, today_utc
+from shared_models.relevance import act_signature, collapse_duplicates, is_actionable, today_utc
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,6 +78,18 @@ def _record_category(r: ProcurementRecord) -> str | None:
         text=f"{r.descrizione or ''} {r.tipologia_gara_procedura or ''}",
         flag_pre_gara=r.flag_pre_gara,
         atto_tipo=r.atto_tipo,
+        ente=r.ente,
+    )
+
+
+def _dedupe(records: list) -> list:
+    """One record per act: the same determina listed on the albo, the transparency
+    page and the news feed counts once. Prefers the copy with a deadline, then the
+    longest description."""
+    return collapse_duplicates(
+        records,
+        lambda r: act_signature(r.ente, r.descrizione),
+        lambda r: (r.scadenza is not None, len(r.descrizione or "")),
     )
 
 
@@ -91,7 +103,8 @@ async def _recent_records(session: AsyncSession, region: str | None = None):
         stmt = stmt.where(ProcurementRecord.regione == region)
     else:
         stmt = stmt.where(ProcurementRecord.regione.is_not(None))
-    return (await session.execute(stmt.order_by(ProcurementRecord.first_seen_at.desc()))).scalars().all()
+    rows = (await session.execute(stmt.order_by(ProcurementRecord.first_seen_at.desc()))).scalars().all()
+    return _dedupe(list(rows))
 
 
 @router.get("")

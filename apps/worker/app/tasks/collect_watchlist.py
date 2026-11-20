@@ -77,8 +77,9 @@ from shared_models import (
     Source,
     WatchlistItem,
 )
+from shared_models.categories import is_noise
 from shared_models.regions import normalize_region
-from shared_models.relevance import is_expired_record
+from shared_models.relevance import is_expired_record, mentions_date, today_utc
 from shared_models.services import configure as configure_services
 from shared_models.services import parse_enabled
 from sqlalchemy import or_, select, update
@@ -177,6 +178,14 @@ async def _process_page(
     job.records_found += len(records)
     stats["records_found"] += len(records)
 
+    # Claude is told never to use the current date, but it sometimes does when a
+    # page shows none: 39 of 128 records of a real run were "published today".
+    # A date equal to today is kept only if today's date is really in the text it read.
+    today = today_utc()
+    for rec in records:
+        if rec.get("date") == today.isoformat() and not mentions_date(gated.html, today):
+            rec["date"] = None
+
     for record in records:
         # The extraction prompt asks for absolute URLs only, but Claude
         # doesn't always comply -- resolve defensively against the page
@@ -187,6 +196,11 @@ async def _process_page(
         if detail_url:
             detail_url = safe_join(target_url, detail_url)
             record = {**record, "url": detail_url}
+        # Not an opportunity (a payment, an award, a generic page, a non-procuring body):
+        # dropped here, before any detail page is fetched.
+        if is_noise(f"{record.get('title') or ''} {record.get('body') or ''}", record.get("ente")):
+            stats["records_noise_dropped"] += 1
+            continue
         # A deadline already known and past: over, skip it without paying for the
         # detail page. (A deadline learnt only from the detail page is checked below.)
         if is_expired_record(record):
