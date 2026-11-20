@@ -98,3 +98,22 @@ class TestScanSummary:
         s = scan_summary(run, items, T0 + timedelta(seconds=60))
         assert s["claude"]["status"] == "down" and "usage limits" in s["claude"]["error"]
         assert (s["errors"], s["done"]) == (1, 2)
+
+
+class TestResume:
+    def _items(self):
+        now = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
+        mk = lambda n, ago: SimpleNamespace(n=n, last_scan_at=None if ago is None else now - timedelta(hours=ago))  # noqa: E731
+        return now, [mk("never", None), mk("1h", 1), mk("23h", 23), mk("25h", 25), mk("3d", 72)]
+
+    def test_resume_skips_what_was_read_recently(self) -> None:
+        from app.tasks.collect_watchlist import filter_stale
+
+        now, items = self._items()
+        assert [i.n for i in filter_stale(items, 24, now)] == ["never", "25h", "3d"]
+
+    def test_no_window_keeps_everything(self) -> None:
+        from app.tasks.collect_watchlist import filter_stale
+
+        now, items = self._items()
+        assert filter_stale(items, None, now) == items

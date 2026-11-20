@@ -98,6 +98,10 @@ come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione)
   giorni, per uso, per modello). Con `ANTHROPIC_BUDGET_USD` vedi anche quanto del limite mensile hai usato. È una
   **stima** che conta solo questa app: la spesa reale è quella della console Anthropic. Nel tab "Raccolta" il costo
   compare per raccolta e per comune.
+- **Riprendere una raccolta interrotta:** il pulsante "Riprendi" della pagina della regione salta i comuni già letti
+  nelle ultime 24 ore (quelli finiti hanno già i loro dati e le pagine già analizzate non si ripagano). Un Codespace si
+  ferma dopo un po' di inattività anche se una raccolta sta girando: per le raccolte lunghe alza il tempo di inattività
+  in GitHub → Settings → Codespaces.
 - I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:

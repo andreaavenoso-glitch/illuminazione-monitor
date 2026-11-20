@@ -321,12 +321,17 @@ async def update_site(
 async def collect_region(
     region: str,
     limit: int | None = Query(None, ge=1, le=500, description="Trial run: scan at most this many comuni"),
+    resume: bool = Query(False, description="Skip the comuni already read in the last 24 hours"),
     _: User = Depends(require_role("admin")),
 ) -> dict:
     from app.services.admin_service import dispatch_region_scan
 
     region = _canonical(region)
-    return {"status": "dispatched", "region": region, "limit": limit, **dispatch_region_scan(region, limit)}
+    hours = 24.0 if resume else None
+    return {
+        "status": "dispatched", "region": region, "limit": limit, "resume": resume,
+        **dispatch_region_scan(region, limit, hours),
+    }
 
 
 @router.post("/{region}/send-digest")

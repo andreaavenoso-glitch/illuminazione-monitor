@@ -405,6 +405,18 @@ async def run_limited(items: list, worker, limit: int) -> None:
     await asyncio.gather(*(guarded(i) for i in items))
 
 
+def filter_stale(items: list, hours: float | None, now: datetime | None = None) -> list:
+    """Comuni not read in the last ``hours`` hours (never read counts as stale).
+    ``None`` keeps everything. This is what "resume" uses after an interrupted run:
+    the comuni it had finished carry a recent ``last_scan_at`` and are skipped."""
+    if hours is None:
+        return items
+    from datetime import timedelta
+
+    limit = (now or datetime.now(tz=UTC)) - timedelta(hours=hours)
+    return [i for i in items if i.last_scan_at is None or i.last_scan_at < limit]
+
+
 def select_sample(items: list, limit: int | None, rng: random.Random | None = None) -> list:
     """At most ``limit`` items for a trial run: never-scanned ones first, then
     the rest, random within each group, so repeating a trial covers new
@@ -485,7 +497,9 @@ async def _set_run_claude(run_id, status: str, error: str | None, *, only_if_unu
         log.exception("collect_watchlist.progress_update_failed")
 
 
-async def _run_watchlist_scan(region: str | None = None, limit: int | None = None) -> dict[str, int]:
+async def _run_watchlist_scan(
+    region: str | None = None, limit: int | None = None, skip_scanned_hours: float | None = None
+) -> dict[str, int]:
     configure_services(parse_enabled(get_worker_settings().enabled_services))
     totals = {"items_scanned": 0, "records_found": 0, "records_valid": 0, "errors": 0}
     stats: Counter = Counter()
@@ -506,6 +520,7 @@ async def _run_watchlist_scan(region: str | None = None, limit: int | None = Non
             item for item, item_region, _ in rows
             if wanted is None or normalize_region(item_region) in wanted
         ]
+        items = filter_stale(items, skip_scanned_hours)
         items = select_sample(items, limit)
         log.info("collect_watchlist.scope region=%s items=%d limit=%s", region, len(items), limit)
 
@@ -621,8 +636,11 @@ async def _finish_run(run_id, error: str | None) -> None:
     soft_time_limit=4 * 3600,
     time_limit=4 * 3600 + 300,
 )
-def collect_watchlist_albo(region: str | None = None, limit: int | None = None) -> dict[str, int]:
+def collect_watchlist_albo(
+    region: str | None = None, limit: int | None = None, skip_scanned_hours: float | None = None
+) -> dict[str, int]:
     """Scan the watchlist; ``region`` limits it to one region (any, enabled or
     not), otherwise only the enabled regions are scanned. ``limit`` caps the
-    number of comuni (trial run)."""
-    return asyncio.run(_run_watchlist_scan(region, limit))
+    number of comuni (trial run); ``skip_scanned_hours`` skips the ones read more
+    recently than that (resume an interrupted run)."""
+    return asyncio.run(_run_watchlist_scan(region, limit, skip_scanned_hours))

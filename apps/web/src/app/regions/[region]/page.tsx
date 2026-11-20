@@ -66,14 +66,21 @@ export default function RegionPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["region", region] }),
   });
   const collect = useMutation({
-    mutationFn: (limit?: number) =>
-      api.post(`/regions/${encodeURIComponent(region)}/collect${limit ? `?limit=${limit}` : ""}`),
-    onSuccess: (_d, limit) => {
+    mutationFn: (opts?: { limit?: number; resume?: boolean }) => {
+      const q = new URLSearchParams();
+      if (opts?.limit) q.set("limit", String(opts.limit));
+      if (opts?.resume) q.set("resume", "true");
+      const qs = q.toString();
+      return api.post(`/regions/${encodeURIComponent(region)}/collect${qs ? `?${qs}` : ""}`);
+    },
+    onSuccess: (_d, opts) => {
       setTab("scan");
       setMessage(
-        limit
-          ? `Prova avviata su ${limit} comuni (prima quelli mai scansionati). Segui l'avanzamento qui sotto: parte dopo la lettura dei siti regionali.`
-          : "Raccolta avviata: siti regionali, poi comuni, poi normalizzazione e punteggio. Segui l'avanzamento qui sotto: parte dopo la lettura dei siti regionali.",
+        opts?.limit
+          ? `Prova avviata su ${opts.limit} comuni (prima quelli mai scansionati). Segui l'avanzamento qui sotto.`
+          : opts?.resume
+            ? "Ripresa avviata: salta i comuni già letti nelle ultime 24 ore, poi siti regionali, normalizzazione e punteggio. Segui l'avanzamento qui sotto."
+            : "Raccolta avviata: prima i comuni, poi siti regionali, normalizzazione e punteggio. Segui l'avanzamento qui sotto.",
       );
     },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
@@ -124,8 +131,14 @@ export default function RegionPage() {
               </button>
               <button type="button" disabled={collect.isPending}
                 className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                title="Salta i comuni già letti nelle ultime 24 ore: per riprendere una raccolta interrotta senza rifare e ripagare quelli già fatti"
+                onClick={() => collect.mutate({ resume: true })}>
+                Riprendi
+              </button>
+              <button type="button" disabled={collect.isPending}
+                className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
                 title="Scansiona solo 10 comuni: per verificare che tutto funzioni senza spendere un giro intero"
-                onClick={() => collect.mutate(10)}>
+                onClick={() => collect.mutate({ limit: 10 })}>
                 Prova con 10 comuni
               </button>
               <button type="button" disabled={digest.isPending}
