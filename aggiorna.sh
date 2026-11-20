@@ -24,8 +24,10 @@ case "${1:-aggiorna}" in
     fi
     echo "==> 2/5 Avvio i servizi fermi (se il Codespace era spento)..."
     docker compose up -d
-    echo "==> 3/5 Riavvio API, worker e sito per caricare il codice nuovo..."
-    docker compose restart api worker web
+    echo "==> 3/5 Ricreo API e worker (rileggono il file .env, ad esempio la chiave Claude) e riavvio il sito..."
+    # "restart" NON rilegge .env: una chiave appena aggiunta resterebbe ignorata.
+    docker compose up -d --force-recreate api worker
+    docker compose restart web
     echo "==> 4/5 Aspetto che l'API risponda (fino a 2 minuti)..."
     ok=0
     for _ in $(seq 1 40); do
