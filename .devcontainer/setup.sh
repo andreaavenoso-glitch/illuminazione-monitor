@@ -88,7 +88,11 @@ fi
 
 echo "==> API pronta. Carico la watchlist (73 comuni lombardi + enti nazionali)..."
 docker compose exec -T api python -m infra.scripts.seed_watchlist
-docker compose exec -T api python -m infra.scripts.seed_regions
+# Non fatale: se questo passo fallisse, set -e farebbe fallire tutto il
+# postCreateCommand e il Codespace ripartirebbe in "modalita' di recupero"
+# senza Docker. Si puo' rilanciare dopo con: bash aggiorna.sh
+docker compose exec -T api python -m infra.scripts.seed_regions \
+  || echo "ATTENZIONE: seed_regions non riuscito; rilancialo con: bash aggiorna.sh"
 
 echo "==> Creo l'utente amministratore..."
 docker compose exec -T api python -m infra.scripts.seed_admin
