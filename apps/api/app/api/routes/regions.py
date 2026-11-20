@@ -381,6 +381,15 @@ async def collect_region(
     }
 
 
+@router.post("/{region}/process")
+async def process_region(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    """Normalize and score what has been collected so far (no new reading)."""
+    from app.services.admin_service import dispatch_process
+
+    region = _canonical(region)
+    return {"status": "dispatched", "region": region, **dispatch_process()}
+
+
 @router.post("/{region}/send-digest")
 async def send_digest(region: str, _: User = Depends(require_role("admin"))) -> dict:
     from app.services.admin_service import dispatch_region_digest

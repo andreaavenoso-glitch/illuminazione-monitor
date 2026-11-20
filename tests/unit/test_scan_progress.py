@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
 from app.services.scan_view import scan_summary
 from app.tasks.collect_watchlist import item_progress, merge_stats
 
@@ -121,3 +122,55 @@ class TestResume:
 
         now, items = self._items()
         assert filter_stale(items, None, now) == items
+
+
+@pytest.mark.asyncio
+class TestCheckpointer:
+    async def test_runs_every_n_finished_comuni(self) -> None:
+        from app.tasks.collect_watchlist import Checkpointer
+
+        calls = []
+
+        async def action():
+            calls.append(1)
+
+        cp = Checkpointer(3, action)
+        for _ in range(8):
+            await cp.tick()
+        assert len(calls) == 2  # after the 3rd and the 6th
+
+    async def test_a_failing_action_never_fails_the_scan(self) -> None:
+        from app.tasks.collect_watchlist import Checkpointer
+
+        async def boom():
+            raise RuntimeError("db hiccup")
+
+        cp = Checkpointer(1, boom)
+        await cp.tick()
+        await cp.tick()  # still usable after a failure
+        assert cp.finished == 2
+
+    async def test_never_two_at_once(self) -> None:
+        import asyncio
+
+        from app.tasks.collect_watchlist import Checkpointer
+
+        running = peak = total = 0
+
+        async def action():
+            nonlocal running, peak, total
+            running += 1
+            peak = max(peak, running)
+            total += 1
+            await asyncio.sleep(0.02)
+            running -= 1
+
+        cp = Checkpointer(1, action)
+        await asyncio.gather(*(cp.tick() for _ in range(6)))
+        assert peak == 1 and 1 <= total <= 6  # overlapping ticks are skipped, not queued
+
+
+def test_process_steps_normalize_then_score() -> None:
+    from app.services.admin_service import process_steps
+
+    assert [n.rsplit(".", 1)[-1] for n, _ in process_steps()] == ["normalize_records", "score_and_dedupe"]

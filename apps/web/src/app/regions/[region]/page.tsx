@@ -86,6 +86,13 @@ export default function RegionPage() {
     },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
+  const processNow = useMutation({
+    mutationFn: () => api.post(`/regions/${encodeURIComponent(region)}/process`),
+    onSuccess: () => {
+      setMessage("Elaborazione avviata: i record già raccolti compaiono nei tab tra circa un minuto (la pagina si aggiorna da sola).");
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
   const digest = useMutation({
     mutationFn: () => api.post(`/regions/${encodeURIComponent(region)}/send-digest`),
     onSuccess: () =>
@@ -167,6 +174,12 @@ export default function RegionPage() {
                 className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
                 onClick={() => digest.mutate()}>
                 Invia email ora
+              </button>
+              <button type="button" disabled={processNow.isPending}
+                className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                title="Elabora i dati già raccolti (senza rileggere i siti): serve se una raccolta si è interrotta prima della fine"
+                onClick={() => processNow.mutate()}>
+                Elabora ora
               </button>
               <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
                 title="Scarica tutti i record della regione in un file CSV (anche quelli scaduti, segnati)"

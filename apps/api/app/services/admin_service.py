@@ -132,6 +132,23 @@ def dispatch_region_scan(
     return {"task_id": str(result.id)}
 
 
+def process_steps() -> list[tuple[str, dict]]:
+    """Normalize what has been collected, then score: the end of every run, on its
+    own. For records collected by a run that was cut short."""
+    return [
+        ("app.tasks.normalize_records.normalize_records", {}),
+        ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
+    ]
+
+
+def dispatch_process() -> dict[str, str]:
+    from celery import chain
+
+    app = _celery_app()
+    result = chain(*[app.signature(n, kwargs=k, immutable=True) for n, k in process_steps()]).apply_async()
+    return {"task_id": str(result.id)}
+
+
 def dispatch_region_digest(region: str) -> str:
     app = _celery_app()
     result = app.send_task(

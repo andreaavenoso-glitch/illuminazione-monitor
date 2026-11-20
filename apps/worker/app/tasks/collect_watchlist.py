@@ -457,6 +457,33 @@ async def _regions_to_scan(session: AsyncSession, region: str | None) -> set[str
 _MAX_STAT_KEYS = frozenset({"max_depth_reached"})
 
 
+class Checkpointer:
+    """Runs ``action`` every ``every`` finished comuni, never two at once and
+    never failing the scan. Used to normalize the records found so far while a
+    long scan is still going: before this, they appeared only at the very end, so
+    a run cut short (Codespace stopped, worker restart) showed none of them."""
+
+    def __init__(self, every: int, action) -> None:
+        self.every = max(1, every)
+        self.action = action
+        self.finished = 0
+        self.lock = asyncio.Lock()
+
+    async def tick(self) -> None:
+        self.finished += 1
+        if self.finished % self.every or self.lock.locked():
+            return
+        async with self.lock:
+            try:
+                await self.action()
+            except Exception:  # noqa: BLE001
+                log.exception("collect_watchlist.checkpoint_failed")
+
+
+# Records of the comuni read so far are normalized every this many comuni.
+CHECKPOINT_EVERY = 20
+
+
 def merge_stats(total: Counter, local: Counter) -> None:
     """Add one comune's counters to the run's: counts are summed, maxima kept."""
     for key, value in local.items():
@@ -553,6 +580,7 @@ async def _run_watchlist_scan(
 
         settings = get_worker_settings()
         site_lock = asyncio.Lock()
+        checkpoint = Checkpointer(CHECKPOINT_EVERY, _normalize_now)
         claude_down = asyncio.Event()
         item_ids = [item.id for item in items]
 
@@ -609,6 +637,7 @@ async def _run_watchlist_scan(
             )
             if progress["claude_calls"] and not progress["claude_errors"] and not claude_down.is_set():
                 await _set_run_claude(run.id, "ok", None, only_if_unused=True)
+            await checkpoint.tick()
 
         await run_limited(item_ids, scan_one, settings.scan_concurrency)
         await session.commit()
@@ -623,6 +652,13 @@ async def _run_watchlist_scan(
     # Pre-filter savings and platform mix, visible in the task result.
     totals.update(dict(stats))
     return totals
+
+
+async def _normalize_now() -> None:
+    from app.tasks.normalize_records import _run_normalize
+
+    result = await _run_normalize()
+    log.info("collect_watchlist.checkpoint_normalized %s", result)
 
 
 async def _finish_run(run_id, error: str | None) -> None:
