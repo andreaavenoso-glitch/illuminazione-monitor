@@ -33,8 +33,10 @@ case "${1:-aggiorna}" in
       sleep 3
     done
     if [ "$ok" = 1 ]; then
-      echo "==> 5/5 Carico regioni e siti regionali (non cancella nulla, serve se il database e' nuovo)..."
-      docker compose exec -T api python -m infra.scripts.seed_regions || echo "(seed_regions non riuscito: incolla l'errore)"
+      echo "==> 5/5 Carico comuni, regioni, siti e utente (non cancella nulla, serve se il database e' nuovo)..."
+      for seed in seed_watchlist seed_regions seed_admin; do
+        docker compose exec -T api python -m infra.scripts.$seed || echo "($seed non riuscito: incolla l'errore)"
+      done
       echo
       echo "Pronto. Apri: $(app_url)/regions"
     else

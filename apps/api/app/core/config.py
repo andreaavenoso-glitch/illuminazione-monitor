@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,13 @@ class Settings(BaseSettings):
 
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
+
+    @field_validator("anthropic_budget_usd", mode="before")
+    @classmethod
+    def _empty_budget_is_none(cls, v):
+        # .env.example ships ANTHROPIC_BUDGET_USD= (empty = no budget): an empty
+        # string must not be parsed as a number, or the API cannot even start.
+        return None if isinstance(v, str) and not v.strip() else v
 
     @property
     def database_url(self) -> str:
