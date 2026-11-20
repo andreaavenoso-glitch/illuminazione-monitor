@@ -17,22 +17,24 @@ app_url() {
 
 case "${1:-aggiorna}" in
   aggiorna)
-    echo "==> 1/4 Scarico gli aggiornamenti..."
+    echo "==> 1/5 Scarico gli aggiornamenti..."
     if ! git pull; then
       echo "git pull non e' riuscito (modifiche locali?). Copia qui sopra l'errore e mandamelo."
       exit 1
     fi
-    echo "==> 2/4 Avvio i servizi fermi (se il Codespace era spento)..."
+    echo "==> 2/5 Avvio i servizi fermi (se il Codespace era spento)..."
     docker compose up -d
-    echo "==> 3/4 Riavvio API, worker e sito per caricare il codice nuovo..."
+    echo "==> 3/5 Riavvio API, worker e sito per caricare il codice nuovo..."
     docker compose restart api worker web
-    echo "==> 4/4 Aspetto che l'API risponda (fino a 2 minuti)..."
+    echo "==> 4/5 Aspetto che l'API risponda (fino a 2 minuti)..."
     ok=0
     for _ in $(seq 1 40); do
       if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then ok=1; break; fi
       sleep 3
     done
     if [ "$ok" = 1 ]; then
+      echo "==> 5/5 Carico regioni e siti regionali (non cancella nulla, serve se il database e' nuovo)..."
+      docker compose exec -T api python -m infra.scripts.seed_regions || echo "(seed_regions non riuscito: incolla l'errore)"
       echo
       echo "Pronto. Apri: $(app_url)/regions"
     else
