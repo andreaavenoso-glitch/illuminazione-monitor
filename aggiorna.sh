@@ -4,6 +4,7 @@
 #   bash aggiorna.sh           scarica gli aggiornamenti e riavvia tutto
 #   bash aggiorna.sh claude    prova se Claude risponde (costa pochi centesimi)
 #   bash aggiorna.sh stato     stato dei servizi e ultima raccolta
+#   bash aggiorna.sh ko [--prova] [--applica]   diagnosi e recupero siti non raggiungibili
 set -u
 cd "$(dirname "$0")"
 
@@ -50,6 +51,10 @@ case "${1:-aggiorna}" in
   claude)
     docker compose exec -T worker python -m infra.scripts.check_extraction
     ;;
+  ko)
+    shift
+    docker compose exec -T worker python -m infra.scripts.siti_ko "$@"
+    ;;
   stato)
     docker compose ps
     echo
@@ -62,7 +67,7 @@ case "${1:-aggiorna}" in
     echo "App: $(app_url)/regions"
     ;;
   *)
-    echo "Uso: bash aggiorna.sh [aggiorna|claude|stato]"
+    echo "Uso: bash aggiorna.sh [aggiorna|claude|stato|ko]"
     exit 2
     ;;
 esac
