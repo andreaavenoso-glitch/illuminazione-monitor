@@ -10,6 +10,7 @@ const BAR: Record<ScanItemView["status"], string> = {
   running: "bg-sky-500 animate-pulse",
   error: "bg-red-500",
   skipped: "bg-neutral-400",
+  interrupted: "bg-amber-500",
   queued: "",
 };
 
@@ -62,7 +63,13 @@ export function ScanView({ region }: { region: string }) {
   }
 
   const start = Date.parse(data.started_at);
-  const end = data.ended_at ? Date.parse(data.ended_at) : Date.now();
+  // A finished run ends at its end time, an interrupted one at its last sign of
+  // life (not "now", which would stretch the timeline to hours later).
+  const end = data.ended_at
+    ? Date.parse(data.ended_at)
+    : data.status === "interrupted"
+      ? start + data.elapsed_s * 1000
+      : Date.now();
   const span = Math.max(1000, end - start);
   const pct = data.total ? Math.round((data.done / data.total) * 100) : 0;
   const claude = data.claude;
@@ -86,7 +93,8 @@ export function ScanView({ region }: { region: string }) {
           <div className={`h-full ${data.status === "interrupted" || data.status === "failed" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
         </div>
         <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-          {data.done}/{data.total} comuni ({pct}%) · {data.running} in corso · {data.queued} in coda · {data.errors} con errore
+          {data.done}/{data.total} comuni ({pct}%) · {data.running} in corso
+          {data.interrupted > 0 && <> · {data.interrupted} interrotti a metà</>} · {data.queued} in coda · {data.errors} con errore
         </p>
         {data.error && <p className="mt-2 rounded bg-red-50 p-2 text-xs text-red-900 dark:bg-red-950 dark:text-red-100">{data.error.slice(0, 300)}</p>}
       </section>
@@ -130,12 +138,13 @@ export function ScanView({ region }: { region: string }) {
             <span><span className="mr-1 inline-block h-2 w-3 rounded bg-emerald-500" />finito</span>
             <span><span className="mr-1 inline-block h-2 w-3 rounded bg-sky-500" />in corso</span>
             <span><span className="mr-1 inline-block h-2 w-3 rounded bg-red-500" />errore</span>
+            <span><span className="mr-1 inline-block h-2 w-3 rounded bg-amber-500" />interrotto</span>
           </span>
         </div>
         <ul className="space-y-0.5">
           {data.items.map((i) => {
             const s = i.started_at ? Date.parse(i.started_at) : null;
-            const e = i.ended_at ? Date.parse(i.ended_at) : Date.now();
+            const e = i.ended_at ? Date.parse(i.ended_at) : end;
             const left = s == null ? 0 : Math.min(99.4, Math.max(0, ((s - start) / span) * 100));
             const width = s == null ? 0 : Math.min(100 - left, Math.max(0.6, ((e - s) / span) * 100));
             const tip =

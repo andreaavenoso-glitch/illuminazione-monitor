@@ -89,6 +89,10 @@ class TestScanSummary:
         s = scan_summary(run, [_item("A", "running", start=0)], T0 + timedelta(minutes=30))
         assert s["status"] == "interrupted" and s["eta_s"] is None
         assert s["elapsed_s"] == 30  # measured up to its last sign of life, not up to now
+        # the comune caught mid-way is "interrupted", not still "running", and its
+        # duration stops at the run's last sign of life
+        assert (s["running"], s["interrupted"]) == (0, 1)
+        assert s["items"][0]["status"] == "interrupted" and s["items"][0]["duration_s"] == 30.0
 
     def test_claude_down_is_reported_with_its_reason(self) -> None:
         run = _run(status="failed", ended_at=T0 + timedelta(seconds=50), claude_status="down",

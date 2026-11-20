@@ -112,7 +112,7 @@ export const STATO_CLASS = {
 
 export interface ScanItemView {
   ente: string;
-  status: "queued" | "running" | "done" | "error" | "skipped";
+  status: "queued" | "running" | "done" | "error" | "skipped" | "interrupted";
   started_at: string | null;
   ended_at: string | null;
   duration_s: number | null;
@@ -138,6 +138,7 @@ export interface ScanRunView {
   total: number;
   done: number;
   running: number;
+  interrupted: number;
   errors: number;
   queued: number;
   limit: number | null;

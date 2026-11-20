@@ -23,7 +23,11 @@ def scan_summary(
         status = "interrupted"
 
     done = sum(1 for i in items if i.status in FINISHED)
-    running = sum(1 for i in items if i.status == "running")
+    # In an interrupted run nothing is still running: a comune caught mid-way
+    # was cut off, and is shown as such (it is read again on resume).
+    cut_off = status == "interrupted"
+    running = 0 if cut_off else sum(1 for i in items if i.status == "running")
+    interrupted = sum(1 for i in items if i.status == "running") if cut_off else 0
     errors = sum(1 for i in items if i.status == "error")
     total = len(items)
     end = run.ended_at or (run.heartbeat_at if status == "interrupted" and run.heartbeat_at else now)
@@ -40,7 +44,9 @@ def scan_summary(
     def seconds(i: Any) -> float | None:
         if i.started_at is None:
             return None
-        return round(((i.ended_at or now) - i.started_at).total_seconds(), 1)
+        # An open comune lasts until "now" in a live run, or until the run's last
+        # sign of life in an interrupted one (not until a moment hours later).
+        return round(((i.ended_at or end) - i.started_at).total_seconds(), 1)
 
     return {
         "id": str(run.id),
@@ -54,7 +60,8 @@ def scan_summary(
         "done": done,
         "running": running,
         "errors": errors,
-        "queued": total - done - running,
+        "interrupted": interrupted,
+        "queued": total - done - running - interrupted,
         "limit": run.sample_limit,
         "error": run.error,
         "cost_usd": round(run_cost, 4) if run_cost is not None else None,
@@ -67,7 +74,7 @@ def scan_summary(
         "items": [
             {
                 "ente": i.ente,
-                "status": i.status,
+                "status": "interrupted" if cut_off and i.status == "running" else i.status,
                 "started_at": i.started_at,
                 "ended_at": i.ended_at,
                 "duration_s": seconds(i),
