@@ -99,24 +99,28 @@ def dispatch_backfill(days: int) -> str:
     return str(result.id)
 
 
+def region_scan_steps(region: str, limit: int | None = None) -> list[tuple[str, dict]]:
+    """The steps of a region run, in order: (task name, kwargs). The comuni come
+    first, because they are what the progress view shows and what the user waits
+    for; the regional sites (some of which take minutes to time out) follow, and
+    only then normalize and score, so nothing is normalized before everything that
+    feeds it has finished."""
+    return [
+        ("app.tasks.collect_watchlist.collect_watchlist_albo", {"region": region, "limit": limit}),
+        ("app.tasks.collect_sources.collect_regional_sites", {"region": region}),
+        ("app.tasks.normalize_records.normalize_records", {}),
+        ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
+    ]
+
+
 def dispatch_region_scan(region: str, limit: int | None = None) -> dict[str, str]:
-    """One region end to end, strictly in order: regional sites, then its
-    comuni, then normalize and score -- so nothing is normalized before the
-    scan that feeds it has finished. ``task_id`` is the last step: when it is
-    SUCCESS the whole run is done."""
+    """One region end to end, strictly in order (see ``region_scan_steps``).
+    ``task_id`` is the last step: when it is SUCCESS the whole run is done."""
     from celery import chain
 
     app = _celery_app()
-    sig = app.signature
     result = chain(
-        sig("app.tasks.collect_sources.collect_regional_sites", kwargs={"region": region}, immutable=True),
-        sig(
-            "app.tasks.collect_watchlist.collect_watchlist_albo",
-            kwargs={"region": region, "limit": limit},
-            immutable=True,
-        ),
-        sig("app.tasks.normalize_records.normalize_records", immutable=True),
-        sig("app.tasks.score_and_dedupe.score_and_dedupe", immutable=True),
+        *[app.signature(name, kwargs=kwargs, immutable=True) for name, kwargs in region_scan_steps(region, limit)]
     ).apply_async()
     return {"task_id": str(result.id)}
 

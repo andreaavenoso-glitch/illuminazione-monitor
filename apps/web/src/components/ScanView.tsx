@@ -46,7 +46,9 @@ export function ScanView({ region }: { region: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["scan", region],
     queryFn: () => api.get<ScanRunView | null>(`/regions/${encodeURIComponent(region)}/scan`),
-    refetchInterval: (q) => (q.state.data?.status === "running" ? 3000 : 20000),
+    // Fast while a run is going, and also while none exists yet: a run just started
+    // shows up within seconds instead of after the slow poll.
+    refetchInterval: (q) => (!q.state.data || q.state.data.status === "running" ? 3000 : 20000),
   });
 
   if (isLoading) return <p className="text-sm text-neutral-500">Caricamento…</p>;
@@ -54,6 +56,7 @@ export function ScanView({ region }: { region: string }) {
     return (
       <p className="text-sm text-neutral-500">
         Nessuna raccolta registrata per questa regione. Premi &quot;Prova con 10 comuni&quot; o &quot;Raccogli ora&quot;.
+        Se l&apos;hai appena premuto, aspetta qualche secondo: questa pagina si aggiorna da sola appena il worker comincia.
       </p>
     );
   }
