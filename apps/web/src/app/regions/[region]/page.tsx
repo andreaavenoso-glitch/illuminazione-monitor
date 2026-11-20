@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { ScanView } from "@/components/ScanView";
-import { getUser, hasRole } from "@/lib/auth";
+import { getToken, getUser, hasRole } from "@/lib/auth";
 import {
   CATEGORIA_LABEL,
   STATO_CLASS,
@@ -44,10 +44,11 @@ export default function RegionPage() {
   const [tab, setTab] = useState<Tab>("pre_gara");
   const [recipients, setRecipients] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [showExpired, setShowExpired] = useState(false);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["region", region],
-    queryFn: () => api.get<RegionDetail>(`/regions/${encodeURIComponent(region)}`),
+    queryKey: ["region", region, showExpired],
+    queryFn: () => api.get<RegionDetail>(`/regions/${encodeURIComponent(region)}${showExpired ? "?scadute=true" : ""}`),
     refetchInterval: 20000,
   });
 
@@ -93,6 +94,27 @@ export default function RegionPage() {
       ),
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
+
+  const downloadCsv = async () => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const token = getToken();
+    const res = await fetch(`${base}/regions/${encodeURIComponent(region)}/records.csv`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      setMessage(`Esportazione non riuscita (${res.status})`);
+      return;
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `record_${region}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const daysLeft = (d: string | null): number | null =>
+    d ? Math.ceil((Date.parse(d) - Date.now()) / 86_400_000) : null;
 
   if (isLoading) return <p className="text-sm text-neutral-500">Caricamento…</p>;
   if (error || !data) return <p className="text-sm text-red-600">Regione non trovata.</p>;
@@ -146,6 +168,11 @@ export default function RegionPage() {
                 onClick={() => digest.mutate()}>
                 Invia email ora
               </button>
+              <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                title="Scarica tutti i record della regione in un file CSV (anche quelli scaduti, segnati)"
+                onClick={downloadCsv}>
+                Scarica CSV
+              </button>
             </div>
           )}
         </div>
@@ -193,6 +220,18 @@ export default function RegionPage() {
         <ScanView region={region} />
       ) : tab !== "siti" ? (
         <ul className="space-y-3">
+          {data.scadute_nascoste > 0 && (
+            <li className="text-xs text-neutral-500">
+              {data.scadute_nascoste} avvisi con scadenza passata (o molto vecchi) nascosti.{" "}
+              <button type="button" className="underline" onClick={() => setShowExpired(true)}>mostra</button>
+            </li>
+          )}
+          {showExpired && (
+            <li className="text-xs text-neutral-500">
+              Stai vedendo anche gli avvisi scaduti.{" "}
+              <button type="button" className="underline" onClick={() => setShowExpired(false)}>nascondili</button>
+            </li>
+          )}
           {byCat(tab).length === 0 && (
             <li className="text-sm text-neutral-500">
               Nessun elemento negli ultimi 60 giorni.
@@ -204,7 +243,16 @@ export default function RegionPage() {
                 <b>{r.ente}</b>
                 <span className="text-xs text-neutral-500">
                   visto il {fmt(r.first_seen_at)}
-                  {r.scadenza && <> · scadenza {fmt(r.scadenza)}</>}
+                  {r.scadenza && (
+                    <>
+                      {" "}· {r.scaduto ? <span className="text-red-700">scaduto il {fmt(r.scadenza).split(",")[0]}</span> : (
+                        <span className="font-medium text-amber-700 dark:text-amber-300">
+                          scade il {fmt(r.scadenza).split(",")[0]} (tra {daysLeft(r.scadenza)} giorni)
+                        </span>
+                      )}
+                    </>
+                  )}
+                  {r.scaduto && !r.scadenza && <span className="text-red-700"> · molto vecchio</span>}
                   {r.notificato ? " · email inviata" : " · email in attesa"}
                 </span>
               </div>

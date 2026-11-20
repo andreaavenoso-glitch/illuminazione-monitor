@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import smtplib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 
 from app.celery_app import celery_app
@@ -20,7 +20,8 @@ from app.db import SessionLocal
 from app.digest import DigestItem, build_digest, parse_recipients
 from shared_models import ProcurementRecord, RegionSettings
 from shared_models.categories import categorize
-from sqlalchemy import select
+from shared_models.relevance import MAX_AGE_DAYS, is_actionable
+from sqlalchemy import and_, or_, select
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ async def _run(region: str | None = None) -> dict:
             if not recipients:
                 out["regions"][rs.region] = "no_recipients"
                 continue
+            now_utc = datetime.now(tz=UTC)
             recs = (
                 await session.execute(
                     select(ProcurementRecord)
@@ -61,6 +63,17 @@ async def _run(region: str | None = None) -> dict:
                         ProcurementRecord.regione == rs.region,
                         ProcurementRecord.notified_at.is_(None),
                         ProcurementRecord.master_record_id.is_(None),
+                        # An expired deadline is noise; without a deadline, only recent notices.
+                        or_(
+                            ProcurementRecord.scadenza >= now_utc,
+                            and_(
+                                ProcurementRecord.scadenza.is_(None),
+                                or_(
+                                    ProcurementRecord.data_pubblicazione.is_(None),
+                                    ProcurementRecord.data_pubblicazione >= now_utc - timedelta(days=MAX_AGE_DAYS),
+                                ),
+                            ),
+                        ),
                     )
                     .order_by(ProcurementRecord.first_seen_at.desc())
                     .limit(MAX_ITEMS_PER_EMAIL)
@@ -68,6 +81,8 @@ async def _run(region: str | None = None) -> dict:
             ).scalars().all()
             items: list[tuple[ProcurementRecord, DigestItem]] = []
             for r in recs:
+                if not is_actionable(r.scadenza, r.data_pubblicazione):
+                    continue
                 cat = categorize(
                     stato_procedurale=r.stato_procedurale,
                     text=f"{r.descrizione or ''} {r.tipologia_gara_procedura or ''}",

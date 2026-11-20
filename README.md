@@ -102,6 +102,10 @@ come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione)
   nelle ultime 24 ore (quelli finiti hanno già i loro dati e le pagine già analizzate non si ripagano). Un Codespace si
   ferma dopo un po' di inattività anche se una raccolta sta girando: per le raccolte lunghe alza il tempo di inattività
   in GitHub → Settings → Codespaces.
+- **La scadenza e' vincolante:** un avviso con scadenza passata e' rumore. Non viene salvato in raccolta (e si salta
+  anche la lettura della pagina di dettaglio), non compare nelle liste e nelle email; senza scadenza restano solo gli
+  avvisi pubblicati negli ultimi 180 giorni. Nella pagina della regione i nascosti si possono mostrare, e "Scarica CSV"
+  esporta tutti i record (anche quelli scaduti, segnati) per analizzarli.
 - I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:

@@ -4,8 +4,9 @@ from uuid import UUID
 
 from app.auth import current_user, require_role
 from app.core.database import get_session
+from app.services.records_export import records_csv
 from app.services.scan_view import scan_summary
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from shared_models import (
     ApiUsage,
@@ -22,6 +23,7 @@ from shared_models import (
 )
 from shared_models.categories import CATEGORIES, categorize
 from shared_models.regions import REGIONS, normalize_region
+from shared_models.relevance import is_actionable, today_utc
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -126,10 +128,11 @@ async def list_regions(
         if r:
             per[r]["comuni"] += 1
             per[r][_health(item)] += 1
+    today = today_utc()
     for rec in await _recent_records(session):
         r = normalize_region(rec.regione)
         cat = _record_category(rec)
-        if r and cat:
+        if r and cat and is_actionable(rec.scadenza, rec.data_pubblicazione, today):
             per[r][cat] += 1
             if rec.notified_at is None:
                 per[r]["da_notificare"] += 1
@@ -139,7 +142,10 @@ async def list_regions(
 
 @router.get("/{region}")
 async def region_detail(
-    region: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+    region: str,
+    scadute: bool = Query(False, description="Also list notices whose deadline has passed"),
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
 ) -> dict:
     region = _canonical(region)
     rs = await session.get(RegionSettings, region)
@@ -201,11 +207,19 @@ async def region_detail(
         )
     ).scalar_one_or_none()
     records = []
+    hidden = 0
+    today = today_utc()
     for rec in await _recent_records(session, region):
         cat = _record_category(rec)
         if cat is None:
             continue
+        valid = is_actionable(rec.scadenza, rec.data_pubblicazione, today)
+        if not valid:
+            hidden += 1
+            if not scadute:
+                continue
         records.append({
+            "scaduto": not valid,
             "id": str(rec.id), "categoria": cat, "ente": rec.ente,
             "descrizione": rec.descrizione, "link": rec.link_bando,
             "scadenza": rec.scadenza, "stato": rec.stato_procedurale,
@@ -213,11 +227,16 @@ async def region_detail(
             "score": rec.score_commerciale,
             "servizi": [k for k in (rec.servizio or "").split(",") if k],
         })
+    # Deadlines first (the soonest to expire on top), then the rest, newest first
+    # (the sort is stable, so the order of arrival is kept inside each group).
+    far = datetime(9999, 12, 31, tzinfo=UTC)
+    records.sort(key=lambda r: (r["scadenza"] is None, r["scadenza"] or far))
     return {
         "region": region,
         "enabled": rs.enabled if rs else False,
         "recipients": rs.recipients if rs else None,
         "last_digest_at": rs.last_digest_at if rs else None,
+        "scadute_nascoste": 0 if scadute else hidden,
         "ultimo_scan": None if last_scan is None else {
             "status": last_scan.status, "errore": last_scan.error_message,
             "at": last_scan.started_at, "trovati": last_scan.records_found,
@@ -233,6 +252,34 @@ async def region_detail(
         "records": records[:300],
         "categorie": list(CATEGORIES),
     }
+
+
+@router.get("/{region}/records.csv")
+async def region_records_csv(
+    region: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> Response:
+    """Every recent record of the region (expired ones included, flagged), as CSV."""
+    region = _canonical(region)
+    today = today_utc()
+    rows = []
+    for rec in await _recent_records(session, region):
+        cat = _record_category(rec)
+        if cat is None:
+            continue
+        rows.append({
+            "regione": region, "categoria": cat, "servizi": (rec.servizio or "").replace(",", " + "),
+            "ente": rec.ente, "descrizione": (rec.descrizione or "").replace("\n", " "),
+            "data_pubblicazione": rec.data_pubblicazione.date().isoformat() if rec.data_pubblicazione else "",
+            "scadenza": rec.scadenza.date().isoformat() if rec.scadenza else "",
+            "ancora_valido": "si" if is_actionable(rec.scadenza, rec.data_pubblicazione, today) else "no",
+            "stato": rec.stato_procedurale, "atto_tipo": rec.atto_tipo or "", "link": rec.link_bando,
+            "visto_il": rec.first_seen_at.date().isoformat() if rec.first_seen_at else "",
+        })
+    return Response(
+        content=records_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="record_{region}.csv"'},
+    )
 
 
 @router.patch("/{region}")

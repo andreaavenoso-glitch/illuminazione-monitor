@@ -694,3 +694,40 @@ class TestClaudeUnavailable:
         assert is_fatal_api_error(Exception("Your credit balance is too low"))
         assert not is_fatal_api_error(Exception("Overloaded"))
         assert not is_fatal_api_error(Exception("Error code: 500 internal server error"))
+
+
+@pytest.mark.asyncio
+class TestExpiredNoticesAreDropped:
+    async def test_expired_records_are_not_stored_and_skip_the_detail_fetch(self, monkeypatch) -> None:
+        from collections import Counter
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from app.tasks import collect_watchlist as cw
+
+        added: list = []
+        fetched: list[str] = []
+
+        async def fake_extract(html, *, url, settings, label, status=None):
+            return [
+                {"title": "Scaduto", "body": "b", "atto_tipo": "manifestazione_interesse", "url": "https://c.it/vecchio", "scadenza": "2020-01-31"},
+                {"title": "Aperto", "body": "b", "atto_tipo": "manifestazione_interesse", "url": "https://c.it/nuovo", "scadenza": "2999-12-31", "ente": "C"},
+            ]
+
+        async def fake_fetch(url, *, settings, label):
+            fetched.append(url)
+            return ""
+
+        monkeypatch.setattr(cw, "extract_albo_records", fake_extract)
+        monkeypatch.setattr(cw, "_fetch_page", fake_fetch)
+        item = SimpleNamespace(content_hashes=None, source_id=None, entity_id=None)
+        job = SimpleNamespace(records_found=0, records_valid=0, duplicates_removed=0)
+        stats = Counter()
+        await cw._process_page(
+            SimpleNamespace(add=added.append), item, job, target_url=BASE, target_html=DESIGN_ITALIA_LIST, label="t",
+            settings=SimpleNamespace(smart_collector_max_html_chars=80_000), now=datetime.now(tz=UTC),
+            seen=set(), stats=stats,
+        )
+        assert stats["records_expired_dropped"] == 1
+        assert job.records_valid == 1 and len(added) == 1  # only the open one is stored
+        assert fetched == ["https://c.it/nuovo"]  # no detail page was fetched for the expired one

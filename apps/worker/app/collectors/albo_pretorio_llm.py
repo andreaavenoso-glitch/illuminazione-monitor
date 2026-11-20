@@ -181,6 +181,7 @@ Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "det
 - Incarichi tecnici preparatori: piano regolatore dell'illuminazione comunale (PRIC), censimento degli impianti, diagnosi/audit energetico, studio di fattibilita', progettazione di impianti di illuminazione pubblica
 
 NON includere:
+- Atti con una scadenza GIA' TRASCORSA rispetto alla data corrente (la scadenza e' vincolante: un avviso scaduto non interessa)
 - Bandi di gara già in pubblicazione con scadenza di presentazione offerte (categoria raccolta da altre fonti)
 - Esiti di gara / aggiudicazioni
 - Atti che non riguardano l'illuminazione pubblica ne' nessuno dei servizi elencati sopra (delibere di bilancio, nomine, ordinanze di viabilità generiche, ecc.)

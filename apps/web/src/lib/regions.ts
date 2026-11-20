@@ -58,6 +58,7 @@ export interface RegionRecord {
   first_seen_at: string;
   notificato: boolean;
   score: number | null;
+  scaduto: boolean;
   servizi: string[];
 }
 
@@ -76,6 +77,7 @@ export const SERVIZIO_LABEL: Record<string, string> = {
 };
 
 export interface RegionDetail {
+  scadute_nascoste: number;
   ultimo_scan: { status: string; errore: string | null; at: string; trovati: number } | null;
   region: string;
   enabled: boolean;

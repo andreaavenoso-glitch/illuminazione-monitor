@@ -78,6 +78,7 @@ from shared_models import (
     WatchlistItem,
 )
 from shared_models.regions import normalize_region
+from shared_models.relevance import is_expired_record
 from shared_models.services import configure as configure_services
 from shared_models.services import parse_enabled
 from sqlalchemy import or_, select, update
@@ -186,6 +187,11 @@ async def _process_page(
         if detail_url:
             detail_url = safe_join(target_url, detail_url)
             record = {**record, "url": detail_url}
+        # A deadline already known and past: over, skip it without paying for the
+        # detail page. (A deadline learnt only from the detail page is checked below.)
+        if is_expired_record(record):
+            stats["records_expired_dropped"] += 1
+            continue
         if detail_url and detail_url != target_url:
             detail_html = await _fetch_page(detail_url, settings=settings, label=f"{label}:detail")
             if detail_html:
@@ -194,6 +200,10 @@ async def _process_page(
                 )
                 if details:
                     record = merge_detail_into_record(record, details)
+
+        if is_expired_record(record):
+            stats["records_expired_dropped"] += 1
+            continue
 
         kwargs = build_raw_record_kwargs(
             url_albo=target_url,
