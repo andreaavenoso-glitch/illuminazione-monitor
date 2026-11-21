@@ -73,3 +73,19 @@ def test_mentions_date():
     assert mentions_date("pubblicato il 20/11/2026", d)
     assert not mentions_date("pubblicato il 06/11/2026", d)
     _ = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def test_awarded_notice_is_noise():
+    assert categorize(stato_procedurale=None, text="Avviso di appalto aggiudicato riqualificazione impianti illuminazione") is None
+    assert categorize(stato_procedurale=None, text="Avviso di post-informazione lavori illuminazione pubblica") is None
+
+
+def test_only_old_dates():
+    from shared_models.relevance import dates_in_text, only_old_dates
+
+    today = date(2026, 11, 21)
+    page = "Avviso (44 KB - Pubblicato il 01/03/2023) verbale n. 6 (Pubblicato il 30 giugno 2023)"
+    assert len(dates_in_text(page)) == 2
+    assert only_old_dates(page, today)
+    assert not only_old_dates(page + " scadenza 30/11/2026", today)
+    assert not only_old_dates("nessuna data qui", today)

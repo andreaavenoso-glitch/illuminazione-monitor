@@ -123,3 +123,34 @@ def mentions_date(text: str | None, d: date) -> bool:
         d.isoformat(), f"{day} {_IT_MONTHS[month - 1]} {year}",
     }
     return any(c in low for c in candidates)
+
+
+_NUM_DATE = re.compile(r"\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})\b")
+_TXT_DATE = re.compile(r"\b(\d{1,2})\s+(" + "|".join(_IT_MONTHS) + r")\s+(\d{4})\b", re.IGNORECASE)
+
+
+def dates_in_text(text: str | None) -> list[date]:
+    """Every calendar date written in the text (31/12/2025, 31-12-2025, 31.12.2025,
+    "31 dicembre 2025"). Impossible dates are skipped."""
+    if not text:
+        return []
+    found: list[date] = []
+    for d, m, y in _NUM_DATE.findall(text):
+        found.append((int(y), int(m), int(d)))
+    for d, mon, y in _TXT_DATE.findall(text):
+        found.append((int(y), _IT_MONTHS.index(mon.lower()) + 1, int(d)))
+    out: list[date] = []
+    for y, m, d in found:
+        try:
+            out.append(date(y, m, d))
+        except ValueError:
+            continue
+    return out
+
+
+def only_old_dates(text: str | None, today: date, *, max_age_days: int = MAX_AGE_DAYS) -> bool:
+    """True when the text carries dates and ALL of them are older than the window:
+    a detail page whose attachments are dated 2023 is an old, closed procedure even
+    if the list entry showed no date. No dates at all -> False (cannot be judged)."""
+    ds = dates_in_text(text)
+    return bool(ds) and max(ds) < today - timedelta(days=max_age_days)

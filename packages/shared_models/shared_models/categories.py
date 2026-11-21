@@ -106,7 +106,7 @@ _EXCLUDE = re.compile(
     r"impegno di spesa|saldo (incarico|competenze)|rendicontazion|"
     r"comunicazione contributo|contributi per investimenti|"
     # already awarded / closed / cancelled
-    r"aggiudicazion|\besito\b|affidamento diretto|affidamento e impegno|presa d.atto|\brevoca\b|"
+    r"aggiudicazion|aggiudicat[oaie]\b|post-?informazione|\besito\b|affidamento diretto|affidamento e impegno|presa d.atto|\brevoca\b|"
     r"approvazione verbale|\bverbale\b|"
     # running the contract, not winning it
     r"direttore (dell.|dell\u2019)?esecuzione|"

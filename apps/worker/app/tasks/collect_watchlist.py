@@ -79,7 +79,7 @@ from shared_models import (
 )
 from shared_models.categories import is_noise
 from shared_models.regions import normalize_region
-from shared_models.relevance import is_expired_record, mentions_date, today_utc
+from shared_models.relevance import is_expired_record, mentions_date, only_old_dates, today_utc
 from shared_models.services import configure as configure_services
 from shared_models.services import parse_enabled
 from sqlalchemy import or_, select, update
@@ -214,6 +214,11 @@ async def _process_page(
                 )
                 if details:
                     record = merge_detail_into_record(record, details)
+                # A detail page whose every date is old (attachments from 2023,
+                # an award notice) is a closed procedure, whatever the list said.
+                if not record.get("scadenza") and only_old_dates(detail_html, today):
+                    stats["records_expired_dropped"] += 1
+                    continue
 
         if is_expired_record(record):
             stats["records_expired_dropped"] += 1
