@@ -9,6 +9,9 @@ Usage (inside the api container):
     python -m infra.scripts.import_ipa --region Puglia --file /workspace/amministrazioni.csv
     python -m infra.scripts.import_ipa --region Puglia --url https://...
 
+Con --region all importa tutte le 20 regioni dallo stesso file (le regioni
+restano disattivate finche' non le abiliti: l'import non avvia scansioni).
+
 Idempotent: a comune already on the watchlist is left untouched.
 """
 from __future__ import annotations
@@ -190,6 +193,15 @@ def main() -> None:
     else:
         import httpx
         text = httpx.get(a.url, follow_redirects=True, timeout=120).text
+    if a.region.lower() in ("all", "tutte", "italia"):
+        from shared_models.regions import REGIONS
+
+        async def _all() -> None:
+            for reg in REGIONS:
+                await run(reg, text, prune=a.prune, only_comuni=not a.include_all)
+
+        asyncio.run(_all())
+        return
     asyncio.run(run(a.region, text, prune=a.prune, only_comuni=not a.include_all))
 
 
