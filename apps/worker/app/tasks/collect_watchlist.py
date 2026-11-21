@@ -624,8 +624,17 @@ async def _run_watchlist_scan(
                     await _update_scan_item(run.id, sid, status="error", ended_at=datetime.now(tz=UTC), error="comune non trovato")
                     return
                 try:
-                    await _scan_item(item_session, item, job, local, site_lock)
+                    await asyncio.wait_for(
+                        _scan_item(item_session, item, job, local, site_lock),
+                        timeout=settings.scan_item_timeout_s,
+                    )
                     totals["items_scanned"] += 1
+                except TimeoutError:
+                    outcome = "error"
+                    error = f"tempo massimo superato ({int(settings.scan_item_timeout_s)} s): comune saltato"
+                    totals["errors"] += 1
+                    log.warning("collect_watchlist.item_timeout item=%s", item_id)
+                    await item_session.rollback()
                 except ClaudeUnavailable as exc:
                     # Every other comune would fail the same way: stop the run
                     # and say so, instead of crawling for an hour to report "0".

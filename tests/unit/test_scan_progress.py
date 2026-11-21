@@ -174,3 +174,9 @@ def test_process_steps_normalize_then_score() -> None:
     from app.services.admin_service import process_steps
 
     assert [n.rsplit(".", 1)[-1] for n, _ in process_steps()] == ["normalize_records", "score_and_dedupe"]
+
+
+def test_item_timeout_setting_is_bounded():
+    from app.config import WorkerSettings
+
+    assert 60 <= WorkerSettings().scan_item_timeout_s <= 900
