@@ -197,6 +197,10 @@ def main() -> None:
         from shared_models.regions import REGIONS
 
         async def _all() -> None:
+            if text.lstrip("\ufeff").lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+                print("Il file scaricato e' una pagina web, non un elenco di dati: scaricalo a mano da "
+                      "indicepa.gov.it (Open Data -> 'Amministrazioni') e usa --file.")
+                return
             for reg in REGIONS:
                 await run(reg, text, prune=a.prune, only_comuni=not a.include_all)
 
