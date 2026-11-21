@@ -59,6 +59,13 @@ class ProcurementRecord(Base):
         index=True,
     )
 
+    # Services of the catalog (shared_models.services) the notice is about, comma-separated.
+    servizio: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Claude's label for pre-tender acts (manifestazione_interesse, proposta_ppp...); None for tenders.
+    atto_tipo: Mapped[str | None] = mapped_column(String, nullable=True)
+    # When this record was included in a regional email digest (None = not yet).
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

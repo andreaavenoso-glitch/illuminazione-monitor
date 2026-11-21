@@ -23,6 +23,7 @@ from parsing_rules import (
     valid_cig,
 )
 from sector_dictionaries import extract_tags
+from shared_models.services import mentions_any_service
 
 _YES = "Yes"
 _NO = "No"
@@ -111,10 +112,15 @@ def derive_flags(text: str) -> dict[str, str]:
 
 def normalize(payload: NormalizerInput) -> NormalizedRecord | None:
     """Transform a raw record into a NormalizedRecord. Returns None if the
-    text is not within the lighting perimeter (§10.2 score < 1).
+    text is within neither the lighting perimeter (§10.2 score < 1) nor any of
+    the other services of the catalog (shared_models.services).
     """
     combined = " ".join(filter(None, [payload.raw_title, payload.raw_body]))
-    if not payload.perimeter_prevalidated and not is_in_lighting_perimeter(combined):
+    if (
+        not payload.perimeter_prevalidated
+        and not is_in_lighting_perimeter(combined)
+        and not mentions_any_service(combined)
+    ):
         return None
 
     extracted = payload.extracted or {}

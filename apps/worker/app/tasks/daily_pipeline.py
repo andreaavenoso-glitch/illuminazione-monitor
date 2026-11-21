@@ -11,12 +11,17 @@ partial dataset).
 from __future__ import annotations
 
 from app.celery_app import celery_app
-from app.tasks.collect_sources import collect_eproc_portals, collect_official_sources
+from app.tasks.collect_sources import (
+    collect_eproc_portals,
+    collect_official_sources,
+    collect_regional_sites,
+)
 from app.tasks.collect_watchlist import collect_watchlist_albo
 from app.tasks.detect_anomalies import detect_anomalies_task
 from app.tasks.generate_daily_report import generate_daily_report
 from app.tasks.normalize_records import normalize_records
 from app.tasks.score_and_dedupe import score_and_dedupe
+from app.tasks.send_region_digests import send_region_digests
 from celery import chain
 
 
@@ -31,10 +36,12 @@ def run_daily_pipeline() -> str:
     result = chain(
         collect_official_sources.si(),
         collect_eproc_portals.si(),
+        collect_regional_sites.si(),
         collect_watchlist_albo.si(),
         normalize_records.si(),
         score_and_dedupe.si(),
         generate_daily_report.si(),
         detect_anomalies_task.si(),
+        send_region_digests.si(),
     ).apply_async()
     return result.id

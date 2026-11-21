@@ -44,6 +44,7 @@ cp .env.example .env
 docker compose up -d --build
 docker compose exec api alembic upgrade head
 docker compose exec api python -m infra.scripts.seed_watchlist
+docker compose exec api python -m infra.scripts.seed_regions
 ```
 
 Il seed carica anche la watchlist di 73 comuni lombardi target per l'illuminazione
@@ -56,6 +57,56 @@ della pagina) e va quindi considerato da verificare — è segnalato nel campo
 `note` del CSV e nelle note dell'entità in `/admin/watchlist`. Per correggere
 un URL sbagliato: `PATCH /watchlist/{id}` (endpoint API, non ancora esposto
 come form nella dashboard — vedi `/admin/watchlist` per la sola consultazione).
+
+### Struttura per regioni
+
+- **Livello 1** (`/level1`): portali nazionali (TED, ANAC, GURI...), solo analisi e verifica delle fonti. Consip è fuori.
+  I record trovati vengono assegnati a una regione (regione esplicita, codice NUTS di TED, ente già in watchlist,
+  regione citata nel testo) e compaiono nel suo riquadro.
+- **Livello 2** (`/regions`): un riquadro per regione con pre-gare, manifestazioni di interesse e gare, e la vista
+  dei siti (siti regionali del catalogo + comuni con tutti i loro indirizzi e lo stato di raggiungibilità).
+  Solo le regioni *attive* vengono raccolte e notificate (di partenza: Lombardia e Puglia, modificabile dalla UI o con
+  `ENABLED_REGIONS` al seed).
+- **Email ai referenti**: a fine pipeline giornaliera, una mail per regione con le novità non ancora notificate.
+  Destinatari modificabili per regione; servono le variabili `SMTP_*` (vedi `.env.example`): senza server di posta
+  nulla parte e i record restano in attesa.
+- **Comuni di una regione**: `python -m infra.scripts.import_ipa --region Puglia --file amministrazioni.csv`
+  (dataset "Amministrazioni" di IPA, indicepa.gov.it; accetta xlsx, txt con tabulazione e csv) importa i comuni con il link a Amministrazione Trasparente.
+- **Lettura dei siti dei comuni:** prima un filtro fisso (`app/collectors/page_gate.py`): una pagina senza parole
+  chiave di illuminazione o PPP non arriva mai a Claude; per le altre va solo l'elenco dei link che corrispondono;
+  una pagina invariata dall'ultima analisi riuscita non viene riletta. Le sezioni di Amministrazione Trasparente si
+  trovano prima per nome (D.Lgs. 33/2013) e solo se manca si chiede a Claude. I contatori (pagine saltate,
+  invariate, inviate a Claude, piattaforme rilevate) sono nel risultato del task e nel log
+  (`docker compose logs worker | grep collect_watchlist.stats`).
+- **Siti regionali scoperti in automatico:** quando la visita di un comune porta a una piattaforma di gara esterna
+  (provinciale, regionale o di un fornitore, per esempio il PortaleAppalti di una Provincia), il sito viene salvato tra
+  i siti della regione del comune, **spento e da approvare**, con l'elenco dei comuni che vi rimandano. Dalla pagina
+  della regione, tab "Siti", un amministratore lo attiva o lo disattiva.
+- **Servizi cercati:** non solo l'illuminazione pubblica. Il catalogo (`packages/shared_models/shared_models/services.py`,
+  ricavato dalle schede dei servizi A2A Illuminazione Pubblica) ha 11 servizi, ciascuno con le sue parole chiave:
+  illuminazione pubblica, artistica, piste ciclabili e passaggi pedonali, semafori, videosorveglianza, relamping ed
+  efficientamento di edifici e scuole, fotovoltaico e comunità energetiche, ricarica EV, 5G, digital advertising,
+  smart city. Si attivano con `ENABLED_SERVICES` (vuoto = tutti). Il filtro delle pagine, le istruzioni a Claude e il
+  controllo di pertinenza usano i servizi attivi; ogni avviso riporta i servizi di cui parla.
+- **Vista dell'avanzamento** (pagina della regione, tab "Raccolta"): barra di avanzamento con ora di fine stimata, una
+  linea del tempo con una barra per comune (da quando inizia a quando finisce la lettura), il segnale di Claude per
+  comune (chiamato N volte, non chiamato, errore) e un avviso rosso se l'API di Claude non è disponibile. Si aggiorna
+  ogni 3 secondi mentre la raccolta gira. I dati sono in `scan_runs` e `scan_items`.
+- **Contatore dei dollari sull'API di Claude:** ogni chiamata riuscita registra token e costo stimato (`api_usage`,
+  prezzi in `packages/shared_models/shared_models/pricing.py`, modificabili con `ANTHROPIC_PRICE_INPUT_PER_MTOK` e
+  `ANTHROPIC_PRICE_OUTPUT_PER_MTOK`). Il badge in alto mostra oggi e mese; la pagina `/usage` il dettaglio (ultimi 14
+  giorni, per uso, per modello). Con `ANTHROPIC_BUDGET_USD` vedi anche quanto del limite mensile hai usato. È una
+  **stima** che conta solo questa app: la spesa reale è quella della console Anthropic. Nel tab "Raccolta" il costo
+  compare per raccolta e per comune.
+- **Riprendere una raccolta interrotta:** il pulsante "Riprendi" della pagina della regione salta i comuni già letti
+  nelle ultime 24 ore (quelli finiti hanno già i loro dati e le pagine già analizzate non si ripagano). Un Codespace si
+  ferma dopo un po' di inattività anche se una raccolta sta girando: per le raccolte lunghe alza il tempo di inattività
+  in GitHub → Settings → Codespaces.
+- **La scadenza e' vincolante:** un avviso con scadenza passata e' rumore. Non viene salvato in raccolta (e si salta
+  anche la lettura della pagina di dettaglio), non compare nelle liste e nelle email; senza scadenza restano solo gli
+  avvisi pubblicati negli ultimi 180 giorni. Nella pagina della regione i nascosti si possono mostrare, e "Scarica CSV"
+  esporta tutti i record (anche quelli scaduti, segnati) per analizzarli.
+- I siti regionali del catalogo sono in `infra/scripts/data/siti_regionali.json` (candidati da verificare).
 
 Endpoint:
 

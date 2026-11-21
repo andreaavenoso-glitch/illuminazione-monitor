@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,8 +35,22 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_minutes: int = 60 * 12  # 12h
 
+    # Cost counter (see shared_models.pricing). The budget is optional: set it to
+    # your Anthropic spending limit to see how much of it this app has used.
+    anthropic_model: str = "claude-haiku-4-5"
+    anthropic_budget_usd: float | None = None
+    anthropic_price_input_per_mtok: float = 0.0
+    anthropic_price_output_per_mtok: float = 0.0
+
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
+
+    @field_validator("anthropic_budget_usd", mode="before")
+    @classmethod
+    def _empty_budget_is_none(cls, v):
+        # .env.example ships ANTHROPIC_BUDGET_USD= (empty = no budget): an empty
+        # string must not be parsed as a number, or the API cannot even start.
+        return None if isinstance(v, str) and not v.strip() else v
 
     @property
     def database_url(self) -> str:

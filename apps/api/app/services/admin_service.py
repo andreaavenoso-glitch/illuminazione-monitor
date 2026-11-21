@@ -97,3 +97,61 @@ def dispatch_backfill(days: int) -> str:
     app = _celery_app()
     result = app.send_task("app.tasks.backfill.run_backfill", kwargs={"days": days})
     return str(result.id)
+
+
+def region_scan_steps(
+    region: str, limit: int | None = None, skip_scanned_hours: float | None = None
+) -> list[tuple[str, dict]]:
+    """The steps of a region run, in order: (task name, kwargs). The comuni come
+    first, because they are what the progress view shows and what the user waits
+    for; the regional sites (some of which take minutes to time out) follow, and
+    only then normalize and score, so nothing is normalized before everything that
+    feeds it has finished."""
+    return [
+        (
+            "app.tasks.collect_watchlist.collect_watchlist_albo",
+            {"region": region, "limit": limit, "skip_scanned_hours": skip_scanned_hours},
+        ),
+        ("app.tasks.collect_sources.collect_regional_sites", {"region": region}),
+        ("app.tasks.normalize_records.normalize_records", {}),
+        ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
+    ]
+
+
+def dispatch_region_scan(
+    region: str, limit: int | None = None, skip_scanned_hours: float | None = None
+) -> dict[str, str]:
+    """One region end to end, strictly in order (see ``region_scan_steps``).
+    ``task_id`` is the last step: when it is SUCCESS the whole run is done."""
+    from celery import chain
+
+    app = _celery_app()
+    result = chain(
+        *[app.signature(name, kwargs=kwargs, immutable=True) for name, kwargs in region_scan_steps(region, limit, skip_scanned_hours)]
+    ).apply_async()
+    return {"task_id": str(result.id)}
+
+
+def process_steps() -> list[tuple[str, dict]]:
+    """Normalize what has been collected, then score: the end of every run, on its
+    own. For records collected by a run that was cut short."""
+    return [
+        ("app.tasks.normalize_records.normalize_records", {}),
+        ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
+    ]
+
+
+def dispatch_process() -> dict[str, str]:
+    from celery import chain
+
+    app = _celery_app()
+    result = chain(*[app.signature(n, kwargs=k, immutable=True) for n, k in process_steps()]).apply_async()
+    return {"task_id": str(result.id)}
+
+
+def dispatch_region_digest(region: str) -> str:
+    app = _celery_app()
+    result = app.send_task(
+        "app.tasks.send_region_digests.send_region_digests", kwargs={"region": region}
+    )
+    return str(result.id)

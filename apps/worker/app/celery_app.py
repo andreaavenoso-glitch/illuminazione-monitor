@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.tasks.ingest_documents",
         "app.tasks.detect_anomalies",
         "app.tasks.backfill",
+        "app.tasks.send_region_digests",
         "app.tasks.daily_pipeline",
     ],
 )

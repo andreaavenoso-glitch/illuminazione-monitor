@@ -1,0 +1,240 @@
+[
+ {
+  "regione": "Piemonte",
+  "ruolo": "eproc_regionale",
+  "nome": "SCR Piemonte - PAD",
+  "url": "https://pad.scr.piemonte.it/tno-e/scrpiemonte/ricerca_bandi.jsp",
+  "note": "Copre soprattutto sanita/SCR, poco illuminazione comunale"
+ },
+ {
+  "regione": "Piemonte",
+  "ruolo": "regione_bandi",
+  "nome": "Regione Piemonte - Bandi",
+  "url": "https://bandi.regione.piemonte.it",
+  "note": "Indice bandi regionali, scarsa pertinenza"
+ },
+ {
+  "regione": "Valle d'Aosta",
+  "ruolo": "eproc_regionale",
+  "nome": "PLACE VdA (Aflink)",
+  "url": "https://place-vda.aflink.it",
+  "note": "Alta: Regione, comuni e SUA"
+ },
+ {
+  "regione": "Lombardia",
+  "ruolo": "eproc_regionale",
+  "nome": "ARIA - Sintel elenco bandi",
+  "url": "https://www.ariaspa.it/wps/portal/site/aria/acquistipervoi/Sintel/elencoBandi",
+  "note": "Alta; percorso esatto da riverificare"
+ },
+ {
+  "regione": "Trentino-Alto Adige",
+  "ruolo": "regione_bandi",
+  "nome": "Sicopat - Contratti pubblici PAT",
+  "url": "https://contrattipubblici.provincia.tn.it",
+  "note": "Miglior candidato: elenco gare di tutti gli enti trentini"
+ },
+ {
+  "regione": "Trentino-Alto Adige",
+  "ruolo": "eproc_regionale",
+  "nome": "Contracta (pagina informativa)",
+  "url": "https://www.provincia.tn.it/Argomenti/Focus/Contracta",
+  "note": "CORREZIONE: il vecchio URL /Contracta e morto (410); questo e informativo"
+ },
+ {
+  "regione": "Trentino-Alto Adige",
+  "ruolo": "cuc_sua",
+  "nome": "APAC - Servizio contratti e centrale acquisti",
+  "url": "https://www.provincia.tn.it/Amministrazione/Strutture-organizzative/Servizio-contratti-e-centrale-acquisti-apac",
+  "note": "Media"
+ },
+ {
+  "regione": "Trentino-Alto Adige",
+  "ruolo": "eproc_regionale",
+  "nome": "Bandi Alto Adige",
+  "url": "https://www.bandi-altoadige.it",
+  "note": "Alta (specchio DE: https://ausschreibungen-suedtirol.it)"
+ },
+ {
+  "regione": "Trentino-Alto Adige",
+  "ruolo": "cuc_sua",
+  "nome": "ACP - Agenzia contratti pubblici",
+  "url": "https://acp.provincia.bz.it",
+  "note": "Media"
+ },
+ {
+  "regione": "Veneto",
+  "ruolo": "eproc_regionale",
+  "nome": "APPTEL Appalti Telematici",
+  "url": "https://appaltitelematici.regione.veneto.it/PortaleAppalti",
+  "note": "Bassa/media, soprattutto enti regionali"
+ },
+ {
+  "regione": "Veneto",
+  "ruolo": "regione_bandi",
+  "nome": "Procedure di gara dal 2024",
+  "url": "https://www.regione.veneto.it/procedure-di-gara-avviate-dal-2024",
+  "note": "Bassa (gare della Regione)"
+ },
+ {
+  "regione": "Friuli-Venezia Giulia",
+  "ruolo": "eproc_regionale",
+  "nome": "eAppaltiFVG (Insiel)",
+  "url": "https://eappalti.regione.fvg.it",
+  "note": "Alta; URL corretto, percorso lista da confermare"
+ },
+ {
+  "regione": "Emilia-Romagna",
+  "ruolo": "eproc_regionale",
+  "nome": "Intercent-ER / SATER",
+  "url": "https://intercenter.regione.emilia-romagna.it",
+  "note": "Alta ('Bandi altri Enti'). CORREZIONE: l'host 'piattaforma...' nel sistema non confermato"
+ },
+ {
+  "regione": "Toscana",
+  "ruolo": "eproc_regionale",
+  "nome": "START",
+  "url": "https://start.toscana.it/tendering/tenders/list.do?searchType=2",
+  "note": "Alta; percorso list.do non verificato"
+ },
+ {
+  "regione": "Toscana",
+  "ruolo": "regione_bandi",
+  "nome": "SITAT",
+  "url": "https://www.regione.toscana.it/it/sistemi-telematici",
+  "note": "Media/alta (pagina descrittiva)"
+ },
+ {
+  "regione": "Umbria",
+  "ruolo": "eproc_regionale",
+  "nome": "Portale Acquisti Umbria (Net4market)",
+  "url": "https://app.albofornitori.it/alboeproc/albo_regioneumbria",
+  "note": "CORREZIONE: giada.areacom.eu non confermato"
+ },
+ {
+  "regione": "Umbria",
+  "ruolo": "cuc_sua",
+  "nome": "SUA Provincia di Perugia",
+  "url": "https://provincia.perugia.it",
+  "note": "Alta (home, pagina bandi da individuare)"
+ },
+ {
+  "regione": "Marche",
+  "ruolo": "eproc_regionale",
+  "nome": "GT-SUAM (SUAM Regione Marche)",
+  "url": "https://appaltisuam.regione.marche.it/",
+  "note": "Fonte principale per le Marche"
+ },
+ {
+  "regione": "Marche",
+  "ruolo": "regione_bandi",
+  "nome": "Bandi Regione Marche",
+  "url": "https://bandi.regione.marche.it/",
+  "note": "Scarsa utilita (contributi)"
+ },
+ {
+  "regione": "Lazio",
+  "ruolo": "eproc_regionale",
+  "nome": "STELLA",
+  "url": "https://stella.regione.lazio.it/portale/",
+  "note": "Media"
+ },
+ {
+  "regione": "Lazio",
+  "ruolo": "regione_bandi",
+  "nome": "Amm. Trasparente - affidamenti",
+  "url": "https://www.regione.lazio.it/amministrazione-trasparente/atti-procedure-affidamento",
+  "note": "Bassa-media (solo Regione)"
+ },
+ {
+  "regione": "Lazio",
+  "ruolo": "cuc_sua",
+  "nome": "Centrale Acquisti Lazio",
+  "url": "https://centraleacquisti.regione.lazio.it/",
+  "note": "Bassa"
+ },
+ {
+  "regione": "Molise",
+  "ruolo": "eproc_regionale",
+  "nome": "MolisEprocurement (anche CUC)",
+  "url": "https://eproc.regione.molise.it",
+  "note": "Alta: Regione, province, 136 comuni, ASReM"
+ },
+ {
+  "regione": "Campania",
+  "ruolo": "eproc_regionale",
+  "nome": "So.Re.Sa.",
+  "url": "https://www.soresa.it",
+  "note": "Media-bassa"
+ },
+ {
+  "regione": "Campania",
+  "ruolo": "eproc_regionale",
+  "nome": "Portale gare pgt (incerto)",
+  "url": "http://pgt.regione.campania.it",
+  "note": "Una sola citazione, da riverificare"
+ },
+ {
+  "regione": "Puglia",
+  "ruolo": "eproc_regionale",
+  "nome": "EmPULIA",
+  "url": "https://www.empulia.it/tno-p/empulia/HomePage.jsp",
+  "note": "Molto alta. Alternativa da provare: https://eproc.empulia.it"
+ },
+ {
+  "regione": "Basilicata",
+  "ruolo": "cuc_sua",
+  "nome": "SUA-RB PortaleAppalti",
+  "url": "https://sua-rb.it/PortaleAppalti/it/bandi",
+  "note": "Alta; percorso lista da confermare"
+ },
+ {
+  "regione": "Basilicata",
+  "ruolo": "regione_bandi",
+  "nome": "Portale Bandi",
+  "url": "https://portalebandi.regione.basilicata.it",
+  "note": "Media (molti avvisi di finanziamento)"
+ },
+ {
+  "regione": "Calabria",
+  "ruolo": "cuc_sua",
+  "nome": "SISGAP / SUA Regione",
+  "url": "https://sisgap.regione.calabria.it",
+  "note": "Alta"
+ },
+ {
+  "regione": "Calabria",
+  "ruolo": "cuc_sua",
+  "nome": "SUA Citta metropolitana Reggio C.",
+  "url": "https://www2.cittametropolitana.rc.it/sua/",
+  "note": "Media-alta"
+ },
+ {
+  "regione": "Sicilia",
+  "ruolo": "eproc_regionale",
+  "nome": "SITAS Tutto Gare",
+  "url": "https://appalti.regionesiciliana.lavoripubblici.sicilia.it",
+  "note": "Alta"
+ },
+ {
+  "regione": "Sicilia",
+  "ruolo": "cuc_sua",
+  "nome": "UREGA - sezioni gare (es. Enna)",
+  "url": "https://regione.sicilia.it/istituzioni/regione/strutture-regionali/sezione-territoriale-urega-enna/sezione-gare",
+  "note": "Media: gare >2M euro"
+ },
+ {
+  "regione": "Sardegna",
+  "ruolo": "eproc_regionale",
+  "nome": "SardegnaCAT",
+  "url": "https://www.sardegnacat.it/esop/guest/go/public/opportunity/current",
+  "note": "Alta"
+ },
+ {
+  "regione": "Sardegna",
+  "ruolo": "cuc_sua",
+  "nome": "CRC Regione Sardegna - Bandi",
+  "url": "https://www.regione.sardegna.it",
+  "note": "Media-alta; URL elenco da confermare"
+ }
+]

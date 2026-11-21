@@ -25,3 +25,4 @@ next-env.d.ts
 playwright-report/
 test-results/
 tsconfig.tsbuildinfo
+infra/samples/
