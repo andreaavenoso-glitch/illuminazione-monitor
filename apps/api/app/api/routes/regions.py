@@ -14,6 +14,7 @@ from shared_models import (
     JobRun,
     ProcurementRecord,
     RawRecord,
+    Referente,
     RegionSettings,
     ScanItem,
     ScanRun,
@@ -253,6 +254,14 @@ async def region_detail(
             .order_by(JobRun.started_at.desc()).limit(1)
         )
     ).scalar_one_or_none()
+    ref_rows = (await session.execute(select(Referente).where(Referente.regione == region))).scalars().all()
+    ref_by_ente: dict[str, list[dict]] = {}
+    for p in sorted(ref_rows, key=lambda x: (x.stato != "verificato", x.ruolo)):
+        ref_by_ente.setdefault(p.ente, []).append({
+            "nome": p.nome, "ruolo": p.ruolo, "qualifica": p.qualifica, "email": p.email,
+            "telefono": p.telefono, "fonte_url": p.fonte_url, "citazione": p.citazione,
+            "stato": p.stato, "verified_at": p.verified_at,
+        })
     records = []
     da_verificare: list[dict] = []
     hidden = 0
@@ -288,6 +297,7 @@ async def region_detail(
             "first_seen_at": rec.first_seen_at, "notificato": rec.notified_at is not None,
             "score": rec.score_commerciale,
             "servizi": [k for k in (rec.servizio or "").split(",") if k],
+            "referenti": ref_by_ente.get(rec.ente, []),
         })
     # Deadlines first (the soonest to expire on top), then the rest, newest first
     # (the sort is stable, so the order of arrival is kept inside each group).
@@ -451,6 +461,24 @@ async def verify_region_endpoint(region: str, _: User = Depends(require_role("ad
 
     region = _canonical(region)
     return {"status": "dispatched", "region": region, "task_id": dispatch_verify(region)}
+
+
+@router.post("/{region}/records/{record_id}/referenti")
+async def find_referenti_endpoint(
+    region: str,
+    record_id: UUID,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Look for the political and technical contacts of this record's ente (one ente,
+    a few cents). The result shows up in the record card when the task finishes."""
+    from app.services.admin_service import dispatch_find_referenti
+
+    region = _canonical(region)
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    return {"status": "dispatched", "ente": rec.ente, "task_id": dispatch_find_referenti(record_id)}
 
 
 @router.post("/{region}/process")

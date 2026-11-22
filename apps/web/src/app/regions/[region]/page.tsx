@@ -14,6 +14,7 @@ import {
   type Categoria,
   SERVIZIO_LABEL,
   type RegionDetail,
+  RUOLO_LABEL,
 } from "@/lib/regions";
 
 type Tab = Categoria | "siti" | "scan" | "verifica";
@@ -98,6 +99,16 @@ export default function RegionPage() {
     onSuccess: () => {
       setMessage(
         "Verifica avviata: apro il link di ogni avviso senza scadenza (pagina o PDF) e leggo la data. Ci vuole qualche minuto; la pagina si aggiorna da sola.",
+      );
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
+  const referenti = useMutation({
+    mutationFn: (recordId: string) =>
+      api.post(`/regions/${encodeURIComponent(region)}/records/${recordId}/referenti`),
+    onSuccess: () => {
+      setMessage(
+        "Ricerca referenti avviata (circa 1-2 minuti): leggo le pagine di giunta, uffici tecnici e il documento stesso. Compaiono nella scheda quando ha finito.",
       );
     },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
@@ -317,6 +328,30 @@ export default function RegionPage() {
               <a href={r.link} target="_blank" rel="noreferrer" className="mt-1 inline-block break-all text-xs text-sky-700 underline dark:text-sky-300">
                 {r.link}
               </a>
+              <div className="mt-2 border-t pt-2 text-xs dark:border-neutral-800">
+                {(r.referenti ?? []).length > 0 ? (
+                  <ul className="space-y-1">
+                    {r.referenti.map((p) => (
+                      <li key={`${p.ruolo}-${p.nome}`}>
+                        <b>{RUOLO_LABEL[p.ruolo]}</b>: {p.nome}
+                        {p.qualifica && <span className="text-neutral-500"> ({p.qualifica})</span>}
+                        {p.email && <> · <a className="text-sky-700 underline" href={`mailto:${p.email}`}>{p.email}</a></>}
+                        {p.telefono && <> · {p.telefono}</>}
+                        {p.stato === "da_confermare" && <span className="ml-1 rounded bg-amber-100 px-1 text-amber-900">da confermare</span>}
+                        {" "}<a className="text-neutral-500 underline" href={p.fonte_url} target="_blank" rel="noreferrer" title={p.citazione ?? "fonte"}>fonte</a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="text-neutral-500">Referenti non ancora cercati.</span>
+                )}
+                {admin && (
+                  <button type="button" className="ml-2 underline" disabled={referenti.isPending}
+                    onClick={() => referenti.mutate(r.id)}>
+                    {(r.referenti ?? []).length > 0 ? "aggiorna referenti" : "Trova referenti"}
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>

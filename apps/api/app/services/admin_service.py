@@ -126,6 +126,12 @@ def dispatch_verify(region: str) -> str:
     return str(result.id)
 
 
+def dispatch_find_referenti(record_id: UUID) -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.find_referenti.find_referenti", kwargs={"record_id": str(record_id)})
+    return str(result.id)
+
+
 def dispatch_region_scan(
     region: str, limit: int | None = None, skip_scanned_hours: float | None = None
 ) -> dict[str, str]:

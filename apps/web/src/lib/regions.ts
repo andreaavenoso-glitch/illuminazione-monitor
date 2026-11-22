@@ -47,6 +47,25 @@ export interface RegionSite {
   ultimo_run: { status: string; errore: string | null; found: number; at: string } | null;
 }
 
+export interface Referente {
+  nome: string;
+  ruolo: "sindaco" | "assessore" | "responsabile_tecnico" | "rup";
+  qualifica: string | null;
+  email: string | null;
+  telefono: string | null;
+  fonte_url: string;
+  citazione: string | null;
+  stato: "verificato" | "da_confermare";
+  verified_at: string;
+}
+
+export const RUOLO_LABEL: Record<Referente["ruolo"], string> = {
+  sindaco: "Sindaco",
+  assessore: "Assessore",
+  responsabile_tecnico: "Responsabile tecnico",
+  rup: "RUP",
+};
+
 export interface RegionRecord {
   id: string;
   categoria: Categoria;
@@ -60,6 +79,7 @@ export interface RegionRecord {
   score: number | null;
   scaduto: boolean;
   servizi: string[];
+  referenti: Referente[];
 }
 
 export const SERVIZIO_LABEL: Record<string, string> = {
