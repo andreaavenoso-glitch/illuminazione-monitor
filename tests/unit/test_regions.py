@@ -187,3 +187,10 @@ class TestRealWorldWordings:
         from shared_models.categories import PRE_GARA_KEYWORDS
 
         assert "piccs" not in PRE_GARA_KEYWORDS
+
+
+def test_active_scans_route_is_before_region_detail():
+    from app.api.routes import regions
+
+    paths = [r.path for r in regions.router.routes]
+    assert paths.index("/scans/active") < paths.index("/{region}")

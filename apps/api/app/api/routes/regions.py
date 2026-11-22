@@ -153,6 +153,34 @@ async def list_regions(
     return sorted(per.values(), key=lambda x: (not x["enabled"], x["region"]))
 
 
+@router.get("/scans/active")
+async def active_scans(
+    _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> list[dict]:
+    """Scans running right now (heartbeat within 10 minutes), for the header badge:
+    leaving a region page must not make a running scan invisible."""
+    from app.services.scan_view import STALE_AFTER_S
+
+    now = datetime.now(tz=UTC)
+    runs = (
+        await session.execute(select(ScanRun).where(ScanRun.status == "running", ScanRun.ended_at.is_(None)))
+    ).scalars().all()
+    out: list[dict] = []
+    for run in runs:
+        beat = run.heartbeat_at or run.started_at
+        if (now - beat).total_seconds() > STALE_AFTER_S:
+            continue
+        done = (
+            await session.execute(
+                select(func.count()).select_from(ScanItem).where(
+                    ScanItem.run_id == run.id, ScanItem.status.in_(("done", "error", "skipped"))
+                )
+            )
+        ).scalar_one()
+        out.append({"region": run.region, "total": run.total, "done": done})
+    return out
+
+
 @router.get("/{region}")
 async def region_detail(
     region: str,
