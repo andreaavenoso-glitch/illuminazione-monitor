@@ -199,21 +199,38 @@ _DEADLINE_CUE = re.compile(
 )
 
 
+_NOT_THE_DEADLINE = re.compile(r"regional|sopralluogo|chiariment|quesit", re.IGNORECASE)
+_THE_DEADLINE = re.compile(
+    r"propost|offert|candidatur|manifestazion|partecipazion|presentazion|pervenire", re.IGNORECASE
+)
+
+
 def deadline_from_text(text: str | None) -> date | None:
     """Deadline written in a notice: the first date right after each cue ("scadenza",
-    "entro il", "termine per la presentazione delle offerte...") and the latest of
-    those. None when no cue is followed by a date. Deterministic and free: it settles
-    most notices before any Claude call."""
+    "entro il", "termine per la presentazione delle offerte...").
+
+    A real avviso quotes several dates (the regional funding call, a site visit, the
+    questions window): those near "regionale", "sopralluogo", "chiarimenti" are set aside,
+    and cues about proposals / offers / applications win over the generic ones. Within the
+    winning group the latest is taken. None when no cue is followed by a date.
+    Deterministic and free: it settles most notices before any Claude call."""
     if not text:
         return None
-    found: list[date] = []
+    strong: list[date] = []
+    generic: list[date] = []
     for m in _DEADLINE_CUE.finditer(text):
         window = text[m.end(): m.end() + 140]
         ps = _positions(window)
-        if ps:
-            # the first date written after the cue, not the latest of the window
-            found.append(min(ps, key=lambda p: window.find(p[0]))[1])
-    return max(found) if found else None
+        if not ps:
+            continue
+        # the first date written after the cue, not the latest of the window
+        tok, found = min(ps, key=lambda p: window.find(p[0]))
+        context = text[max(0, m.start() - 90): m.end()] + window[: window.find(tok)]
+        if _NOT_THE_DEADLINE.search(context):
+            continue
+        (strong if _THE_DEADLINE.search(context) else generic).append(found)
+    group = strong or generic
+    return max(group) if group else None
 
 
 def _positions(window: str) -> list[tuple[str, date]]:

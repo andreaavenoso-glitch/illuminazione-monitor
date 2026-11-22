@@ -73,3 +73,14 @@ def test_dash_dates_in_the_page_are_read():
     from shared_models.relevance import dates_in_text
 
     assert date(2026, 11, 19) in dates_in_text("Determinazione Dirigenziale n. 217 del 19-11-2026")
+
+
+def test_deadline_prefers_the_proposals_deadline_over_the_regional_one():
+    # Scanzano Jonico, avviso art. 193 (PDF): two dates after "scadenza"/"entro".
+    t = (
+        "12. Termini e modalita di presentazione. Le proposte devono pervenire entro 60 giorni dalla data di "
+        "pubblicazione del presente avviso, avvero, entro le ore 12:00 del 20-01-2027. L'invio avviene via PEC. "
+        "Il sopralluogo tecnico puo essere concordato con il RUP mediante richiesta entro il 10/12/2026. "
+        "14. Fasi successive. La scadenza ufficialmente indicata per la domanda regionale e 15/02/2027, ore 12:00."
+    )
+    assert deadline_from_text(t) == date(2027, 1, 20)
