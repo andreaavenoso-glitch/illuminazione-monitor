@@ -147,6 +147,25 @@ _CER_PROCUREMENT = re.compile(
     re.IGNORECASE,
 )
 
+# An open call for PPP proposals (art. 193 d.lgs. 36/2023: "avviso pubblico per la
+# presentazione di proposte alternative di finanza di progetto") is a call for interest
+# even though Claude labels it "proposta_ppp". Not so the acts that DEAL WITH a proposal
+# already received (valutazione, pubblico interesse, fattibilita').
+_CALL_FOR_PROPOSALS = re.compile(
+    r"avviso pubblic\w*[^.]{0,250}proposte|(presentazione|ricezione) di proposte|proposte alternative|"
+    r"invito a presentare proposte",
+    re.IGNORECASE,
+)
+_PROPOSAL_RECEIVED = re.compile(
+    r"pervenut\w+|valutazione (della|delle|di)|pubblico interesse|fattibilit|dichiarazione di",
+    re.IGNORECASE,
+)
+_ACT_START = re.compile(r"\s*(delibera|determin)", re.IGNORECASE)
+
+
+def _is_open_call_for_proposals(low: str) -> bool:
+    return bool(_CALL_FOR_PROPOSALS.search(low)) and not _PROPOSAL_RECEIVED.search(low)
+
 
 def is_cer_membership(low: str) -> bool:
     return bool(_CER.search(low)) and not _CER_PROCUREMENT.search(low)
@@ -170,6 +189,7 @@ def categorize(
     flag_pre_gara: str | None = None,
     atto_tipo: str | None = None,
     ente: str | None = None,
+    has_deadline: bool = False,
 ) -> str | None:
     """pre_gara | manifestazione_interesse | gara, or None (not an opportunity).
 
@@ -187,6 +207,12 @@ def categorize(
     if _GARA_STRONG.search(low):
         return GARA
     if _MANIFESTAZIONE_WORDING.search(low) or _has(low, MANIFESTAZIONE_KEYWORDS):
+        return MANIFESTAZIONE
+    if _is_open_call_for_proposals(low):
+        return MANIFESTAZIONE
+    # A PPP proposal page with a deadline is an open call (a delibera that accepts a
+    # proposal has none).
+    if atto_tipo == "proposta_ppp" and has_deadline and not _ACT_START.match(low) and not _PROPOSAL_RECEIVED.search(low):
         return MANIFESTAZIONE
     if _GARA_WEAK.search(low):
         return GARA
@@ -210,6 +236,7 @@ def categorize_record(r) -> str | None:
         flag_pre_gara=r.flag_pre_gara,
         atto_tipo=r.atto_tipo,
         ente=r.ente,
+        has_deadline=getattr(r, "scadenza", None) is not None,
     )
     if cat is not None and not (r.servizio or detect_services(text)):
         return None

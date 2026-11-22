@@ -150,3 +150,34 @@ def test_pregara_without_deadline_but_old_link_is_dropped():
     assert url_year(old) == 2018
     assert not is_confirmed_open(PRE_GARA, None, datetime(2026, 11, 22, tzinfo=UTC), old, today)
     assert is_confirmed_open(PRE_GARA, None, datetime(2026, 11, 20, tzinfo=UTC), "https://x.it/avviso/1", today)
+
+
+# --- Basilicata 2: gli avvisi pubblici per proposte PPP sono manifestazioni -----------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Avviso pubblico ex art. 193 del D.Lgs. 36/2023 per la presentazione di proposte alternative di finanza di "
+        "progetto relative all'ammodernamento dell'impianto di pubblica illuminazione.",
+        "AVVISO PUBBLICO - SOLLECITAZIONE DI PROPOSTE A INIZIATIVA PRIVATA illuminazione pubblica",
+    ],
+)
+def test_open_call_for_ppp_proposals_is_manifestazione(text):
+    assert categorize(stato_procedurale="PRE-GARA", text=text, atto_tipo="proposta_ppp") == MANIFESTAZIONE
+
+
+def test_ppp_page_with_deadline_is_manifestazione_without_it_is_pregara():
+    t = "Proposte per l'ammodernamento e la gestione dell'illuminazione pubblica"
+    assert categorize(stato_procedurale="PRE-GARA", text=t, atto_tipo="proposta_ppp", has_deadline=True) == MANIFESTAZIONE
+    assert categorize(stato_procedurale="PRE-GARA", text=t, atto_tipo="proposta_ppp") == PRE_GARA
+
+
+def test_acts_dealing_with_a_received_proposal_stay_pregara():
+    delibera = (
+        "DELIBERA DI GIUNTA N. 96 - PROPOSTA DI FINANZA DI PROGETTO ART. 193. AFFIDAMENTO IN CONCESSIONE "
+        "AMPLIAMENTO DELLA RETE DI PUBBLICA ILLUMINAZIONE"
+    )
+    assert categorize(stato_procedurale="PRE-GARA", text=delibera, atto_tipo="proposta_ppp", has_deadline=True) == PRE_GARA
+    valut = "Valutazione delle proposte pervenute a seguito di avviso pubblico illuminazione pubblica"
+    assert categorize(stato_procedurale="PRE-GARA", text=valut, atto_tipo="proposta_ppp") == PRE_GARA
+    atto = "Atto di indirizzo per l'esternalizzazione del servizio di illuminazione pubblica"
+    assert categorize(stato_procedurale="PRE-GARA", text=atto, atto_tipo="determina_a_contrarre") == PRE_GARA
