@@ -52,3 +52,24 @@ def test_judge_pregara_reads_the_date_of_the_act():
 def test_html_to_text_strips_tags_so_cue_and_date_meet():
     html = "<p><b>Scadenza:</b> </p><span>05/12/2026</span><script>var x=1</script>"
     assert deadline_from_text(html_to_text(html)) == date(2026, 12, 5)
+
+
+def test_attachment_links_follow_the_notice_own_documents():
+    from app.tasks.verify_records import attachment_links
+
+    html = (
+        '<a href="/files/avviso.pdf">AVVISO PUBBLICO</a>'
+        '<a href="/download/123">Allegati tecnici</a><a href="/files/tecnici.zip">Allegati tecnici</a>'
+        '<a href="https://altro.it/x.pdf">Avviso</a><a href="/chi-siamo">Chi siamo</a>'
+        '<a href="/img/logo.png">Avviso</a>'
+    )
+    links = attachment_links(html, base_url="https://www.comune.esempio.it/novita/n1.html")
+    assert links[0] == "https://www.comune.esempio.it/files/avviso.pdf"
+    assert "https://www.comune.esempio.it/download/123" in links
+    assert all("altro.it" not in u and not u.endswith((".zip", ".png")) for u in links)
+
+
+def test_dash_dates_in_the_page_are_read():
+    from shared_models.relevance import dates_in_text
+
+    assert date(2026, 11, 19) in dates_in_text("Determinazione Dirigenziale n. 217 del 19-11-2026")

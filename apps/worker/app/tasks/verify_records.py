@@ -17,13 +17,16 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import re
 from datetime import UTC, date, datetime, timedelta
+from urllib.parse import urlsplit
 
 import httpx
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
+from bs4 import BeautifulSoup
 from shared_models import ProcurementRecord
 from shared_models.categories import categorize_record
 from shared_models.relevance import (
@@ -67,29 +70,83 @@ def pdf_to_text(data: bytes) -> str:
     return " ".join(" ".join(parts).split())
 
 
-async def fetch_document_text(url: str, settings: WorkerSettings) -> str:
-    """Text of the document behind ``url`` ('' when it cannot be read)."""
+_ATTACH_TEXT = re.compile(
+    r"avviso|bando|disciplinare|invito|manifestazione|lettera|capitolato|proposte?|determina|allegat", re.IGNORECASE
+)
+_ATTACH_HREF = re.compile(r"\.pdf($|\?)|/download|/allegat|getfile|/documento|attachment", re.IGNORECASE)
+_NOT_ATTACH = (".jpg", ".jpeg", ".png", ".gif", ".zip", ".rar", ".doc", ".docx", ".xls", ".xlsx", ".p7m")
+
+
+def attachment_links(html: str, *, base_url: str, limit: int = 3) -> list[str]:
+    """Links to the notice's own documents (the deadline is often only in the attached
+    PDF, not in the page): same site, a PDF or a download/allegato link, preferring
+    ones named like the notice ("Avviso pubblico", "Bando", "Disciplinare")."""
+    from app.collectors.page_gate import safe_join
+
+    soup = BeautifulSoup(html, "lxml")
+    base_host = urlsplit(base_url).netloc
+    scored: dict[str, int] = {}
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        path = href.lower().split("?")[0]
+        if path.endswith(_NOT_ATTACH):
+            continue
+        text = " ".join(a.get_text(" ", strip=True).split())
+        by_text = bool(_ATTACH_TEXT.search(text)) and len(text) <= 120
+        by_href = bool(_ATTACH_HREF.search(href))
+        if not (by_text and by_href) and not path.endswith(".pdf"):
+            continue
+        url = safe_join(base_url, href)
+        if not url or urlsplit(url).netloc != base_host or url == base_url:
+            continue
+        scored[url] = max(scored.get(url, 0), (2 if by_text else 0) + (1 if path.endswith(".pdf") else 0))
+    return [u for u, _ in sorted(scored.items(), key=lambda kv: -kv[1])[:limit]]
+
+
+async def _fetch_plain(url: str) -> tuple[str, str | None]:
+    """(text, raw html or None) with plain HTTP; ('', None) when it cannot be read."""
     low = url.lower().split("?")[0]
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=_UA) as c:
             r = await c.get(url)
         ctype = r.headers.get("content-type", "").lower()
         if r.status_code < 400 and ("pdf" in ctype or low.endswith(".pdf") or r.content[:4] == b"%PDF"):
-            return pdf_to_text(r.content)[:MAX_TEXT_CHARS]
+            return pdf_to_text(r.content)[:MAX_TEXT_CHARS], None
         if r.status_code < 400 and len(r.text) > 3000:
-            return html_to_text(r.text)[:MAX_TEXT_CHARS]
+            return html_to_text(r.text)[:MAX_TEXT_CHARS], r.text
     except Exception as exc:  # noqa: BLE001
         log.info("verify.plain_fetch_failed url=%s err=%s", url, exc)
-    res = await adaptive_fetch_result(
-        url,
-        timeout=30,
-        max_html_chars=settings.crawl_max_html_chars,
-        playwright_min_chars=settings.smart_collector_playwright_min_chars,
-        playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
-        label="verify",
-        try_variants=False,
-    )
-    return html_to_text(res.text)[:MAX_TEXT_CHARS] if res.text else ""
+    return "", None
+
+
+async def fetch_document_text(url: str, settings: WorkerSettings, *, attachments: bool = True) -> str:
+    """Text of the document behind ``url`` ('' when it cannot be read). For a web page,
+    the text of its own attached documents (up to 3 PDFs) is appended: the deadline is
+    often only there."""
+    text, raw = await _fetch_plain(url)
+    if not text:
+        res = await adaptive_fetch_result(
+            url,
+            timeout=30,
+            max_html_chars=settings.crawl_max_html_chars,
+            playwright_min_chars=settings.smart_collector_playwright_min_chars,
+            playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
+            label="verify",
+            try_variants=False,
+        )
+        if not res.text:
+            return ""
+        text, raw = html_to_text(res.text)[:MAX_TEXT_CHARS], res.text
+    if attachments and raw:
+        parts = [text]
+        for link in attachment_links(raw, base_url=url):
+            att, _ = await _fetch_plain(link)
+            if att:
+                parts.append(f" [ALLEGATO {link}] {att}")
+        text = " ".join(parts)[: MAX_TEXT_CHARS * 2]
+    return text
 
 
 def judge(text: str, today: date, category: str = "gara") -> tuple[str, date | None, date | None]:
