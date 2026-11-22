@@ -106,7 +106,7 @@ _EXCLUDE = re.compile(
     r"impegno di spesa|saldo (incarico|competenze)|rendicontazion|"
     r"comunicazione contributo|contributi per investimenti|"
     # already awarded / closed / cancelled
-    r"aggiudicazion|aggiudicat[oaie]\b|post-?informazione|\besito\b|affidamento diretto|affidamento e impegno|presa d.atto|\brevoca\b|"
+    r"aggiudicazion|aggiudicat[oaie]\b|enel energia|post-?informazione|\besito\b|affidamento diretto|affidamento e impegno|presa d.atto|\brevoca\b|"
     r"approvazione verbale|\bverbale\b|"
     # running the contract, not winning it
     r"direttore (dell.|dell\u2019)?esecuzione|"
@@ -137,6 +137,21 @@ _MANIFESTAZIONE_WORDING = re.compile(
 )
 
 
+# "Manifestazione di interesse" to JOIN an energy community is addressed to citizens and
+# businesses (customers / prosumers), not to suppliers: not a procurement opportunity,
+# unless the comune is also looking for a partner/advisor/operator for it.
+_CER = re.compile(r"comunit\w* energetic", re.IGNORECASE)
+_CER_PROCUREMENT = re.compile(
+    r"affidamento|gestione|realizzazione|progettazione|partner|advisor|operatore|gara|concessione|"
+    r"finanza di progetto|impianto",
+    re.IGNORECASE,
+)
+
+
+def is_cer_membership(low: str) -> bool:
+    return bool(_CER.search(low)) and not _CER_PROCUREMENT.search(low)
+
+
 def is_noise(text: str | None, ente: str | None = None) -> bool:
     """True for acts that are not opportunities (payments, awards, generic pages,
     non-procuring bodies). Used on its own at ingestion; ``categorize`` applies it too."""
@@ -145,7 +160,7 @@ def is_noise(text: str | None, ente: str | None = None) -> bool:
     low = " ".join((text or "").lower().split())
     if low in _GENERIC_TITLES:
         return True
-    return bool(_EXCLUDE.search(low))
+    return bool(_EXCLUDE.search(low)) or is_cer_membership(low)
 
 
 def categorize(
@@ -180,3 +195,22 @@ def categorize(
     if stato == "PRE-GARA" or flag_pre_gara == "Yes" or _has(low, PRE_GARA_KEYWORDS):
         return PRE_GARA
     return GARA
+
+
+def categorize_record(r) -> str | None:
+    """``categorize`` for a stored ProcurementRecord, plus the scope check: a notice
+    that mentions none of the services (a lake-side infrastructure project, a bare
+    "Determinazione Nr.95") is not an opportunity whatever its wording."""
+    from shared_models.services import detect_services
+
+    text = f"{r.descrizione or ''} {r.tipologia_gara_procedura or ''}"
+    cat = categorize(
+        stato_procedurale=r.stato_procedurale,
+        text=text,
+        flag_pre_gara=r.flag_pre_gara,
+        atto_tipo=r.atto_tipo,
+        ente=r.ente,
+    )
+    if cat is not None and not (r.servizio or detect_services(text)):
+        return None
+    return cat

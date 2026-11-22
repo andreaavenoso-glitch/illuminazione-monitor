@@ -89,3 +89,64 @@ def test_only_old_dates():
     assert only_old_dates(page, today)
     assert not only_old_dates(page + " scadenza 30/11/2026", today)
     assert not only_old_dates("nessuna data qui", today)
+
+
+# --- Basilicata: falsi positivi in gara / manifestazione ---------------------------
+from types import SimpleNamespace  # noqa: E402
+
+from shared_models.categories import categorize_record  # noqa: E402
+from shared_models.relevance import is_confirmed_open, url_year  # noqa: E402
+
+
+def _rec(text, atto=None, servizio=None, stato="PRE-GARA", ente="Comune di X"):
+    return SimpleNamespace(
+        descrizione=text, tipologia_gara_procedura=None, stato_procedurale=stato,
+        flag_pre_gara=None, atto_tipo=atto, ente=ente, servizio=servizio,
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Avviso manifestazione di interesse ad aderire alla costituenda comunita energetica di Sasso di Castalda",
+        "Comunita energetica rinnovabile - Manifestazione interesse Customer",
+        "Manifestazione di interesse Comunita Energetica Rinnovabile",
+        "Fornitura energia elettrica pubblica illuminazione - Societa Enel Energia",
+    ],
+)
+def test_cer_membership_and_supply_are_noise(text):
+    assert categorize(stato_procedurale=None, text=text) is None
+
+
+def test_cer_with_procurement_wording_is_kept():
+    assert (
+        categorize(
+            stato_procedurale=None,
+            text="Manifestazione di interesse per la realizzazione e gestione impianti comunita energetica",
+        )
+        == MANIFESTAZIONE
+    )
+
+
+def test_out_of_scope_record_is_dropped():
+    r = _rec("AVVISO SOLLECITAZIONE DI PROPOSTE FINANZA DI PROGETTO INFRASTRUTTURE COMUNALI LAGO LAUDEMIO")
+    assert categorize_record(r) is None
+    assert categorize_record(_rec("DETERMINA Determinazione Nr.95 del 13/05/2025")) is None
+    ok = _rec("Avviso esplorativo servizio manutenzione impianti di pubblica illuminazione")
+    assert categorize_record(ok) == MANIFESTAZIONE
+
+
+def test_gara_and_manifestazione_need_a_future_deadline():
+    today = date(2026, 11, 22)
+    assert not is_confirmed_open(GARA, None, datetime(2026, 11, 22, tzinfo=UTC), None, today)
+    assert not is_confirmed_open(MANIFESTAZIONE, None, None, None, today)
+    assert is_confirmed_open(GARA, datetime(2026, 12, 1, tzinfo=UTC), None, None, today)
+    assert not is_confirmed_open(GARA, datetime(2026, 11, 1, tzinfo=UTC), None, None, today)
+
+
+def test_pregara_without_deadline_but_old_link_is_dropped():
+    today = date(2026, 11, 22)
+    old = "https://ww2.gazzettaamministrativa.it/x/_ruoti/2018/0004_Documenti_1517561687453/a.pdf"
+    assert url_year(old) == 2018
+    assert not is_confirmed_open(PRE_GARA, None, datetime(2026, 11, 22, tzinfo=UTC), old, today)
+    assert is_confirmed_open(PRE_GARA, None, datetime(2026, 11, 20, tzinfo=UTC), "https://x.it/avviso/1", today)

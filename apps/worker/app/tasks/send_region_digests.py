@@ -19,8 +19,8 @@ from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from app.digest import DigestItem, build_digest, parse_recipients
 from shared_models import ProcurementRecord, RegionSettings
-from shared_models.categories import categorize
-from shared_models.relevance import MAX_AGE_DAYS, act_signature, collapse_duplicates, is_actionable
+from shared_models.categories import categorize_record
+from shared_models.relevance import MAX_AGE_DAYS, act_signature, collapse_duplicates, is_confirmed_open
 from sqlalchemy import and_, or_, select
 
 log = logging.getLogger(__name__)
@@ -87,16 +87,8 @@ async def _run(region: str | None = None) -> dict:
                 lambda r: (r.scadenza is not None, len(r.descrizione or "")),
             )
             for r in deduped:
-                if not is_actionable(r.scadenza, r.data_pubblicazione):
-                    continue
-                cat = categorize(
-                    stato_procedurale=r.stato_procedurale,
-                    text=f"{r.descrizione or ''} {r.tipologia_gara_procedura or ''}",
-                    flag_pre_gara=r.flag_pre_gara,
-                    atto_tipo=r.atto_tipo,
-                    ente=r.ente,
-                )
-                if cat is None:
+                cat = categorize_record(r)
+                if cat is None or not is_confirmed_open(cat, r.scadenza, r.data_pubblicazione, r.link_bando):
                     continue
                 items.append((r, DigestItem(
                     categoria=cat, ente=r.ente, descrizione=r.descrizione or "",

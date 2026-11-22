@@ -21,9 +21,9 @@ from shared_models import (
     User,
     WatchlistItem,
 )
-from shared_models.categories import CATEGORIES, categorize
+from shared_models.categories import CATEGORIES, categorize_record
 from shared_models.regions import REGIONS, normalize_region
-from shared_models.relevance import act_signature, collapse_duplicates, is_actionable, today_utc
+from shared_models.relevance import act_signature, collapse_duplicates, is_confirmed_open, today_utc
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,13 +73,11 @@ async def _get_or_create_settings(session: AsyncSession, region: str) -> RegionS
 
 
 def _record_category(r: ProcurementRecord) -> str | None:
-    return categorize(
-        stato_procedurale=r.stato_procedurale,
-        text=f"{r.descrizione or ''} {r.tipologia_gara_procedura or ''}",
-        flag_pre_gara=r.flag_pre_gara,
-        atto_tipo=r.atto_tipo,
-        ente=r.ente,
-    )
+    return categorize_record(r)
+
+
+def _open(r: ProcurementRecord, cat: str | None, today) -> bool:
+    return is_confirmed_open(cat, r.scadenza, r.data_pubblicazione, r.link_bando, today)
 
 
 def _dedupe(records: list) -> list:
@@ -145,7 +143,7 @@ async def list_regions(
     for rec in await _recent_records(session):
         r = normalize_region(rec.regione)
         cat = _record_category(rec)
-        if r and cat and is_actionable(rec.scadenza, rec.data_pubblicazione, today):
+        if r and cat and _open(rec, cat, today):
             per[r][cat] += 1
             if rec.notified_at is None:
                 per[r]["da_notificare"] += 1
@@ -254,7 +252,7 @@ async def region_detail(
         cat = _record_category(rec)
         if cat is None:
             continue
-        valid = is_actionable(rec.scadenza, rec.data_pubblicazione, today)
+        valid = _open(rec, cat, today)
         if not valid:
             hidden += 1
             if not scadute:
@@ -312,7 +310,7 @@ async def region_records_csv(
             "ente": rec.ente, "descrizione": (rec.descrizione or "").replace("\n", " "),
             "data_pubblicazione": rec.data_pubblicazione.date().isoformat() if rec.data_pubblicazione else "",
             "scadenza": rec.scadenza.date().isoformat() if rec.scadenza else "",
-            "ancora_valido": "si" if is_actionable(rec.scadenza, rec.data_pubblicazione, today) else "no",
+            "ancora_valido": "si" if _open(rec, cat, today) else "no",
             "stato": rec.stato_procedurale, "atto_tipo": rec.atto_tipo or "", "link": rec.link_bando,
             "visto_il": rec.first_seen_at.date().isoformat() if rec.first_seen_at else "",
         })

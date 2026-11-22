@@ -154,3 +154,37 @@ def only_old_dates(text: str | None, today: date, *, max_age_days: int = MAX_AGE
     if the list entry showed no date. No dates at all -> False (cannot be judged)."""
     ds = dates_in_text(text)
     return bool(ds) and max(ds) < today - timedelta(days=max_age_days)
+
+
+# --- Gare and manifestazioni: no false positives ---------------------------------
+# A published tender or a call for interest ALWAYS has a deadline. One without a
+# readable deadline cannot be confirmed open (its "published today" date was often
+# just the day it was first seen), so it is kept out of the lists and the emails
+# instead of risking a closed 2018 notice being sold as an open call.
+STRICT_CATEGORIES = ("gara", "manifestazione_interesse")
+_URL_YEAR = re.compile(r"(?<!\d)(20[0-3]\d)(?!\d)")
+
+
+def url_year(url: str | None) -> int | None:
+    """Latest year written in a link (".../2018/..."), a strong sign of an old document."""
+    years = [int(y) for y in _URL_YEAR.findall(url or "")]
+    return max(years) if years else None
+
+
+def is_confirmed_open(
+    category: str | None,
+    scadenza: date | datetime | None,
+    data_pubblicazione: date | datetime | None,
+    url: str | None = None,
+    today: date | None = None,
+) -> bool:
+    today = today or today_utc()
+    deadline = _as_date(scadenza)
+    if deadline is not None:
+        return deadline >= today
+    if category in STRICT_CATEGORIES:
+        return False
+    uy = url_year(url)
+    if uy is not None and uy < today.year - 1:
+        return False
+    return is_actionable(None, data_pubblicazione, today)
