@@ -96,6 +96,12 @@ export function ScanView({ region }: { region: string }) {
           {data.done}/{data.total} comuni ({pct}%) · {data.running} in corso
           {data.interrupted > 0 && <> · {data.interrupted} interrotti a metà</>} · {data.queued} in coda · {data.errors} con errore
         </p>
+        {data.total === 0 && data.status !== "running" && (
+          <p className="mt-2 rounded bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+            Nessun comune da leggere: con &quot;Riprendi&quot; vengono saltati i comuni già letti nelle ultime 24 ore, e
+            qui sono tutti già letti. Per rifarli comunque usa &quot;Raccogli ora&quot;.
+          </p>
+        )}
         {data.error && <p className="mt-2 rounded bg-red-50 p-2 text-xs text-red-900 dark:bg-red-950 dark:text-red-100">{data.error.slice(0, 300)}</p>}
       </section>
 
