@@ -16,7 +16,7 @@ import {
   type RegionDetail,
 } from "@/lib/regions";
 
-type Tab = Categoria | "siti" | "scan";
+type Tab = Categoria | "siti" | "scan" | "verifica";
 
 const ERROR_LABELS: Record<string, string> = {
   http_404: "pagina non trovata (404)",
@@ -93,6 +93,15 @@ export default function RegionPage() {
     },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
+  const verify = useMutation({
+    mutationFn: () => api.post(`/regions/${encodeURIComponent(region)}/verify`),
+    onSuccess: () => {
+      setMessage(
+        "Verifica avviata: apro il link di ogni avviso senza scadenza (pagina o PDF) e leggo la data. Ci vuole qualche minuto; la pagina si aggiorna da sola.",
+      );
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
   const digest = useMutation({
     mutationFn: () => api.post(`/regions/${encodeURIComponent(region)}/send-digest`),
     onSuccess: () =>
@@ -132,6 +141,7 @@ export default function RegionPage() {
     { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: byCat("pre_gara").length },
     { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: byCat("manifestazione_interesse").length },
     { key: "gara", label: CATEGORIA_LABEL.gara, n: byCat("gara").length },
+    { key: "verifica", label: "Da verificare", n: data.da_verificare?.length ?? 0 },
     { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length },
     { key: "scan", label: "Raccolta" },
   ];
@@ -231,6 +241,31 @@ export default function RegionPage() {
 
       {tab === "scan" ? (
         <ScanView region={region} />
+      ) : tab === "verifica" ? (
+        <ul className="space-y-3">
+          <li className="text-xs text-neutral-500">
+            Gare e manifestazioni di cui non si legge una scadenza: finché non è confermata non compaiono nelle liste né nelle
+            email. {admin && (
+              <button type="button" className="underline" disabled={verify.isPending} onClick={() => verify.mutate()}>
+                Verifica ora (apre i link e legge la scadenza)
+              </button>
+            )}
+          </li>
+          {(data.da_verificare ?? []).length === 0 && <li className="text-sm text-neutral-500">Nessun avviso da verificare.</li>}
+          {(data.da_verificare ?? []).map((r) => (
+            <li key={r.id} className="rounded border p-3 text-sm dark:border-neutral-800">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <b>{r.ente}</b>
+                <span className="text-xs text-neutral-500">
+                  {CATEGORIA_LABEL[r.categoria]} · visto il {fmt(r.first_seen_at)}
+                  {r.verificato && " · letto il documento, nessuna scadenza trovata"}
+                </span>
+              </div>
+              <p className="mt-1">{r.descrizione}</p>
+              <a href={r.link} target="_blank" rel="noreferrer" className="text-xs text-sky-700 underline">apri il documento</a>
+            </li>
+          ))}
+        </ul>
       ) : tab !== "siti" ? (
         <ul className="space-y-3">
           {data.scadute_nascoste > 0 && (

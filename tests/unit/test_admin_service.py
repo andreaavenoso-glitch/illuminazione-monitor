@@ -61,7 +61,10 @@ def test_region_run_reads_the_comuni_first_and_normalizes_last() -> None:
     names = [n.rsplit(".", 1)[-1] for n, _ in steps]
     # The comuni (what the progress view shows) come before the slow regional sites,
     # and nothing is normalized before everything that feeds it is done.
-    assert names == ["collect_watchlist_albo", "collect_regional_sites", "normalize_records", "score_and_dedupe"]
+    assert names == [
+        "collect_watchlist_albo", "collect_regional_sites", "normalize_records", "score_and_dedupe",
+        "verify_region_records",
+    ]
     assert steps[0][1] == {"region": "Puglia", "limit": 10, "skip_scanned_hours": None}
     assert steps[1][1] == {"region": "Puglia"}
 

@@ -27,6 +27,12 @@ case "${1:-aggiorna}" in
     docker compose up -d
     echo "==> 3/5 Ricreo API e worker (rileggono il file .env, ad esempio la chiave Claude) e riavvio il sito..."
     # "restart" NON rilegge .env: una chiave appena aggiunta resterebbe ignorata.
+    # Se requirements.txt del worker e' cambiato (nuova libreria), l'immagine va ricostruita.
+    req_hash=$(sha1sum apps/worker/requirements.txt | cut -d' ' -f1)
+    if [ "$(cat .worker_requirements.sha 2>/dev/null)" != "$req_hash" ]; then
+      echo "    nuove librerie per il worker: ricostruisco l'immagine (qualche minuto)..."
+      docker compose build worker && echo "$req_hash" > .worker_requirements.sha
+    fi
     docker compose up -d --force-recreate api worker
     docker compose restart web
     echo "==> 4/5 Aspetto che l'API risponda (fino a 2 minuti)..."

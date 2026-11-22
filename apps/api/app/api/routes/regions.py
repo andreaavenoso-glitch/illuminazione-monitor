@@ -23,7 +23,13 @@ from shared_models import (
 )
 from shared_models.categories import CATEGORIES, categorize_record
 from shared_models.regions import REGIONS, normalize_region
-from shared_models.relevance import act_signature, collapse_duplicates, is_confirmed_open, today_utc
+from shared_models.relevance import (
+    STRICT_CATEGORIES,
+    act_signature,
+    collapse_duplicates,
+    is_confirmed_open,
+    today_utc,
+)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,6 +83,8 @@ def _record_category(r: ProcurementRecord) -> str | None:
 
 
 def _open(r: ProcurementRecord, cat: str | None, today) -> bool:
+    if r.verifica_esito == "chiuso":
+        return False
     return is_confirmed_open(cat, r.scadenza, r.data_pubblicazione, r.link_bando, today)
 
 
@@ -246,6 +254,7 @@ async def region_detail(
         )
     ).scalar_one_or_none()
     records = []
+    da_verificare: list[dict] = []
     hidden = 0
     today = today_utc()
     for rec in await _recent_records(session, region):
@@ -253,6 +262,20 @@ async def region_detail(
         if cat is None:
             continue
         valid = _open(rec, cat, today)
+        unconfirmed = (
+            not valid
+            and rec.scadenza is None
+            and cat in STRICT_CATEGORIES
+            and rec.verifica_esito != "chiuso"
+        )
+        if unconfirmed:
+            da_verificare.append({
+                "id": str(rec.id), "categoria": cat, "ente": rec.ente, "descrizione": rec.descrizione,
+                "link": rec.link_bando, "first_seen_at": rec.first_seen_at,
+                "verificato": rec.verifica_esito == "non_trovata",
+                "servizi": [k for k in (rec.servizio or "").split(",") if k],
+            })
+            continue
         if not valid:
             hidden += 1
             if not scadute:
@@ -276,6 +299,7 @@ async def region_detail(
         "recipients": rs.recipients if rs else None,
         "last_digest_at": rs.last_digest_at if rs else None,
         "scadute_nascoste": 0 if scadute else hidden,
+        "da_verificare": da_verificare,
         "ultimo_scan": None if last_scan is None else {
             "status": last_scan.status, "errore": last_scan.error_message,
             "at": last_scan.started_at, "trovati": last_scan.records_found,
@@ -418,6 +442,15 @@ async def collect_region(
         "status": "dispatched", "region": region, "limit": limit, "resume": resume,
         **dispatch_region_scan(region, limit, hours),
     }
+
+
+@router.post("/{region}/verify")
+async def verify_region_endpoint(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    """Open the link of every gara / manifestazione without a deadline and read it."""
+    from app.services.admin_service import dispatch_verify
+
+    region = _canonical(region)
+    return {"status": "dispatched", "region": region, "task_id": dispatch_verify(region)}
 
 
 @router.post("/{region}/process")

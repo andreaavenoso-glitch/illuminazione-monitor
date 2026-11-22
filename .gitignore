@@ -26,3 +26,5 @@ playwright-report/
 test-results/
 tsconfig.tsbuildinfo
 infra/samples/
+
+.worker_requirements.sha

@@ -63,6 +63,11 @@ class ProcurementRecord(Base):
     servizio: Mapped[str | None] = mapped_column(String, nullable=True)
     # Claude's label for pre-tender acts (manifestazione_interesse, proposta_ppp...); None for tenders.
     atto_tipo: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Automatic check of the linked page/PDF (app.tasks.verify_records): when it ran and
+    # what it found: "aperto" (future deadline read), "chiuso" (deadline passed or only
+    # old dates), "non_trovata" (no deadline in the document: stays "da verificare").
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verifica_esito: Mapped[str | None] = mapped_column(String, nullable=True)
     # When this record was included in a regional email digest (None = not yet).
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

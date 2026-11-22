@@ -188,3 +188,44 @@ def is_confirmed_open(
     if uy is not None and uy < today.year - 1:
         return False
     return is_actionable(None, data_pubblicazione, today)
+
+
+# --- Reading the deadline out of a document -----------------------------------------
+_DEADLINE_CUE = re.compile(
+    r"scadenz\w*|entro (?:e non oltre )?(?:il|le ore|il giorno|la data)|non oltre (?:il|le ore)|"
+    r"termine (?:ultimo |perentorio )?(?:per|di) (?:la )?(?:presentazione|ricezione|invio|partecipazione)|"
+    r"presentat\w+ (?:entro|non oltre)",
+    re.IGNORECASE,
+)
+
+
+def deadline_from_text(text: str | None) -> date | None:
+    """Deadline written in a notice: the first date right after each cue ("scadenza",
+    "entro il", "termine per la presentazione delle offerte...") and the latest of
+    those. None when no cue is followed by a date. Deterministic and free: it settles
+    most notices before any Claude call."""
+    if not text:
+        return None
+    found: list[date] = []
+    for m in _DEADLINE_CUE.finditer(text):
+        window = text[m.end(): m.end() + 140]
+        ps = _positions(window)
+        if ps:
+            # the first date written after the cue, not the latest of the window
+            found.append(min(ps, key=lambda p: window.find(p[0]))[1])
+    return max(found) if found else None
+
+
+def _positions(window: str) -> list[tuple[str, date]]:
+    out: list[tuple[str, date]] = []
+    for m in _NUM_DATE.finditer(window):
+        try:
+            out.append((m.group(0), date(int(m.group(3)), int(m.group(2)), int(m.group(1)))))
+        except ValueError:
+            continue
+    for m in _TXT_DATE.finditer(window):
+        try:
+            out.append((m.group(0), date(int(m.group(3)), _IT_MONTHS.index(m.group(2).lower()) + 1, int(m.group(1)))))
+        except ValueError:
+            continue
+    return out

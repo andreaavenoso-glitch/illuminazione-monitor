@@ -76,8 +76,20 @@ export const SERVIZIO_LABEL: Record<string, string> = {
   smart_city: "Smart city",
 };
 
+export interface RecordDaVerificare {
+  id: string;
+  categoria: Categoria;
+  ente: string;
+  descrizione: string;
+  link: string;
+  first_seen_at: string | null;
+  verificato: boolean;
+  servizi: string[];
+}
+
 export interface RegionDetail {
   scadute_nascoste: number;
+  da_verificare: RecordDaVerificare[];
   ultimo_scan: { status: string; errore: string | null; at: string; trovati: number } | null;
   region: string;
   enabled: boolean;

@@ -1,0 +1,171 @@
+"""Open the page / PDF behind every gara or manifestazione without a deadline and read it.
+
+A published tender or call for interest always has a deadline, so one without a
+readable deadline is "da verificare" and kept out of lists and emails (see
+``shared_models.relevance.is_confirmed_open``). Doing that check by hand is just
+opening the link and finding the date, which is exactly what this task does:
+
+1. fetch the link (HTML, with the browser fallback for JS pages; or PDF text),
+2. a deterministic reading of the deadline ("scadenza", "entro il", "termine per la
+   presentazione...") -- free, settles most notices,
+3. if the document only carries dates that are all old -> closed,
+4. otherwise, when the text has deadline wording the pattern missed, one small
+   Claude call; else "non_trovata" (stays to verify).
+"""
+from __future__ import annotations
+
+import asyncio
+import io
+import logging
+from datetime import UTC, date, datetime, timedelta
+
+import httpx
+from app.celery_app import celery_app
+from app.collectors.adaptive_fetch import adaptive_fetch_result
+from app.config import WorkerSettings, get_worker_settings
+from app.db import SessionLocal
+from shared_models import ProcurementRecord
+from shared_models.categories import categorize_record
+from shared_models.relevance import STRICT_CATEGORIES, deadline_from_text, only_old_dates, today_utc
+from sqlalchemy import select
+
+log = logging.getLogger(__name__)
+
+RECENT_DAYS = 365
+RECHECK_AFTER_DAYS = 7
+MAX_PDF_PAGES = 12
+MAX_TEXT_CHARS = 60000
+_UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
+_CLAUDE_CUES = ("scadenz", "entro il", "entro le", "termine", "presentazione delle", "manifestare")
+
+
+def html_to_text(html: str) -> str:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    for t in soup(["script", "style", "noscript"]):
+        t.decompose()
+    return " ".join(soup.get_text(" ").split())
+
+
+def pdf_to_text(data: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        parts = [(p.extract_text() or "") for p in reader.pages[:MAX_PDF_PAGES]]
+    except Exception:  # noqa: BLE001 - scanned/encrypted/corrupt PDF
+        return ""
+    return " ".join(" ".join(parts).split())
+
+
+async def fetch_document_text(url: str, settings: WorkerSettings) -> str:
+    """Text of the document behind ``url`` ('' when it cannot be read)."""
+    low = url.lower().split("?")[0]
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=_UA) as c:
+            r = await c.get(url)
+        ctype = r.headers.get("content-type", "").lower()
+        if r.status_code < 400 and ("pdf" in ctype or low.endswith(".pdf") or r.content[:4] == b"%PDF"):
+            return pdf_to_text(r.content)[:MAX_TEXT_CHARS]
+        if r.status_code < 400 and len(r.text) > 3000:
+            return html_to_text(r.text)[:MAX_TEXT_CHARS]
+    except Exception as exc:  # noqa: BLE001
+        log.info("verify.plain_fetch_failed url=%s err=%s", url, exc)
+    res = await adaptive_fetch_result(
+        url,
+        timeout=30,
+        max_html_chars=settings.crawl_max_html_chars,
+        playwright_min_chars=settings.smart_collector_playwright_min_chars,
+        playwright_wait_ms=settings.smart_collector_playwright_wait_ms,
+        label="verify",
+        try_variants=False,
+    )
+    return html_to_text(res.text)[:MAX_TEXT_CHARS] if res.text else ""
+
+
+def judge(text: str, today: date) -> tuple[str, date | None]:
+    """(esito, scadenza) from the document text, no network: aperto | chiuso |
+    non_trovata | claude (deadline wording present but not parsed: ask Claude)."""
+    if not text.strip():
+        return "non_trovata", None
+    deadline = deadline_from_text(text)
+    if deadline is not None:
+        return ("aperto" if deadline >= today else "chiuso"), deadline
+    if only_old_dates(text, today):
+        return "chiuso", None
+    low = text.lower()
+    if any(c in low for c in _CLAUDE_CUES):
+        return "claude", None
+    return "non_trovata", None
+
+
+async def _claude_deadline(text: str, url: str, settings: WorkerSettings) -> date | None:
+    from app.collectors.albo_pretorio_llm import extract_bando_detail
+
+    details = await extract_bando_detail(text[:20000], url=url, settings=settings, label="verify")
+    raw = (details or {}).get("scadenza")
+    try:
+        return date.fromisoformat(str(raw)[:10]) if raw else None
+    except ValueError:
+        return None
+
+
+async def verify_region(region: str, *, limit: int = 200) -> dict[str, int]:
+    settings = get_worker_settings()
+    today = today_utc()
+    now = datetime.now(tz=UTC)
+    out = {"checked": 0, "aperto": 0, "chiuso": 0, "non_trovata": 0, "errors": 0}
+    async with SessionLocal() as session:
+        recs = (
+            await session.execute(
+                select(ProcurementRecord)
+                .where(
+                    ProcurementRecord.regione == region,
+                    ProcurementRecord.master_record_id.is_(None),
+                    ProcurementRecord.scadenza.is_(None),
+                    ProcurementRecord.first_seen_at >= now - timedelta(days=RECENT_DAYS),
+                )
+                .order_by(ProcurementRecord.first_seen_at.desc())
+            )
+        ).scalars().all()
+        todo = []
+        for r in recs:
+            if categorize_record(r) not in STRICT_CATEGORIES:
+                continue
+            if r.verified_at is not None and (
+                r.verifica_esito != "non_trovata" or r.verified_at > now - timedelta(days=RECHECK_AFTER_DAYS)
+            ):
+                continue
+            todo.append(r)
+        sem = asyncio.Semaphore(3)
+
+        async def one(r: ProcurementRecord) -> None:
+            async with sem:
+                try:
+                    text = await asyncio.wait_for(fetch_document_text(r.link_bando, settings), timeout=120)
+                    esito, deadline = judge(text, today)
+                    if esito == "claude":
+                        deadline = await _claude_deadline(text, r.link_bando, settings)
+                        esito = "non_trovata" if deadline is None else ("aperto" if deadline >= today else "chiuso")
+                    if deadline is not None:
+                        r.scadenza = datetime(deadline.year, deadline.month, deadline.day, tzinfo=UTC)
+                    r.verifica_esito = esito
+                    r.verified_at = now
+                    out[esito] += 1
+                except Exception as exc:  # noqa: BLE001
+                    out["errors"] += 1
+                    log.warning("verify.failed url=%s err=%s", r.link_bando, exc)
+                out["checked"] += 1
+
+        await asyncio.gather(*(one(r) for r in todo[:limit]))
+        await session.commit()
+    log.info("verify.done region=%s %s", region, out)
+    return out
+
+
+@celery_app.task(name="app.tasks.verify_records.verify_region_records", soft_time_limit=3600, time_limit=3700)
+def verify_region_records(region: str) -> dict[str, int]:
+    return asyncio.run(verify_region(region))

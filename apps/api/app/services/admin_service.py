@@ -115,7 +115,15 @@ def region_scan_steps(
         ("app.tasks.collect_sources.collect_regional_sites", {"region": region}),
         ("app.tasks.normalize_records.normalize_records", {}),
         ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
+        # Last: open the link of every gara / manifestazione without a deadline.
+        ("app.tasks.verify_records.verify_region_records", {"region": region}),
     ]
+
+
+def dispatch_verify(region: str) -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.verify_records.verify_region_records", kwargs={"region": region})
+    return str(result.id)
 
 
 def dispatch_region_scan(
