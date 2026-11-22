@@ -26,7 +26,13 @@ from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from shared_models import ProcurementRecord
 from shared_models.categories import categorize_record
-from shared_models.relevance import STRICT_CATEGORIES, deadline_from_text, only_old_dates, today_utc
+from shared_models.relevance import (
+    STRICT_CATEGORIES,
+    deadline_from_text,
+    only_old_dates,
+    recent_date_in_text,
+    today_utc,
+)
 from sqlalchemy import select
 
 log = logging.getLogger(__name__)
@@ -86,20 +92,27 @@ async def fetch_document_text(url: str, settings: WorkerSettings) -> str:
     return html_to_text(res.text)[:MAX_TEXT_CHARS] if res.text else ""
 
 
-def judge(text: str, today: date) -> tuple[str, date | None]:
-    """(esito, scadenza) from the document text, no network: aperto | chiuso |
-    non_trovata | claude (deadline wording present but not parsed: ask Claude)."""
+def judge(text: str, today: date, category: str = "gara") -> tuple[str, date | None, date | None]:
+    """(esito, scadenza, data dell'atto) from the document text, no network.
+
+    esito: aperto (future deadline read) | chiuso (deadline passed / only old dates) |
+    recente (pre-gara: its own date is in the window) | non_trovata | claude (gara or
+    manifestazione whose text has deadline wording the pattern missed: ask Claude).
+    """
     if not text.strip():
-        return "non_trovata", None
+        return "non_trovata", None, None
     deadline = deadline_from_text(text)
     if deadline is not None:
-        return ("aperto" if deadline >= today else "chiuso"), deadline
+        return ("aperto" if deadline >= today else "chiuso"), deadline, None
     if only_old_dates(text, today):
-        return "chiuso", None
+        return "chiuso", None, None
+    if category not in STRICT_CATEGORIES:
+        act = recent_date_in_text(text, today)
+        return ("recente", None, act) if act else ("non_trovata", None, None)
     low = text.lower()
     if any(c in low for c in _CLAUDE_CUES):
-        return "claude", None
-    return "non_trovata", None
+        return "claude", None, None
+    return "non_trovata", None, None
 
 
 async def _claude_deadline(text: str, url: str, settings: WorkerSettings) -> date | None:
@@ -125,33 +138,38 @@ async def verify_region(region: str, *, limit: int = 200) -> dict[str, int]:
                 .where(
                     ProcurementRecord.regione == region,
                     ProcurementRecord.master_record_id.is_(None),
-                    ProcurementRecord.scadenza.is_(None),
                     ProcurementRecord.first_seen_at >= now - timedelta(days=RECENT_DAYS),
                 )
                 .order_by(ProcurementRecord.first_seen_at.desc())
             )
         ).scalars().all()
-        todo = []
+        todo: list[tuple[ProcurementRecord, str]] = []
         for r in recs:
-            if categorize_record(r) not in STRICT_CATEGORIES:
+            cat = categorize_record(r)
+            if cat is None:
                 continue
+            if cat not in STRICT_CATEGORIES and r.scadenza is not None:
+                continue  # pre-gara with a deadline: already dated
             if r.verified_at is not None and (
                 r.verifica_esito != "non_trovata" or r.verified_at > now - timedelta(days=RECHECK_AFTER_DAYS)
             ):
                 continue
-            todo.append(r)
+            todo.append((r, cat))
         sem = asyncio.Semaphore(3)
 
-        async def one(r: ProcurementRecord) -> None:
+        async def one(r: ProcurementRecord, cat: str) -> None:
             async with sem:
                 try:
                     text = await asyncio.wait_for(fetch_document_text(r.link_bando, settings), timeout=120)
-                    esito, deadline = judge(text, today)
+                    esito, deadline, act = judge(text, today, cat)
                     if esito == "claude":
                         deadline = await _claude_deadline(text, r.link_bando, settings)
                         esito = "non_trovata" if deadline is None else ("aperto" if deadline >= today else "chiuso")
                     if deadline is not None:
+                        # the document is the source of truth, over what the list page said
                         r.scadenza = datetime(deadline.year, deadline.month, deadline.day, tzinfo=UTC)
+                    if act is not None:
+                        r.data_pubblicazione = datetime(act.year, act.month, act.day, tzinfo=UTC)
                     r.verifica_esito = esito
                     r.verified_at = now
                     out[esito] += 1
@@ -160,7 +178,7 @@ async def verify_region(region: str, *, limit: int = 200) -> dict[str, int]:
                     log.warning("verify.failed url=%s err=%s", r.link_bando, exc)
                 out["checked"] += 1
 
-        await asyncio.gather(*(one(r) for r in todo[:limit]))
+        await asyncio.gather(*(one(r, c) for r, c in todo[:limit]))
         await session.commit()
     log.info("verify.done region=%s %s", region, out)
     return out

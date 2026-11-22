@@ -229,3 +229,59 @@ def _positions(window: str) -> list[tuple[str, date]]:
         except ValueError:
             continue
     return out
+
+
+# --- One state for every record -----------------------------------------------------
+# aperto        shown in lists, counts and e-mails
+# da_verificare kept out until the linked document has been read (tab "Da verificare")
+# scaduto       deadline passed / document old: hidden (shown with "mostra scadute")
+#
+# PRE-GARA: any act that calls up a service; some noise is accepted, but its date must be
+#   known: a deadline, or the document read ("recente"); read but no date found -> shown
+#   flagged "data non verificata"; never read -> da_verificare.
+# MANIFESTAZIONE / GARA: no noise accepted: a deadline written in the document itself
+#   (read by the verification), later than the day of the check, or it stays da_verificare.
+APERTO, DA_VERIFICARE, SCADUTO = "aperto", "da_verificare", "scaduto"
+
+
+def record_state(
+    category: str | None,
+    scadenza: date | datetime | None,
+    data_pubblicazione: date | datetime | None,
+    url: str | None,
+    verifica_esito: str | None,
+    today: date | None = None,
+) -> tuple[str, bool]:
+    """(state, data_non_verificata). ``verifica_esito``: aperto | recente | chiuso |
+    non_trovata | None (never read)."""
+    today = today or today_utc()
+    if verifica_esito == "chiuso":
+        return SCADUTO, False
+    deadline = _as_date(scadenza)
+    if category in STRICT_CATEGORIES:
+        if deadline is None:
+            return DA_VERIFICARE, False
+        if deadline < today:
+            return SCADUTO, False
+        return (APERTO, False) if verifica_esito == "aperto" else (DA_VERIFICARE, False)
+    # pre-gara (or an unclassified record)
+    if deadline is not None:
+        return (APERTO, False) if deadline >= today else (SCADUTO, False)
+    uy = url_year(url)
+    if verifica_esito == "recente":
+        return APERTO, False
+    if uy is not None and uy < today.year - 1:
+        return SCADUTO, False
+    if verifica_esito == "non_trovata":
+        return (APERTO, True) if is_actionable(None, data_pubblicazione, today) else (SCADUTO, False)
+    return DA_VERIFICARE, False
+
+
+def recent_date_in_text(text: str | None, today: date, *, head: int = 4000, max_age_days: int = MAX_AGE_DAYS) -> date | None:
+    """Most recent past date written in the first ``head`` characters of a document (its
+    title block: act date, publication date) when it falls in the window, else None."""
+    ds = [d for d in dates_in_text((text or "")[:head]) if d <= today]
+    if not ds:
+        return None
+    latest = max(ds)
+    return latest if latest >= today - timedelta(days=max_age_days) else None

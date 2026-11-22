@@ -25,10 +25,11 @@ from shared_models import (
 from shared_models.categories import CATEGORIES, categorize_record
 from shared_models.regions import REGIONS, normalize_region
 from shared_models.relevance import (
-    STRICT_CATEGORIES,
+    APERTO,
+    DA_VERIFICARE,
     act_signature,
     collapse_duplicates,
-    is_confirmed_open,
+    record_state,
     today_utc,
 )
 from sqlalchemy import func, select
@@ -83,10 +84,12 @@ def _record_category(r: ProcurementRecord) -> str | None:
     return categorize_record(r)
 
 
+def _state(r: ProcurementRecord, cat: str | None, today) -> tuple[str, bool]:
+    return record_state(cat, r.scadenza, r.data_pubblicazione, r.link_bando, r.verifica_esito, today)
+
+
 def _open(r: ProcurementRecord, cat: str | None, today) -> bool:
-    if r.verifica_esito == "chiuso":
-        return False
-    return is_confirmed_open(cat, r.scadenza, r.data_pubblicazione, r.link_bando, today)
+    return _state(r, cat, today)[0] == APERTO
 
 
 def _dedupe(records: list) -> list:
@@ -270,18 +273,14 @@ async def region_detail(
         cat = _record_category(rec)
         if cat is None:
             continue
-        valid = _open(rec, cat, today)
-        unconfirmed = (
-            not valid
-            and rec.scadenza is None
-            and cat in STRICT_CATEGORIES
-            and rec.verifica_esito != "chiuso"
-        )
-        if unconfirmed:
+        state, no_date = _state(rec, cat, today)
+        valid = state == APERTO
+        if state == DA_VERIFICARE:
             da_verificare.append({
                 "id": str(rec.id), "categoria": cat, "ente": rec.ente, "descrizione": rec.descrizione,
                 "link": rec.link_bando, "first_seen_at": rec.first_seen_at,
                 "verificato": rec.verifica_esito == "non_trovata",
+                "scadenza": rec.scadenza,
                 "servizi": [k for k in (rec.servizio or "").split(",") if k],
             })
             continue
@@ -291,6 +290,7 @@ async def region_detail(
                 continue
         records.append({
             "scaduto": not valid,
+            "data_non_verificata": no_date,
             "id": str(rec.id), "categoria": cat, "ente": rec.ente,
             "descrizione": rec.descrizione, "link": rec.link_bando,
             "scadenza": rec.scadenza, "stato": rec.stato_procedurale,

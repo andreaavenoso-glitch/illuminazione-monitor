@@ -31,12 +31,22 @@ def test_first_date_after_the_cue_wins():
 
 
 def test_judge_open_closed_and_unknown():
-    assert judge("termine per la presentazione delle offerte: 15/12/2026", TODAY) == ("aperto", date(2026, 12, 15))
-    assert judge("scadenza 10/03/2023", TODAY) == ("chiuso", date(2023, 3, 10))
-    assert judge("Avviso di appalto aggiudicato pubblicato il 01/03/2023", TODAY) == ("chiuso", None)
-    assert judge("", TODAY) == ("non_trovata", None)
+    assert judge("termine per la presentazione delle offerte: 15/12/2026", TODAY) == ("aperto", date(2026, 12, 15), None)
+    assert judge("scadenza 10/03/2023", TODAY) == ("chiuso", date(2023, 3, 10), None)
+    assert judge("Avviso di appalto aggiudicato pubblicato il 01/03/2023", TODAY) == ("chiuso", None, None)
+    assert judge("", TODAY) == ("non_trovata", None, None)
     assert judge("Il comune intende avviare una indagine. Termine da definire.", TODAY)[0] == "claude"
-    assert judge("pagina senza date ne parole chiave", TODAY) == ("non_trovata", None)
+    assert judge("pagina senza date ne parole chiave", TODAY) == ("non_trovata", None, None)
+
+
+def test_judge_pregara_reads_the_date_of_the_act():
+    assert judge("Delibera di giunta del 18/08/2026 - proposta di finanza di progetto", TODAY, "pre_gara") == (
+        "recente", None, date(2026, 8, 18),
+    )
+    assert judge("Delibera del 16/08/2017 approvazione progetto", TODAY, "pre_gara")[0] == "chiuso"
+    assert judge("Atto di indirizzo senza alcuna data", TODAY, "pre_gara") == ("non_trovata", None, None)
+    # a pre-gara never goes to Claude
+    assert judge("termini da definire, scadenza prossima", TODAY, "pre_gara")[0] == "non_trovata"
 
 
 def test_html_to_text_strips_tags_so_cue_and_date_meet():

@@ -20,7 +20,7 @@ from app.db import SessionLocal
 from app.digest import DigestItem, build_digest, parse_recipients
 from shared_models import ProcurementRecord, RegionSettings
 from shared_models.categories import categorize_record
-from shared_models.relevance import MAX_AGE_DAYS, act_signature, collapse_duplicates, is_confirmed_open
+from shared_models.relevance import APERTO, MAX_AGE_DAYS, act_signature, collapse_duplicates, record_state
 from sqlalchemy import and_, or_, select
 
 log = logging.getLogger(__name__)
@@ -88,7 +88,9 @@ async def _run(region: str | None = None) -> dict:
             )
             for r in deduped:
                 cat = categorize_record(r)
-                if cat is None or not is_confirmed_open(cat, r.scadenza, r.data_pubblicazione, r.link_bando):
+                if cat is None or record_state(
+                    cat, r.scadenza, r.data_pubblicazione, r.link_bando, r.verifica_esito
+                )[0] != APERTO:
                     continue
                 items.append((r, DigestItem(
                     categoria=cat, ente=r.ente, descrizione=r.descrizione or "",

@@ -220,7 +220,11 @@ def categorize(
         return ATTO_TIPO_CATEGORY[atto_tipo]
     if stato == "PRE-GARA" or flag_pre_gara == "Yes" or _has(low, PRE_GARA_KEYWORDS):
         return PRE_GARA
-    return GARA
+    # An act that merely calls up one of the services is a pre-tender signal: it is a
+    # GARA only when the source says a tender is published (structured portals).
+    if stato.startswith(("GARA", "RETTIFICA")):
+        return GARA
+    return PRE_GARA
 
 
 def categorize_record(r) -> str | None:

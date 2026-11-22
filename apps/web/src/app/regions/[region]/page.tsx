@@ -255,8 +255,8 @@ export default function RegionPage() {
       ) : tab === "verifica" ? (
         <ul className="space-y-3">
           <li className="text-xs text-neutral-500">
-            Gare e manifestazioni di cui non si legge una scadenza: finché non è confermata non compaiono nelle liste né nelle
-            email. {admin && (
+            Avvisi in attesa di lettura del documento: per gare e manifestazioni serve una scadenza letta nel documento e successiva
+            alla verifica; per le pre-gare serve la data dell'atto. Finché non è confermata non compaiono nelle liste né nelle email. {admin && (
               <button type="button" className="underline" disabled={verify.isPending} onClick={() => verify.mutate()}>
                 Verifica ora (apre i link e legge la scadenza)
               </button>
@@ -269,7 +269,8 @@ export default function RegionPage() {
                 <b>{r.ente}</b>
                 <span className="text-xs text-neutral-500">
                   {CATEGORIA_LABEL[r.categoria]} · visto il {fmt(r.first_seen_at)}
-                  {r.verificato && " · letto il documento, nessuna scadenza trovata"}
+                  {r.scadenza && ` · scadenza indicata nella lista: ${fmt(r.scadenza).split(",")[0]} (non confermata dal documento)`}
+                  {r.verificato && " · letto il documento, nessuna conferma"}
                 </span>
               </div>
               <p className="mt-1">{r.descrizione}</p>
@@ -312,6 +313,7 @@ export default function RegionPage() {
                     </>
                   )}
                   {r.scaduto && !r.scadenza && <span className="text-red-700"> · molto vecchio</span>}
+                  {r.data_non_verificata && <span className="text-amber-700"> · data non verificata</span>}
                   {r.notificato ? " · email inviata" : " · email in attesa"}
                 </span>
               </div>

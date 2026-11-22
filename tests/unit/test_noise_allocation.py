@@ -181,3 +181,37 @@ def test_acts_dealing_with_a_received_proposal_stay_pregara():
     assert categorize(stato_procedurale="PRE-GARA", text=valut, atto_tipo="proposta_ppp") == PRE_GARA
     atto = "Atto di indirizzo per l'esternalizzazione del servizio di illuminazione pubblica"
     assert categorize(stato_procedurale="PRE-GARA", text=atto, atto_tipo="determina_a_contrarre") == PRE_GARA
+
+
+# --- Stato unico: pre-gara larga ma datata, manifestazioni e gare strette ----------------
+from shared_models.relevance import APERTO, DA_VERIFICARE, SCADUTO, record_state  # noqa: E402
+
+T = date(2026, 11, 22)
+FUT = datetime(2026, 12, 15, tzinfo=UTC)
+PAST = datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def test_gara_and_manifestazione_need_the_document_to_confirm_the_deadline():
+    assert record_state(GARA, FUT, None, None, None, T) == (DA_VERIFICARE, False)  # deadline only from the list
+    assert record_state(GARA, FUT, None, None, "non_trovata", T) == (DA_VERIFICARE, False)
+    assert record_state(GARA, FUT, None, None, "aperto", T) == (APERTO, False)
+    assert record_state(MANIFESTAZIONE, None, None, None, "non_trovata", T) == (DA_VERIFICARE, False)
+    assert record_state(MANIFESTAZIONE, PAST, None, None, "aperto", T) == (SCADUTO, False)
+    assert record_state(GARA, FUT, None, None, "chiuso", T) == (SCADUTO, False)
+
+
+def test_pregara_needs_a_known_date_but_tolerates_unreadable_documents():
+    assert record_state(PRE_GARA, None, None, None, None, T) == (DA_VERIFICARE, False)
+    assert record_state(PRE_GARA, None, None, None, "recente", T) == (APERTO, False)
+    assert record_state(PRE_GARA, None, datetime(2026, 11, 1, tzinfo=UTC), None, "non_trovata", T) == (APERTO, True)
+    assert record_state(PRE_GARA, None, datetime(2025, 1, 1, tzinfo=UTC), None, "non_trovata", T) == (SCADUTO, False)
+    assert record_state(PRE_GARA, None, None, None, "chiuso", T) == (SCADUTO, False)
+    assert record_state(PRE_GARA, FUT, None, None, None, T) == (APERTO, False)
+    old = "https://x.it/_ruoti/2018/a.pdf"
+    assert record_state(PRE_GARA, None, None, old, None, T) == (SCADUTO, False)
+
+
+def test_service_act_without_stronger_wording_is_pregara():
+    r = categorize(stato_procedurale=None, text="Servizi di gestione degli impianti di pubblica illuminazione")
+    assert r == PRE_GARA
+    assert categorize(stato_procedurale="GARA PUBBLICATA", text="lavori di appalto") == GARA
