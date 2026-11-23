@@ -35,7 +35,7 @@ CAMPI_PREGARA = [
     ("importo_massimo_eur", "Importo"), ("durata", "Durata"),
 ]
 CAMPI_EXTRA = [("sopralluogo", "Sopralluogo"), ("pec_invio", "PEC per l'invio dell'offerta"), ("consumi_mwh", "Consumi (MWh/anno)"),
-               ("spesa_annua_eur", "Spesa annua")]
+               ("spesa_annua_eur", "Spesa annua"), ("canone_annuo_eur", "Canone annuo di riferimento")]
 RUOLO_LABEL = [("sindaco", "Sindaco"), ("assessore", "Assessore ai Lavori pubblici"), ("responsabile_tecnico", "Referente tecnico"), ("rup", "RUP")]
 
 

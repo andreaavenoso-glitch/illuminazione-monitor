@@ -45,6 +45,18 @@ const ERROR_LABELS: Record<string, string> = {
   error: "errore non classificato (vedi log)",
 };
 
+/** A field of the analysis as text: lists joined, amounts in euro, the relative deadline in words. */
+function fmtCampo(key: string, v: unknown): string {
+  if (Array.isArray(v)) return v.join(", ");
+  if (v && typeof v === "object") {
+    const o = v as { giorni?: number; lavorativi?: boolean };
+    if (typeof o.giorni === "number") return `${o.giorni} giorni ${o.lavorativi ? "lavorativi" : "naturali"} dalla pubblicazione`;
+    return JSON.stringify(v);
+  }
+  if (typeof v === "number" && key.endsWith("_eur")) return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(v);
+  return String(v);
+}
+
 function fmt(d: string | null): string {
   return d ? new Date(d).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "—";
 }
@@ -704,7 +716,7 @@ export default function RegionPage() {
                         <div key={k} className="contents">
                           <dt className="text-neutral-500">{k.replaceAll("_", " ")}</dt>
                           <dd title={v.contesto}>
-                            {Array.isArray(v.valore) ? v.valore.join(", ") : String(v.valore)}
+                            {fmtCampo(k, v.valore)}
                             <span className="ml-1 text-[10px] text-neutral-400">({v.fonte})</span>
                           </dd>
                         </div>

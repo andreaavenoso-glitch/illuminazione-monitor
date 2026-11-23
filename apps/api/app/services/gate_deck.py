@@ -286,9 +286,15 @@ def build_gate(d: dict[str, Any], template: str, cfg: GateConfig) -> bytes:
             _cell(t.cell(2, 0), "Energia")
             _cell(t.cell(2, 1), f"~{cons:g} MWh/anno" if cons else DC)
             _cell(t.cell(2, 2), fonte("consumi_mwh"))
-            _cell(t.cell(3, 0), "Manutenzione")
-            _cell(t.cell(3, 1), DC)
-            _cell(t.cell(3, 2), DC)
+            canone = _v(campi, "canone_annuo_eur")
+            if canone:
+                _cell(t.cell(3, 0), "Canone annuo di riferimento (base di gara)")
+                _cell(t.cell(3, 1), f"{_campo('canone_annuo_eur', canone)}/anno")
+                _cell(t.cell(3, 2), fonte("canone_annuo_eur"))
+            else:
+                _cell(t.cell(3, 0), "Manutenzione")
+                _cell(t.cell(3, 1), DC)
+                _cell(t.cell(3, 2), DC)
         note = _shape(s, "Testo 21")
         if note is not None:
             _set_par(note.text_frame.paragraphs[0], "Leva energetica: ", DC)

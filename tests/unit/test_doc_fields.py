@@ -56,3 +56,17 @@ def test_fields_for_the_gate_sheet():
     assert f["consumi_mwh"]["valore"] == 170.0
     assert f["spesa_annua_eur"]["valore"] == 175000.0
     assert f["pec_invio"]["valore"] == "protocollo@pec.comune.x.it"
+
+
+def test_the_yearly_fee_of_the_tender_is_not_the_historic_spend():
+    from datetime import date
+
+    from app.collectors.doc_fields import extract_fields
+
+    t = ("Il canone annuo di riferimento da porre a base della successiva gara nello scenario integralmente privato è pari a "
+         "€ 230.000,00, oltre IVA, comprensivo dell'energia elettrica.")
+    f = extract_fields([("avviso.pdf", t)], date(2026, 11, 23))
+    assert f["canone_annuo_eur"]["valore"] == 230000.0
+    assert "spesa_annua_eur" not in f
+    f2 = extract_fields([("a.pdf", "La spesa storica annua è di € 175.000,00 IVA inclusa.")], date(2026, 11, 23))
+    assert f2["spesa_annua_eur"]["valore"] == 175000.0 and "canone_annuo_eur" not in f2

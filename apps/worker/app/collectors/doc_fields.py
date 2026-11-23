@@ -37,10 +37,12 @@ _ORA_SCADENZA = re.compile(r"(?:entro|scadenz\w*|termine)[^.]{0,90}?ore\s*(\d{1,
 _SOPRALLUOGO = re.compile(r"[^.]{0,100}\bsopralluog\w*[^.]{0,160}", re.IGNORECASE)
 _CONSUMI = re.compile(r"(\d{1,3}(?:\.\d{3})+|\d+(?:,\d+)?)\s*(MWh|kWh)\s*(?:/|all.|l.|per\s)?\s*anno", re.IGNORECASE)
 _SPESA_ANNUA = re.compile(
-    r"(?:spesa|costo|canone|onere)[^.€]{0,70}?(?:annu\w*|/\s*anno|all.anno)[^.€]{0,50}?(?:€|euro)\s*(\d[\d.]*(?:,\d{1,2})?)|"
+    r"(?:spesa|costo|onere)[^.€]{0,70}?(?:annu\w*|/\s*anno|all.anno)[^.€]{0,50}?(?:€|euro)\s*(\d[\d.]*(?:,\d{1,2})?)|"
     r"(?:€|euro)\s*(\d[\d.]*(?:,\d{1,2})?)\s*(?:/\s*anno|all.anno|annui|annuo)",
     re.IGNORECASE,
 )
+# The yearly fee set as the BASE of the tender: not the historic spend of the comune ("canone annuo di riferimento ... € 230.000,00, oltre IVA")
+_CANONE_ANNUO = re.compile(r"canone\s+annu\w*[^.€]{0,160}?(?:€|euro)\s*(\d[\d.]*(?:,\d{1,2})?)", re.IGNORECASE)
 _PEC_ADDR = re.compile(r"[\w.+-]+@pec\.[\w.-]+|[\w.+-]+@[\w-]+\.legalmail\.it|[\w.+-]+@postecert\.it", re.IGNORECASE)
 _ATTO = re.compile(
     r"(deliberazione|delibera|determina(?:zione)?)\s*(?:n\.?\s*\d+\s*)?(?:di\s+(giunta|consiglio)(?:\s+comunale)?|dirigenziale)?"
@@ -112,6 +114,10 @@ def extract_fields(docs: list[tuple[str, str]], today: date) -> dict[str, dict[s
             v = _money_to_float(m.group(1) or m.group(2))
             if v and v >= 1000:
                 put("spesa_annua_eur", v, name, flat[max(0, m.start() - 20): m.end() + 20])
+        if m := _CANONE_ANNUO.search(flat):
+            v = _money_to_float(m.group(1))
+            if v and v >= 1000:
+                put("canone_annuo_eur", v, name, flat[max(0, m.start() - 20): m.end() + 60])
         if m := _PEC_ADDR.search(flat):
             put("pec_invio", m.group(0).lower().rstrip(".-_"), name)
         if m := _ATTO.search(flat):
