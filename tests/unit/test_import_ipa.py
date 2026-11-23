@@ -125,3 +125,18 @@ def test_pec_is_taken_from_the_ipa_mail_columns() -> None:
         "info@comune.bari.it\tAltro\tProtocollo@PEC.comune.bari.it\tPec\n"
     )
     assert parse_ipa_rows(text, "Puglia")[0]["pec"] == "protocollo@pec.comune.bari.it"
+
+
+def test_cleanup_keeps_ipa_comuni_and_flags_the_rest():
+    from infra.scripts.pulisci_regione import split_valid_old
+
+    ents = [
+        ("1", "Comune di Arluno", "comune"),
+        ("2", "Arluno", "comune"),                 # seed leftover with a plain name
+        ("3", "Romano di Lombardia", "comune"),    # seed leftover
+        ("4", "Regione Lombardia", "regione"),     # not a comune: left alone
+        ("5", "Comune di Milano", None),
+    ]
+    valid, old = split_valid_old(ents, {"Comune di Arluno", "Comune di Milano"})
+    assert [e[1] for e in valid] == ["Comune di Arluno", "Comune di Milano"]
+    assert [e[1] for e in old] == ["Arluno", "Romano di Lombardia"]
