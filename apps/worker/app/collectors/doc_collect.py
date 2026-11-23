@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from app.collectors.deadline_hunt import doc_links
+from app.collectors.js_links import file_name_from_url
 
 Fetch = Callable[[str], Awaitable[tuple[str, str | None]]]  # url -> (text, raw html or None)
 
@@ -43,7 +44,7 @@ class Collected:
 
 
 def doc_name(url: str) -> str:
-    return urlsplit(url).path.rsplit("/", 1)[-1] or urlsplit(url).netloc
+    return file_name_from_url(url) or urlsplit(url).path.rsplit("/", 1)[-1] or urlsplit(url).netloc
 
 
 async def collect_docs(

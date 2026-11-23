@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from urllib.parse import urlsplit
 
+from app.collectors.js_links import FILE_FORMAT, resolve_js_link
 from app.collectors.page_gate import safe_join
 from bs4 import BeautifulSoup
 from shared_models.relevance import deadline_from_text
@@ -73,13 +74,15 @@ def doc_links(raw: str, base_url: str, *, seen: set[str], limit: int = 8) -> lis
     best: dict[str, int] = {}
     for a in BeautifulSoup(raw, "lxml").find_all("a", href=True):
         href = a["href"].strip()
+        if href.lower().startswith("javascript:"):
+            href = resolve_js_link(href, base_url) or ""  # "javascript:open('EG0/doc.HBL?...')": the address it opens
         if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
         path = href.lower().split("?")[0]
         if path.endswith(_SKIP_EXT):
             continue
-        text = " ".join(a.get_text(" ", strip=True).split())
-        is_pdf = path.endswith((".pdf", ".zip", ".docx", ".xlsx")) or "pdf" in href.lower().split("?")[-1]  # archives count like PDFs
+        text = " ".join(a.get_text(" ", strip=True).split()) or (a.get("title") or a.get("aria-label") or "")
+        is_pdf = path.endswith((".pdf", ".zip", ".docx", ".xlsx")) or "pdf" in href.lower().split("?")[-1] or bool(FILE_FORMAT.search(href))  # archives count like PDFs
         named = bool(_NAMED.search(text)) and len(text) <= 120
         hrefish = bool(_HREFISH.search(href))
         score = (4 if is_pdf else 0) + (2 if named else 0) + (1 if hrefish else 0)

@@ -27,6 +27,7 @@ from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.collectors.archives import bytes_to_text
 from app.collectors.deadline_hunt import Doc, hunt_deadline
+from app.collectors.js_links import FILE_FORMAT, resolve_js_link
 from app.collectors.main_content import has_document_links, main_region
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
@@ -100,14 +101,16 @@ def attachment_links(html: str, *, base_url: str, limit: int = 3) -> list[str]:
     scored: dict[str, int] = {}
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
+        if href.lower().startswith("javascript:"):
+            href = resolve_js_link(href, base_url) or ""
         if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
         path = href.lower().split("?")[0]
         if path.endswith(_NOT_ATTACH):
             continue
-        text = " ".join(a.get_text(" ", strip=True).split())
+        text = " ".join(a.get_text(" ", strip=True).split()) or (a.get("title") or a.get("aria-label") or "")
         by_text = bool(_ATTACH_TEXT.search(text)) and len(text) <= 120
-        by_href = bool(_ATTACH_HREF.search(href))
+        by_href = bool(_ATTACH_HREF.search(href)) or bool(FILE_FORMAT.search(href))
         if not (by_text and by_href) and not path.endswith((".pdf", ".zip", ".docx", ".xlsx")):
             continue
         url = safe_join(base_url, href)
