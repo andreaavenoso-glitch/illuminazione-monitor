@@ -108,6 +108,9 @@ async def main() -> None:
         print("Nessun comune in watchlist per questa regione.")
         return
     sample = stratified(items, a.n)
+    from pathlib import Path
+
+    Path(a.out).parent.mkdir(parents=True, exist_ok=True)  # the folder "prove" does not exist the first time
     with open(a.out, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["nome", "url", "regione", "provincia", "fascia"], delimiter=";")
         w.writeheader()
