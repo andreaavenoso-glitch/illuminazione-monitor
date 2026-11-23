@@ -85,6 +85,36 @@ VENDOR_HOSTS = ("dgegovpa.it", "trasparenza-valutazione-merito.it", "halleyweb",
                 "municipiumapp", "wlp", "paleo", "cloud.comune")
 
 
+_PARTICLES = {"di", "de", "del", "della", "dei", "degli", "da", "dal", "dalla", "van", "von", "d", "lo", "la", "le", "e"}
+GENERIC_LINK = re.compile(
+    r"^(vai( alla| a| al)?( pagina| scheda| sezione)?|leggi( tutto| di più| tutta| la scheda)?|scopri( di più)?|"
+    r"maggiori informazioni|approfondisci|dettagli|altro|more|continua|visualizza|apri|accedi|clicca qui|qui)$",
+    re.I,
+)
+
+
+def _title_case(text: str) -> bool:
+    """A real name has a capital on every word ("Mario Rossi", "ROSSI MARIO"); "Note legali" does not."""
+    toks = [t for t in re.split(r"[\s'’]+", text) if t and t.lower().strip(".") not in _PARTICLES]
+    return bool(toks) and all(t[0].isupper() for t in toks)
+
+
+def _context_text(a: Any) -> str:
+    """For a link that says only "Vai alla pagina": the heading / title of the card it sits in."""
+    node = a
+    for _ in range(4):
+        node = node.parent
+        if node is None:
+            break
+        head = node.find(["h1", "h2", "h3", "h4", "h5", "h6", "strong"])
+        if head and head.get_text(strip=True):
+            return " ".join(head.get_text(" ", strip=True).split())
+        txt = " ".join(node.get_text(" ", strip=True).split())
+        if 3 < len(txt) <= 70:
+            return txt
+    return ""
+
+
 def score_link(text: str, href: str, person_ok: bool = False) -> tuple[int, set[str]]:
     """How promising a link is on the way to the people, and what kind of page it leads to. A link whose text
     merely LOOKS like a name ("Animali Domestici") is a person's page only when it is listed on a giunta /
@@ -102,7 +132,7 @@ def score_link(text: str, href: str, person_ok: bool = False) -> tuple[int, set[
             tags.add(tag)
     # a person's own page: the link text is a name, possibly with the role in front/behind
     bare = re.sub(r"(?i)\b(sindaco|sindaca|assessore|assessora|vicesindaco|dott\.?|dr\.?|ing\.?|arch\.?|avv\.?|geom\.?)\b", "", text)
-    if looks_like_name(" ".join(bare.split())) and (person_ok or _ROLE_IN_TEXT.search(text) or _PERSON_HREF.search(href)):
+    if looks_like_name(" ".join(bare.split())) and _title_case(bare) and (person_ok or _ROLE_IN_TEXT.search(text) or _PERSON_HREF.search(href)):
         score, tags = max(score, 40), tags | {"scheda"}
     return score, tags
 
@@ -113,6 +143,8 @@ def menu_links(raw: str, base: str, parent_tags: set[str] | None = None) -> list
     out: dict[str, tuple[int, str, str, set[str]]] = {}
     for a in BeautifulSoup(raw, "lxml").find_all("a", href=True):
         text = " ".join(a.get_text(" ", strip=True).split())
+        if GENERIC_LINK.match(text):
+            text = _context_text(a) or text
         sc, tags = score_link(text, a["href"].strip(), person_ok)
         if sc <= 0:
             continue

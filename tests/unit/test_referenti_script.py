@@ -132,3 +132,16 @@ def test_votive_lighting_is_not_public_lighting():
 
     assert categorize(stato_procedurale=None, text="Tariffe illuminazione votiva cimitero anno 2023") is None
     assert categorize(stato_procedurale=None, text="Avviso cittadini servizio illuminazione votiva del cimitero") is None
+
+
+def test_generic_link_uses_card_title_and_menu_words_are_not_names():
+    html = (
+        '<div><h3>Giunta Comunale</h3><p>La Giunta è composta dal sindaco</p><a href="/it/page/x1">Vai alla Pagina</a></div>'
+        '<div><h3>Sindaco</h3><a href="/it/page/x2">Vai alla Pagina</a></div>'
+        '<a href="/it/legal_notices">Note legali</a><a href="/it/page/fb">Feedback accessibilità</a>'
+        '<a href="/it/page/m">Mario Rossi</a>'
+    )
+    out = {u: (sc, t) for sc, u, _, t in menu_links(html, "https://c.it/it/page/organi", {"giunta"})}
+    assert "giunta" in out["https://c.it/it/page/x1"][1] and "giunta" in out["https://c.it/it/page/x2"][1]
+    assert "https://c.it/it/legal_notices" not in out and "https://c.it/it/page/fb" not in out
+    assert "scheda" in out["https://c.it/it/page/m"][1]
