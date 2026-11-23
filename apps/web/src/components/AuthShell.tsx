@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { clearSession, getUser, hasRole, type AuthUser } from "@/lib/auth";
 import { ActiveScanBadge } from "./ActiveScanBadge";
+import { AppFooter } from "./AppFooter";
 import { UsageBadge } from "./UsageBadge";
 
 const PUBLIC_PATHS = ["/login"];
@@ -42,7 +43,14 @@ export function AuthShell({ children }: { children: ReactNode }) {
   };
 
   const isLogin = pathname?.startsWith("/login");
-  if (isLogin) return <>{children}</>;
+  if (isLogin) {
+    return (
+      <>
+        {children}
+        <AppFooter />
+      </>
+    );
+  }
 
   if (!hydrated || !user) {
     return (
@@ -98,6 +106,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
         </nav>
       </header>
       <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
+      <AppFooter />
     </>
   );
 }
