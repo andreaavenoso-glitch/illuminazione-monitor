@@ -66,7 +66,8 @@ def test_attachment_links_follow_the_notice_own_documents():
     links = attachment_links(html, base_url="https://www.comune.esempio.it/novita/n1.html")
     assert links[0] == "https://www.comune.esempio.it/files/avviso.pdf"
     assert "https://www.comune.esempio.it/download/123" in links
-    assert all("altro.it" not in u and not u.endswith((".zip", ".png")) for u in links)
+    assert "https://www.comune.esempio.it/files/tecnici.zip" in links  # the technical attachments (zip) are read
+    assert all("altro.it" not in u and not u.endswith(".png") for u in links)
 
 
 def test_dash_dates_in_the_page_are_read():

@@ -25,6 +25,7 @@ import httpx
 from app import claude_state
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
+from app.collectors.archives import bytes_to_text
 from app.collectors.deadline_hunt import Doc, hunt_deadline
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
@@ -76,7 +77,7 @@ _ATTACH_TEXT = re.compile(
     r"avviso|bando|disciplinare|invito|manifestazione|lettera|capitolato|proposte?|determina|allegat", re.IGNORECASE
 )
 _ATTACH_HREF = re.compile(r"\.pdf($|\?)|/download|/allegat|getfile|/documento|attachment", re.IGNORECASE)
-_NOT_ATTACH = (".jpg", ".jpeg", ".png", ".gif", ".zip", ".rar", ".doc", ".docx", ".xls", ".xlsx", ".p7m")
+_NOT_ATTACH = (".jpg", ".jpeg", ".png", ".gif", ".rar", ".7z", ".doc", ".xls", ".p7m")  # .zip, .docx, .xlsx are read (archives.py)
 
 
 def attachment_links(html: str, *, base_url: str, limit: int = 3) -> list[str]:
@@ -98,7 +99,7 @@ def attachment_links(html: str, *, base_url: str, limit: int = 3) -> list[str]:
         text = " ".join(a.get_text(" ", strip=True).split())
         by_text = bool(_ATTACH_TEXT.search(text)) and len(text) <= 120
         by_href = bool(_ATTACH_HREF.search(href))
-        if not (by_text and by_href) and not path.endswith(".pdf"):
+        if not (by_text and by_href) and not path.endswith((".pdf", ".zip", ".docx", ".xlsx")):
             continue
         url = safe_join(base_url, href)
         if not url or urlsplit(url).netloc != base_host or url == base_url:
@@ -108,16 +109,17 @@ def attachment_links(html: str, *, base_url: str, limit: int = 3) -> list[str]:
 
 
 async def _fetch_plain(url: str) -> tuple[str, str | None]:
-    """(text, raw html or None) with plain HTTP; ('', None) when it cannot be read."""
-    low = url.lower().split("?")[0]
+    """(text, raw html or None) with plain HTTP; ('', None) when it cannot be read. PDF, ZIP archives, Word and
+    Excel are read as documents (no raw html); anything else as a web page."""
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=_UA) as c:
             r = await c.get(url)
-        ctype = r.headers.get("content-type", "").lower()
-        if r.status_code < 400 and ("pdf" in ctype or low.endswith(".pdf") or r.content[:4] == b"%PDF"):
-            return pdf_to_text(r.content)[:MAX_TEXT_CHARS], None
-        if r.status_code < 400 and len(r.text) > 3000:
-            return html_to_text(r.text)[:MAX_TEXT_CHARS], r.text
+        if r.status_code < 400:
+            kind, text, _ = bytes_to_text(r.content, r.headers.get("content-type", ""), url, pdf_to_text)
+            if kind:
+                return text[:MAX_TEXT_CHARS * 2], None
+            if len(r.text) > 3000:
+                return html_to_text(r.text)[:MAX_TEXT_CHARS], r.text
     except Exception as exc:  # noqa: BLE001
         log.info("verify.plain_fetch_failed url=%s err=%s", url, exc)
     return "", None
@@ -125,7 +127,6 @@ async def _fetch_plain(url: str) -> tuple[str, str | None]:
 
 async def fetch_doc(url: str, depth: int, settings: WorkerSettings) -> Doc:
     """One document for the deadline hunt, with a note on why it could not be read (scan, blocked, ...)."""
-    low = url.lower().split("?")[0]
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=_UA) as c:
             r = await c.get(url)
@@ -134,13 +135,14 @@ async def fetch_doc(url: str, depth: int, settings: WorkerSettings) -> Doc:
     if r.status_code >= 400:
         return await _browser_doc(url, depth, settings, f"errore {r.status_code}")
     ctype = r.headers.get("content-type", "").lower()
-    if "pdf" in ctype or low.endswith(".pdf") or r.content[:4] == b"%PDF":
+    kind, text, note = bytes_to_text(r.content, ctype, url, pdf_to_text)
+    if kind == "pdf":
         try:
             import pypdf  # noqa: F401
         except ImportError:
             return Doc(url, "pdf", "", None, depth, "lettore PDF mancante: ricostruire il worker")
-        text = pdf_to_text(r.content)[:MAX_TEXT_CHARS]
-        return Doc(url, "pdf", text, None, depth, "" if text else "PDF senza testo (scansione) o protetto")
+    if kind:
+        return Doc(url, "pdf" if kind == "pdf" else "archivio", text[:MAX_TEXT_CHARS * 2], None, depth, "" if text else note)
     text = html_to_text(r.text)[:MAX_TEXT_CHARS]
     if len(text) < 200:  # almost empty: probably built by JavaScript
         return await _browser_doc(url, depth, settings, "pagina quasi vuota")

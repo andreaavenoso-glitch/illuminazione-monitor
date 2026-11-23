@@ -23,7 +23,7 @@ from shared_models.relevance import deadline_from_text
 MAX_DOCS = 25
 MAX_DEPTH = 4
 BUDGET_S = 240.0
-_SKIP_EXT = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".zip", ".rar", ".7z", ".doc", ".docx", ".xls", ".xlsx", ".p7m", ".mp4")
+_SKIP_EXT = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".rar", ".7z", ".doc", ".xls", ".p7m", ".mp4")  # .zip/.docx/.xlsx are read
 _NAMED = re.compile(r"avviso|bando|disciplinare|invito|manifestazione|lettera|capitolato|proposte?|determina|delibera|allegat|"
                     r"document|scheda|dettaglio|scarica|download|pubblicazion", re.IGNORECASE)
 _HREFISH = re.compile(r"\.pdf($|\?)|/download|/allegat|getfile|/documento|attachment|/scheda|/dettaglio|idallegato|fileid", re.IGNORECASE)
@@ -54,7 +54,7 @@ class Hunt:
         """What was tried, in one line for the page."""
         parts = []
         for d in self.docs:
-            tag = "PDF" if d.kind == "pdf" else "pagina"
+            tag = {"pdf": "PDF", "archivio": "archivio"}.get(d.kind, "pagina")
             what = d.note or (f"{len(d.text)} caratteri" if d.text else "vuoto")
             parts.append(f"{tag} {urlsplit(d.url).path.rsplit('/', 1)[-1][:40] or urlsplit(d.url).netloc} ({what})")
         out = "; ".join(parts) if parts else "nessun documento apribile"
@@ -79,7 +79,7 @@ def doc_links(raw: str, base_url: str, *, seen: set[str], limit: int = 8) -> lis
         if path.endswith(_SKIP_EXT):
             continue
         text = " ".join(a.get_text(" ", strip=True).split())
-        is_pdf = path.endswith(".pdf") or "pdf" in href.lower().split("?")[-1]
+        is_pdf = path.endswith((".pdf", ".zip", ".docx", ".xlsx")) or "pdf" in href.lower().split("?")[-1]  # archives count like PDFs
         named = bool(_NAMED.search(text)) and len(text) <= 120
         hrefish = bool(_HREFISH.search(href))
         score = (4 if is_pdf else 0) + (2 if named else 0) + (1 if hrefish else 0)

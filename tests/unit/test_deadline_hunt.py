@@ -103,8 +103,9 @@ def test_doc_links_prefers_pdfs_and_skips_the_rest():
     )
     links = [u for _, u in doc_links(raw, BASE + "/n/1", seen=set())]
     assert BASE + "/f/avviso.pdf" in links and "https://store.it/d/bando.pdf" in links and BASE + "/scheda/7" in links
-    assert not any(u.endswith((".png", ".zip")) or u == "https://altro.it/pagina" or u.endswith("/contatti") for u in links)
-    assert links[0].endswith(".pdf")  # PDFs first
+    assert not any(u.endswith(".png") or u == "https://altro.it/pagina" or u.endswith("/contatti") for u in links)
+    assert BASE + "/f/x.zip" in links  # archives are read now (the technical attachments are often a .zip)
+    assert links[0].endswith((".pdf", ".zip"))  # documents first
 
 
 def test_manual_verification_retries_what_was_not_found():
