@@ -51,6 +51,8 @@ export default function RegionPage() {
   const [recipients, setRecipients] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showExpired, setShowExpired] = useState(false);
+  const [draft, setDraft] = useState<{ id: string; oggetto: string; corpo: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["region", region, showExpired],
@@ -172,6 +174,15 @@ export default function RegionPage() {
       }
     }
   };
+  const prepareEmail = useMutation({
+    mutationFn: (recordId: string) =>
+      api.get<{ oggetto: string; corpo: string }>(`/regions/${encodeURIComponent(region)}/records/${recordId}/email`),
+    onSuccess: (d, recordId) => {
+      setDraft({ id: recordId, ...d });
+      setCopied(false);
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
   const analizza = useMutation({
     mutationFn: (recordId: string) =>
       api.post<{ task_id: string; ente: string }>(`/regions/${encodeURIComponent(region)}/records/${recordId}/analizza`),
@@ -490,6 +501,51 @@ export default function RegionPage() {
                     )}
                     {r.ricerca.stampa && <p>Stampa: {r.ricerca.stampa}</p>}
                   </details>
+                )}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" disabled={prepareEmail.isPending}
+                    className="rounded-lg border border-sky-400 bg-sky-50 px-3 py-1 text-xs text-sky-900 hover:bg-sky-100 disabled:opacity-50 dark:bg-sky-950 dark:text-sky-100"
+                    title="Prepara il testo di una mail standard con i principali elementi dell'avviso"
+                    onClick={() => prepareEmail.mutate(r.id)}>
+                    Prepara email
+                  </button>
+                </div>
+                {draft?.id === r.id && (
+                  <div className="mt-2 space-y-2 rounded-lg border bg-white p-3 dark:border-neutral-700 dark:bg-neutral-900">
+                    <input
+                      className="w-full rounded border px-2 py-1 text-sm font-medium dark:border-neutral-700 dark:bg-neutral-950"
+                      value={draft.oggetto}
+                      onChange={(e) => setDraft({ ...draft, oggetto: e.target.value })}
+                    />
+                    <textarea
+                      className="h-72 w-full rounded border p-2 font-mono text-xs leading-relaxed dark:border-neutral-700 dark:bg-neutral-950"
+                      value={draft.corpo}
+                      onChange={(e) => setDraft({ ...draft, corpo: e.target.value })}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button"
+                        className="rounded-lg bg-neutral-900 px-3 py-1 text-xs text-white dark:bg-neutral-100 dark:text-neutral-900"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(`${draft.oggetto}\n\n${draft.corpo}`);
+                            setCopied(true);
+                          } catch {
+                            setMessage("Copia non riuscita: seleziona il testo e copialo a mano.");
+                          }
+                        }}>
+                        {copied ? "Copiato ✔" : "Copia oggetto e testo"}
+                      </button>
+                      <a className="rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                        href={`mailto:?subject=${encodeURIComponent(draft.oggetto)}&body=${encodeURIComponent(draft.corpo)}`}>
+                        Apri nel programma di posta
+                      </a>
+                      <button type="button" className="px-2 py-1 text-xs underline" onClick={() => setDraft(null)}>chiudi</button>
+                    </div>
+                    <p className="text-[11px] text-neutral-500">
+                      Il testo è generato dai dati che l&apos;app conosce (nulla è inventato): controllalo e modificalo prima di inviarlo.
+                      Se il programma di posta non si apre con tutto il testo, usa "Copia".
+                    </p>
+                  </div>
                 )}
                 {admin && (
                   <div className="mt-2 flex flex-wrap gap-2">

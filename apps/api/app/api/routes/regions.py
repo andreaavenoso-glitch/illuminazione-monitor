@@ -588,6 +588,45 @@ async def find_referenti_endpoint(
     return {"status": "dispatched", "ente": rec.ente, "task_id": dispatch_find_referenti(record_id)}
 
 
+@router.get("/{region}/records/{record_id}/email")
+async def record_email(
+    region: str,
+    record_id: UUID,
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Draft of a standard e-mail with the main elements of this notice (editable before sending)."""
+    from app.services.email_template import build_email
+
+    region = _canonical(region)
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    cat = _record_category(rec) or "gara"
+    people = (
+        await session.execute(select(Referente).where(Referente.ente == rec.ente, Referente.regione == region))
+    ).scalars().all()
+    ent = (
+        await session.execute(select(Entity).where(Entity.name == rec.ente, Entity.region == region))
+    ).scalar_one_or_none()
+    an = (
+        await session.execute(select(AnalisiRecord).where(AnalisiRecord.procurement_record_id == rec.id))
+    ).scalar_one_or_none()
+    pec = ent.pec if ent and ent.pec else next((p.email for p in people if p.ruolo == "ente" and p.email), None)
+    draft = build_email(
+        categoria=cat, ente=rec.ente, descrizione=rec.descrizione, link=rec.link_bando, scadenza=rec.scadenza,
+        visto_il=rec.first_seen_at, servizi=[k for k in (rec.servizio or "").split(",") if k],
+        provincia=ent.province if ent else None, campi=an.campi if an else None,
+        referenti=[
+            {"ruolo": p.ruolo, "nome": p.nome, "qualifica": p.qualifica, "email": p.email, "telefono": p.telefono,
+             "stato": p.stato}
+            for p in people if p.ruolo != "ente"
+        ],
+        pec=pec, today=today_utc(),
+    )
+    return draft
+
+
 @router.post("/{region}/records/{record_id}/analizza")
 async def analyze_record_endpoint(
     region: str,
