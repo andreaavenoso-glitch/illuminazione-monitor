@@ -49,6 +49,28 @@ def _publication_date(text: str, today: date) -> str | None:
     return None
 
 
+# A row is an AVVISO only if it reads like an act (a notice, a deliberation, a project, a works news...).
+# Menu entries ("Multe online"), descriptions of what an office does and fault-reporting pages that merely
+# mention "illuminazione pubblica" are not.
+_ACT_CUE = re.compile(
+    r"\bavvis[oi]|\bbando|delibera|determin[ae]|\bgara\b|manifestazion|indagine|procedura|affidament|"
+    r"incarico|progett|propost|approvazion|concession|convenzion|appalto|\blavori\b|riqualificazion|"
+    r"relamping|efficientament|finanza|\bppp\b|\bpfte\b|\bpric\b|piano regolatore|piano dell.illuminazione|"
+    r"censimento|diagnosi|adesione|accordo quadro|\bcontratt|partenariato|\bconsip\b|\bcig\b",
+    re.I,
+)
+_NOT_AN_ACT = re.compile(
+    r"si occupa|segnalazion\w* (di )?(guast|disservizi)|segnalazioni guasti|numero verde|disservizi|"
+    r"lampioni (spenti|accesi)|strada al buio|manomission|ripristinat|interventi di riarmo|"
+    r"app del comune|newsletter|paga con|multe online|pubblicazioni di matrimonio",
+    re.I,
+)
+
+
+def looks_like_act(text: str) -> bool:
+    return bool(_ACT_CUE.search(text)) and not _NOT_AN_ACT.search(text)
+
+
 def extract_records_by_rules(
     candidates: Iterable[Any], *, ente: str | None, today: date
 ) -> list[dict[str, Any]]:
@@ -58,7 +80,7 @@ def extract_records_by_rules(
     seen: set[tuple[str, str]] = set()
     for c in candidates:
         text = f"{c.title} {c.snippet}".strip()
-        if is_noise(text, ente) or not mentions_any_service(text):
+        if is_noise(text, ente) or not mentions_any_service(text) or not looks_like_act(text):
             continue
         key = (c.href, c.title)
         if key in seen:

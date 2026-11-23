@@ -137,3 +137,16 @@ async def test_auto_mode_falls_back_to_rules_when_claude_has_no_credit(monkeypat
     assert not item.content_hashes  # not remembered: Claude re-reads it when available again
     assert claude_state.is_down()
     claude_state.reset()
+
+
+def test_looks_like_act_filters_menu_and_service_text():
+    from app.collectors.rules_extract import looks_like_act
+
+    for t in ("Paga con PagoPA", "Multe online", "Segnalazioni guasti illuminazione pubblica",
+              "L'ufficio si occupa della gestione della rete di illuminazione pubblica",
+              "Situazione illuminazione pubblica"):
+        assert not looks_like_act(t)
+    for t in ("Avviso pubblico manifestazione di interesse illuminazione pubblica",
+              "Al via il relamping dell'intero patrimonio comunale",
+              "Determina affidamento servizio illuminazione pubblica"):
+        assert looks_like_act(t)
