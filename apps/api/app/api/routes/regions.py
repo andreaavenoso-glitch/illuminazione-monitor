@@ -9,6 +9,7 @@ from app.services.scan_view import scan_summary
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from shared_models import (
+    AnalisiRecord,
     ApiUsage,
     Entity,
     JobRun,
@@ -315,6 +316,10 @@ async def region_detail(
         e.name: e.pec
         for e in (await session.execute(select(Entity).where(Entity.region == region, Entity.pec.is_not(None)))).scalars().all()
     }
+    analisi = {
+        a.procurement_record_id: {"documenti": a.documenti or [], "campi": a.campi or {}, "eseguita_il": a.eseguita_il}
+        for a in (await session.execute(select(AnalisiRecord))).scalars().all()
+    }
     records = []
     da_verificare: list[dict] = []
     hidden = 0
@@ -350,6 +355,7 @@ async def region_detail(
             "referenti": ref_by_ente.get(rec.ente, []),
             "referenti_sintesi": _sintesi(rec.ente, ref_by_ente.get(rec.ente, [])),
             "ricerca": ricerche.get(rec.ente),
+            "analisi": analisi.get(rec.id),
         })
     # Deadlines first (the soonest to expire on top), then the rest, newest first
     # (the sort is stable, so the order of arrival is kept inside each group).
@@ -580,6 +586,23 @@ async def find_referenti_endpoint(
     if rec is None or normalize_region(rec.regione) != region:
         raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
     return {"status": "dispatched", "ente": rec.ente, "task_id": dispatch_find_referenti(record_id)}
+
+
+@router.post("/{region}/records/{record_id}/analizza")
+async def analyze_record_endpoint(
+    region: str,
+    record_id: UUID,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Read the documentation of this notice (page + attachments) and extract the fields."""
+    from app.services.admin_service import dispatch_analyze_record
+
+    region = _canonical(region)
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    return {"status": "dispatched", "ente": rec.ente, "task_id": dispatch_analyze_record(record_id)}
 
 
 @router.post("/{region}/referenti/ente")

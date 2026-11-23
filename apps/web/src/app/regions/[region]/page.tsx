@@ -172,20 +172,44 @@ export default function RegionPage() {
       }
     }
   };
+  const analizza = useMutation({
+    mutationFn: (recordId: string) =>
+      api.post<{ task_id: string; ente: string }>(`/regions/${encodeURIComponent(region)}/records/${recordId}/analizza`),
+    onSuccess: async (d) => {
+      setMessage(`Analisi della documentazione di ${d.ente} avviata: leggo la pagina e gli allegati…`);
+      for (let i = 0; i < 80; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        try {
+          const st = await api.get<{ status: string; result?: { documenti?: number; letti?: number; campi?: number; error?: string }; error?: string }>(
+            `/admin/task-status/${d.task_id}`,
+          );
+          if (st.status === "SUCCESS") {
+            const r = st.result ?? {};
+            setMessage(
+              r.error
+                ? `Analisi: ${r.error}`
+                : `Analisi di ${d.ente}: ${r.letti ?? 0} documenti letti su ${r.documenti ?? 0}, ${r.campi ?? 0} dati estratti (vedi la scheda).`,
+            );
+            qc.invalidateQueries({ queryKey: ["region", region] });
+            return;
+          }
+          if (st.status === "FAILURE") {
+            setMessage(`Analisi fallita: ${(st.error ?? "errore").slice(0, 200)}`);
+            return;
+          }
+        } catch {
+          /* keep waiting */
+        }
+      }
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
   const referentiEnte = useMutation({
     mutationFn: (ente: string) =>
       api.post<{ task_id: string }>(`/regions/${encodeURIComponent(region)}/referenti/ente?ente=${encodeURIComponent(ente)}`),
     onSuccess: (d, ente) => {
       setMessage(`Ricerca referenti di ${ente} avviata…`);
       void trackTask(d.task_id, `Referenti di ${ente}`);
-    },
-    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
-  });
-  const referentiRegione = useMutation({
-    mutationFn: () => api.post<{ task_id: string }>(`/regions/${encodeURIComponent(region)}/referenti/run`),
-    onSuccess: (d) => {
-      setMessage("Ricerca dei referenti per tutti i comuni con avvisi avviata (gratuita, circa 1-2 minuti a comune). Puoi lasciare la pagina.");
-      void trackTask(d.task_id, "Referenti della regione");
     },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
@@ -229,7 +253,7 @@ export default function RegionPage() {
     { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: byCat("pre_gara").length, group: "opportunita", tone: "sky" },
     { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: byCat("manifestazione_interesse").length, group: "opportunita", tone: "violet" },
     { key: "gara", label: CATEGORIA_LABEL.gara, n: byCat("gara").length, group: "opportunita", tone: "emerald" },
-    { key: "referenti", label: "Referenti", n: data.referenti_comuni?.length ?? 0, group: "lavoro", tone: "violet" },
+    { key: "referenti", label: "Referenti", n: (data.referenti_comuni ?? []).filter((r) => r.cercato).length, group: "lavoro", tone: "violet" },
     { key: "verifica", label: "Da verificare", n: data.da_verificare?.length ?? 0, group: "lavoro", tone: "amber" },
     { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length, group: "lavoro", tone: "neutral" },
     { key: "scan", label: "Raccolta", group: "lavoro", tone: "neutral" },
@@ -329,11 +353,10 @@ export default function RegionPage() {
         <ScanView region={region} />
       ) : tab === "referenti" ? (
         <ReferentiTable
-          rows={data.referenti_comuni ?? []}
+          rows={(data.referenti_comuni ?? []).filter((r) => r.cercato)}
           admin={admin}
-          busy={referentiEnte.isPending || referentiRegione.isPending}
+          busy={referentiEnte.isPending}
           onFind={(e) => referentiEnte.mutate(e)}
-          onFindAll={() => referentiRegione.mutate()}
         />
       ) : tab === "verifica" ? (
         <ul className="space-y-3">
@@ -469,10 +492,51 @@ export default function RegionPage() {
                   </details>
                 )}
                 {admin && (
-                  <button type="button" className="ml-2 underline" disabled={referenti.isPending}
-                    onClick={() => referenti.mutate(r.id)}>
-                    {(r.referenti ?? []).length > 0 ? "aggiorna referenti" : "Trova referenti"}
-                  </button>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" disabled={referenti.isPending}
+                      className="rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                      onClick={() => referenti.mutate(r.id)}>
+                      {(r.referenti ?? []).length > 0 ? "Aggiorna referenti del comune" : "Referenti del comune"}
+                    </button>
+                    <button type="button" disabled={analizza.isPending}
+                      className="rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                      title="Legge la pagina dell'avviso e i suoi allegati ed estrae i dati (CIG, importo, durata, punti luce, scadenza, RUP…)"
+                      onClick={() => analizza.mutate(r.id)}>
+                      {r.analisi ? "Aggiorna analisi documentazione" : "Analizza documentazione"}
+                    </button>
+                    <button type="button" disabled
+                      className="rounded-lg border border-dashed px-3 py-1 text-xs text-neutral-400"
+                      title="Le slide si generano dai dati estratti: da definire insieme">
+                      Genera slide (in arrivo)
+                    </button>
+                  </div>
+                )}
+                {r.analisi && (
+                  <details className="mt-2 text-neutral-600 dark:text-neutral-400" open>
+                    <summary className="cursor-pointer">
+                      Documentazione: {r.analisi.documenti.filter((d) => d.letto).length}/{r.analisi.documenti.length} letti ·{" "}
+                      {Object.keys(r.analisi.campi).length} dati estratti
+                    </summary>
+                    <dl className="mt-1 grid grid-cols-[10rem_1fr] gap-x-3 gap-y-0.5">
+                      {Object.entries(r.analisi.campi).map(([k, v]) => (
+                        <div key={k} className="contents">
+                          <dt className="text-neutral-500">{k.replaceAll("_", " ")}</dt>
+                          <dd title={v.contesto}>
+                            {Array.isArray(v.valore) ? v.valore.join(", ") : String(v.valore)}
+                            <span className="ml-1 text-[10px] text-neutral-400">({v.fonte})</span>
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <ul className="mt-1">
+                      {r.analisi.documenti.map((d) => (
+                        <li key={d.url}>
+                          <a className="underline" href={d.url} target="_blank" rel="noreferrer">{d.nome}</a>{" "}
+                          <span className="text-[10px] text-neutral-400">{d.letto ? `${d.caratteri} caratteri` : "non leggibile (scansione o protetto)"}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
               </div>
             </li>

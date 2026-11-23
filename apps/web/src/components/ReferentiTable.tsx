@@ -47,29 +47,21 @@ export function ReferentiTable({
   admin,
   busy,
   onFind,
-  onFindAll,
 }: {
   rows: ReferentiRiga[];
   admin: boolean;
   busy: boolean;
   onFind: (ente: string) => void;
-  onFindAll: () => void;
 }) {
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500">
         <span>
-          Sindaco, assessore ai lavori pubblici e referente tecnico dei comuni con avvisi, ognuno con la fonte. I nomi
-          "da confermare" hanno il motivo sotto.
+          Riepilogo dei comuni di cui hai chiesto i referenti (dal pulsante "Referenti del comune" di un avviso):
+          sindaco, assessore ai lavori pubblici e referente tecnico, ognuno con la fonte.
         </span>
-        {admin && (
-          <button type="button" disabled={busy} onClick={onFindAll}
-            className="rounded-lg border px-3 py-1.5 text-sm text-neutral-800 hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-100 dark:hover:bg-neutral-800">
-            Cerca i referenti di tutti i comuni (gratis)
-          </button>
-        )}
       </div>
-      {rows.length === 0 && <p className="text-sm text-neutral-500">Nessun comune con avvisi: raccogli prima la regione.</p>}
+      {rows.length === 0 && <p className="text-sm text-neutral-500">Nessun comune ancora: apri un avviso e premi "Referenti del comune".</p>}
       {rows.length > 0 && (
         <div className="overflow-x-auto rounded-lg border dark:border-neutral-800">
           <table className="w-full min-w-[900px] text-left text-sm">

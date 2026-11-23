@@ -132,6 +132,11 @@ def dispatch_find_referenti(record_id: UUID) -> str:
     return str(result.id)
 
 
+def dispatch_analyze_record(record_id: UUID) -> str:
+    app = _celery_app()
+    return str(app.send_task("app.tasks.analyze_record.analyze_record", kwargs={"record_id": str(record_id)}).id)
+
+
 def dispatch_find_referenti_ente(ente: str, region: str | None) -> str:
     app = _celery_app()
     return str(app.send_task("app.tasks.find_referenti.find_referenti_ente", kwargs={"ente": ente, "regione": region}).id)

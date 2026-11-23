@@ -21,6 +21,7 @@ celery_app = Celery(
         "app.tasks.verify_records",
         "app.tasks.find_referenti",
         "app.tasks.claude_health",
+        "app.tasks.analyze_record",
         "app.tasks.daily_pipeline",
     ],
 )

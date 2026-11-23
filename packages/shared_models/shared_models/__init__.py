@@ -1,4 +1,5 @@
 from shared_models.alert import Alert
+from shared_models.analisi_record import AnalisiRecord
 from shared_models.api_usage import ApiUsage
 from shared_models.base import Base
 from shared_models.daily_report import DailyReport
@@ -27,6 +28,7 @@ from shared_models.watchlist_item import WatchlistItem
 
 __all__ = [
     "Alert",
+    "AnalisiRecord",
     "ApiUsage",
     "Base",
     "DailyReport",

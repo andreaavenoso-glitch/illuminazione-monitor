@@ -96,6 +96,12 @@ export interface RicercaReferenti {
   eseguita_il: string;
 }
 
+export interface AnalisiDocumenti {
+  documenti: { url: string; nome: string; caratteri: number; letto: boolean }[];
+  campi: Record<string, { valore: string | number | string[]; fonte: string; contesto: string }>;
+  eseguita_il: string;
+}
+
 export interface RegionRecord {
   id: string;
   categoria: Categoria;
@@ -113,6 +119,7 @@ export interface RegionRecord {
   referenti: Referente[];
   referenti_sintesi?: ReferentiSintesi;
   ricerca?: RicercaReferenti | null;
+  analisi?: AnalisiDocumenti | null;
 }
 
 export const SERVIZIO_LABEL: Record<string, string> = {
