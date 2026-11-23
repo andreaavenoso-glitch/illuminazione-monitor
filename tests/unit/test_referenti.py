@@ -146,3 +146,15 @@ def test_workbook_has_index_and_one_sheet_per_province():
     assert mi["C2"].value == "Giulia Bianchi (da confermare)" and "Affidabilità" not in [c.value for c in mi[1]]
     wb2 = openpyxl.load_workbook(io.BytesIO(referenti_workbook(entries, interno=True)))
     assert "Azione" in [c.value for c in wb2["MI"][1]]
+
+
+def test_page_furniture_is_not_a_name():
+    # real case: "Sindaco: Condividi Facebook Twitter" on the page of a comune
+    from app.collectors.referenti import looks_like_name
+    from app.collectors.rules_extract import extract_people_by_rules
+
+    page = "Sindaco Condividi Facebook Twitter Stampa PDF. Altro testo."
+    assert extract_people_by_rules(page) == []
+    assert verify_person(_p("Condividi Facebook Twitter", "sindaco"), page) is None
+    assert looks_like_name("Mario Rossi") and looks_like_name("Maria Rosaria De Luca")
+    assert not looks_like_name("Facebook Twitter") and not looks_like_name("Area Tecnica")

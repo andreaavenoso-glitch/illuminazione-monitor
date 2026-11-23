@@ -46,6 +46,32 @@ _ROLE_NEAR = {
 }
 
 
+# Words of a web page's furniture, or of the roles themselves, that are not part of a person's
+# name: "Sindaco: Condividi Facebook Twitter" is a share bar, not a mayor (seen on a real page).
+NOT_NAME_TOKENS = frozenset(
+    """condividi facebook twitter whatsapp linkedin instagram telegram youtube pinterest email mail stampa pdf home
+    menu cerca leggi altro vai torna scarica mappa privacy cookie accedi contatti informazioni notizie novita novità
+    servizi amministrazione trasparente albo pretorio pubblicazioni allegati documenti descrizione indice pagina sito
+    web copia link share tweet pin segnala utile aggiornamento aggiornato ultimo modifica data pubblicato ufficio
+    comune comunale citta città provincia regione repubblica italiana italia via piazza tel fax orari apertura urp
+    segreteria protocollo partita iva codice fiscale sindaco sindaca assessore assessora vicesindaco giunta consiglio
+    responsabile area settore servizio tecnica tecnico lavori pubblici illuminazione pubblica delega deleghe organi
+    governo dirigente segretario generale biografia curriculum vitae mandato elezioni eletto eletta""".split()
+)
+
+
+def looks_like_name(nome: str) -> bool:
+    """Two or three alphabetic words, none of them page furniture or a role word."""
+    toks = nome.replace("’", "'").split()
+    if not 2 <= len(toks) <= 4:
+        return False
+    for t in toks:
+        core = t.strip(".,;:()")
+        if len(core) < 2 or not re.fullmatch(r"[A-Za-zÀ-ÿ'\-]+", core) or core.lower() in NOT_NAME_TOKENS:
+            return False
+    return any(len(t) >= 3 for t in toks)
+
+
 def _squash(text: str) -> str:
     return " ".join(re.sub(r"[^\w@.+\-]+", " ", text.lower()).split())
 
@@ -88,7 +114,7 @@ def verify_person(person: dict[str, Any], page_text: str) -> dict[str, Any] | No
     characters of the name."""
     nome = " ".join(str(person.get("nome") or "").split())
     ruolo = person.get("ruolo")
-    if len(nome) < 5 or " " not in nome or ruolo not in RUOLI:
+    if len(nome) < 5 or " " not in nome or ruolo not in RUOLI or not looks_like_name(nome):
         return None
     hay = _squash(page_text)
     needle = _squash(nome)

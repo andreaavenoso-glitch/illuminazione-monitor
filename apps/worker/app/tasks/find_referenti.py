@@ -14,6 +14,7 @@ from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.collectors.referenti import (
     extract_people,
     has_role_words,
+    looks_like_name,
     merge_people,
     rank_people_links,
     site_root,
@@ -127,6 +128,12 @@ async def find_for_record(record_id: UUID) -> dict:
     people = merge_people(found)
     now = datetime.now(tz=UTC)
     async with SessionLocal() as session:
+        # names saved by an older version that are page furniture ("Condividi Facebook Twitter")
+        for old in (
+            await session.execute(select(Referente).where(Referente.ente == ente, Referente.regione == regione))
+        ).scalars().all():
+            if not looks_like_name(old.nome):
+                await session.delete(old)
         for p in people:
             existing = (
                 await session.execute(

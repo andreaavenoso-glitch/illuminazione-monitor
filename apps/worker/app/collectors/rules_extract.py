@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from datetime import date, timedelta
 from typing import Any
 
+from app.collectors.referenti import looks_like_name
 from shared_models.categories import is_noise
 from shared_models.relevance import dates_in_text, deadline_from_text
 from shared_models.services import mentions_any_service
@@ -113,7 +114,8 @@ def _clean_name(raw: str) -> str | None:
         toks.pop(0)
     if len(toks) < 2 or any(t.lower() in _STOP for t in toks):
         return None
-    return " ".join(t[0].upper() + t[1:].lower() if t.isupper() else t for t in toks)
+    name = " ".join(t[0].upper() + t[1:].lower() if t.isupper() else t for t in toks)
+    return name if looks_like_name(name) else None
 
 
 def extract_people_by_rules(text: str) -> list[dict[str, Any]]:
