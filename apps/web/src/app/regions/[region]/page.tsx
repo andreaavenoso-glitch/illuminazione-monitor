@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { ClaudeStatusBanner } from "@/components/ClaudeStatusBanner";
+import { Countdown, Icon, KpiTile, StackedBar, TONE, type Tone } from "@/components/ui";
 import { MenuItem, RegionTabs, type TabDef } from "@/components/RegionTabs";
 import { ReferentiTable } from "@/components/ReferentiTable";
 import { ScanView } from "@/components/ScanView";
@@ -23,6 +24,8 @@ import {
 } from "@/lib/regions";
 
 type Tab = Categoria | "siti" | "scan" | "verifica" | "referenti";
+
+const CAT_TONE: Record<Categoria, Tone> = { pre_gara: "sky", manifestazione_interesse: "violet", gara: "emerald" };
 
 const ERROR_LABELS: Record<string, string> = {
   http_404: "pagina non trovata (404)",
@@ -273,39 +276,43 @@ export default function RegionPage() {
   return (
     <div className="space-y-5">
       <header className="space-y-2">
-        <Link href="/regions" className="text-xs text-neutral-500 hover:underline">← Regioni</Link>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold">
-            {data.region}{" "}
-            <span className={`ml-2 rounded-full px-2 py-0.5 align-middle text-xs ${data.enabled ? "bg-emerald-100 text-emerald-800" : "bg-neutral-200 text-neutral-600"}`}>
-              {data.enabled ? "attiva" : "spenta"}
-            </span>
-          </h1>
+        <Link href="/regions" className="text-xs text-neutral-500 hover:text-brand-600">← Tutte le regioni</Link>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-gradient-to-r from-brand-600 to-sky-500 p-5 text-white shadow-lift">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">{data.region}</h1>
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-white/85">
+              <span className={`chip ${data.enabled ? "bg-white/20 text-white" : "bg-black/20 text-white"}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${data.enabled ? "bg-emerald-300" : "bg-neutral-300"}`} />
+                {data.enabled ? "attiva" : "spenta"}
+              </span>
+              <span>{data.comuni.length} comuni · {failing > 0 ? `${failing} con siti non raggiungibili` : "tutti i siti letti senza errori"}</span>
+            </p>
+          </div>
           {admin && (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <button type="button" disabled={collect.isPending}
-                className="rounded-lg bg-neutral-900 px-4 py-1.5 font-medium text-white shadow-sm hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+                className="rounded-lg bg-white px-4 py-1.5 font-semibold text-brand-700 shadow-sm hover:bg-brand-50 disabled:opacity-50"
                 title="Rilegge tutti i comuni della regione"
                 onClick={() => collect.mutate(undefined)}>
                 Raccogli ora
               </button>
               <button type="button" disabled={collect.isPending}
-                className="rounded-lg border px-3 py-1.5 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                className="rounded-lg border border-white/40 px-3 py-1.5 hover:bg-white/15 disabled:opacity-50"
                 title="Salta i comuni già letti nelle ultime 24 ore: per riprendere una raccolta interrotta senza rifare e ripagare quelli già fatti"
                 onClick={() => collect.mutate({ resume: true })}>
                 Riprendi
               </button>
               <button type="button" disabled={collect.isPending}
-                className="rounded-lg border px-3 py-1.5 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                className="rounded-lg border border-white/40 px-3 py-1.5 hover:bg-white/15 disabled:opacity-50"
                 title="Scansiona solo 10 comuni: per verificare che tutto funzioni senza spendere un giro intero"
                 onClick={() => collect.mutate({ limit: 10 })}>
                 Prova con 10 comuni
               </button>
               <details className="relative">
-                <summary className="cursor-pointer list-none rounded-lg border px-3 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                <summary className="cursor-pointer list-none rounded-lg border border-white/40 px-3 py-1.5 hover:bg-white/15">
                   Altro ▾
                 </summary>
-                <div className="absolute right-0 z-20 mt-2 w-60 space-y-0.5 rounded-lg border bg-white p-1.5 text-left shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+                <div className="absolute right-0 z-20 mt-2 w-60 space-y-0.5 rounded-xl border bg-white p-1.5 text-left text-neutral-900 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100">
                   <MenuItem onClick={() => processNow.mutate()} disabled={processNow.isPending}
                     hint="Elabora i dati già raccolti senza rileggere i siti">Elabora ora</MenuItem>
                   <MenuItem onClick={() => digest.mutate()} disabled={digest.isPending}
@@ -358,6 +365,27 @@ export default function RegionPage() {
         </div>
       </header>
 
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiTile label="Pre-gare" hint="segnali prima dell'avviso" value={byCat("pre_gara").length} icon="bolt" tone="sky" onClick={() => setTab("pre_gara")} active={tab === "pre_gara"} />
+        <KpiTile label="Manifestazioni di interesse" hint="con scadenza confermata" value={byCat("manifestazione_interesse").length} icon="hand" tone="violet"
+          onClick={() => setTab("manifestazione_interesse")} active={tab === "manifestazione_interesse"} />
+        <KpiTile label="Gare" hint="con scadenza confermata" value={byCat("gara").length} icon="flag" tone="emerald" onClick={() => setTab("gara")} active={tab === "gara"} />
+        <KpiTile label="Da verificare" value={data.da_verificare?.length ?? 0} icon="alert" tone="amber"
+          hint="senza scadenza confermata" onClick={() => setTab("verifica")} active={tab === "verifica"} />
+      </section>
+      <div className="card flex flex-wrap items-center gap-4 p-3 text-xs text-neutral-600 dark:text-neutral-300">
+        <span className="font-medium">Stato dei siti</span>
+        <div className="min-w-[10rem] flex-1">
+          <StackedBar height="h-2" parts={[
+            { label: "Raggiungibili", value: data.comuni.filter((c) => c.stato === "ok").length, tone: "emerald" },
+            { label: "Con errori", value: failing, tone: "red" },
+            { label: "Non verificati", value: data.comuni.filter((c) => c.stato === "unchecked").length, tone: "neutral" },
+          ]} />
+        </div>
+        <span className="text-emerald-700">{data.comuni.filter((c) => c.stato === "ok").length} ok</span>
+        <span className="text-red-600">{failing} errori</span>
+        <span>{data.comuni.filter((c) => c.stato === "unchecked").length} da verificare</span>
+      </div>
       <RegionTabs tabs={tabs} active={tab} onSelect={setTab} />
 
       {tab === "scan" ? (
@@ -415,29 +443,31 @@ export default function RegionPage() {
             </li>
           )}
           {byCat(tab).map((r) => (
-            <li key={r.id} className="rounded border p-3 text-sm dark:border-neutral-800">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <b>{r.ente}</b>
-                <span className="text-xs text-neutral-500">
-                  visto il {fmt(r.first_seen_at)}
-                  {r.scadenza && (
-                    <>
-                      {" "}· {r.scaduto ? <span className="text-red-700">scaduto il {fmt(r.scadenza).split(",")[0]}</span> : (
-                        <span className="font-medium text-amber-700 dark:text-amber-300">
-                          scade il {fmt(r.scadenza).split(",")[0]} (tra {daysLeft(r.scadenza)} giorni)
-                        </span>
-                      )}
-                    </>
-                  )}
-                  {r.scaduto && !r.scadenza && <span className="text-red-700"> · molto vecchio</span>}
-                  {r.data_non_verificata && <span className="text-amber-700"> · data non verificata</span>}
-                  {r.notificato ? " · email inviata" : " · email in attesa"}
-                </span>
+            <li key={r.id} className={`card border-l-4 p-4 text-sm ${TONE[CAT_TONE[r.categoria]].border}`}>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className={`grid h-8 w-8 place-items-center rounded-lg ${TONE[CAT_TONE[r.categoria]].bg} ${TONE[CAT_TONE[r.categoria]].fg}`}>
+                    <Icon name="building" className="h-4 w-4" />
+                  </span>
+                  <b className="text-base tracking-tight">{r.ente}</b>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Countdown iso={r.scadenza} />
+                  {r.scaduto && !r.scadenza && <span className="chip bg-red-50 text-red-700">molto vecchio</span>}
+                  {r.data_non_verificata && <span className="chip bg-amber-50 text-amber-700">data non verificata</span>}
+                  <span className={`chip ${r.notificato ? "bg-emerald-50 text-emerald-700" : "bg-neutral-100 text-neutral-500"}`}>
+                    <Icon name="mail" className="h-3.5 w-3.5" />{r.notificato ? "email inviata" : "email in attesa"}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-1 text-[11px] text-neutral-400">
+                individuato il {fmt(r.first_seen_at).split(",")[0]}
+                {r.scadenza && <> · scadenza {fmt(r.scadenza).split(",")[0]}</>}
               </div>
               {r.servizi.length > 0 && (
                 <div className="mt-1 flex flex-wrap gap-1">
                   {r.servizi.map((k) => (
-                    <span key={k} className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-900 dark:bg-sky-950 dark:text-sky-200">
+                    <span key={k} className="chip bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200">
                       {SERVIZIO_LABEL[k] ?? k}
                     </span>
                   ))}
