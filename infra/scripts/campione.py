@@ -5,7 +5,10 @@ population, e.g. the ISTAT "popolazione residente" download): columns are recogn
 (comune|denominazione and popolazione|pop|residenti). Without it the sample is spread over the provinces.
 
     docker compose exec -T api python -m infra.scripts.campione --region Lombardia --n 60 \
-        --popolazione /workspace/infra/popolazione.csv --out /workspace/infra/prove/campione_lombardia.csv
+        --ipa /workspace/infra/amministrazioni.txt --out /workspace/infra/prove/campione.csv
+
+The comuni come from the IPA file (--ipa) or, without it, from the watchlist. For Lombardia the repository's old list
+gives an estimated size class to 73 comuni; ``--popolazione`` (CSV comune;popolazione) gives it to all.
 
 Size classes: XS < 2.000, S 2.000-5.000, M 5.000-15.000, L 15.000-50.000, XL > 50.000 inhabitants.
 The output (name;url;regione;provincia;fascia) feeds ``prova_siti --campione``.
@@ -56,6 +59,30 @@ def load_population(path: str) -> dict[str, int]:
     return out
 
 
+def default_fasce_path(region: str) -> str | None:
+    """The old Lombardia list of the repository carries an estimated size class for 73 comuni: still useful as a
+    size hint (the comuni themselves come from IPA)."""
+    from pathlib import Path
+
+    p = Path(__file__).parent / "data" / "comuni_lombardia_illuminazione.csv"
+    return str(p) if region.strip().lower() == "lombardia" and p.exists() else None
+
+
+def load_fasce(path: str | None) -> dict[str, str]:
+    """{normalised comune name: size class} from a CSV with the columns comune and fascia_pop_stimata (or fascia)."""
+    if not path:
+        return {}
+    out: dict[str, str] = {}
+    with open(path, encoding="utf-8-sig", errors="replace", newline="") as f:
+        for r in csv.DictReader(f):
+            low = {k.strip().strip('"').lower(): v for k, v in r.items() if k}
+            name = low.get("comune") or low.get("nome")
+            f_ = (low.get("fascia_pop_stimata") or low.get("fascia") or "").strip().upper()
+            if name and f_ in {x for x, _ in FASCE}:
+                out[_key(name)] = f_
+    return out
+
+
 def stratified(items: list[dict], n: int, seed: int = 7) -> list[dict]:
     """About ``n`` items spread over the size classes (each class gets its share, at least 1 when present),
     and inside a class over the provinces. Repeatable: the same seed gives the same sample."""
@@ -63,10 +90,13 @@ def stratified(items: list[dict], n: int, seed: int = 7) -> list[dict]:
     by_f: dict[str, list[dict]] = defaultdict(list)
     for it in items:
         by_f[it["fascia"]].append(it)
-    total = len(items) or 1
+    # Unknown sizes ("n/d") must not drown the classes we do know: count them at most as many as the known ones.
+    known = sum(len(g) for f, g in by_f.items() if f != "n/d")
+    eff = {f: (min(len(g), max(known, 1)) if f == "n/d" and known else len(g)) for f, g in by_f.items()}
+    total = sum(eff.values()) or 1
     picked: list[dict] = []
-    for _f, group in sorted(by_f.items()):
-        share = max(1, round(n * len(group) / total))
+    for f_, group in sorted(by_f.items()):
+        share = max(1, round(n * eff[f_] / total))
         by_p: dict[str, list[dict]] = defaultdict(list)
         for g in group:
             by_p[g.get("provincia") or "-"].append(g)
@@ -85,31 +115,47 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--region", required=True)
     ap.add_argument("--n", type=int, default=50)
-    ap.add_argument("--popolazione")
+    ap.add_argument("--popolazione", help="CSV comune;popolazione (es. ISTAT) per le fasce di dimensione")
+    ap.add_argument("--ipa", help="file IPA 'Amministrazioni': prende i comuni da li' invece che dal database")
+    ap.add_argument("--fasce", help="CSV con colonne comune e fascia_pop_stimata (di default quello della Lombardia nel repository)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
-    from app.db import SessionLocal
-    from shared_models import Entity, WatchlistItem
-    from shared_models.regions import normalize_region
-    from sqlalchemy import select
-
-    pop = load_population(a.popolazione) if a.popolazione else {}
-    async with SessionLocal() as s:
-        rows = (await s.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id)
-                                .where(WatchlistItem.active.is_(True)))).all()
-    items = []
-    for it, e in rows:
-        url = it.url_trasparenza or it.url_albo
-        if url and normalize_region(e.region) == normalize_region(a.region):
-            items.append({"nome": e.name, "url": url, "regione": e.region, "provincia": e.province,
-                          "fascia": fascia_di(pop.get(_key(e.name)))})
-    if not items:
-        print("Nessun comune in watchlist per questa regione.")
-        return
-    sample = stratified(items, a.n)
     from pathlib import Path
 
+    from shared_models.regions import normalize_region
+
+    pop = load_population(a.popolazione) if a.popolazione else {}
+    fasce_note = load_fasce(a.fasce or default_fasce_path(a.region))
+    items = []
+    if a.ipa:  # the comuni straight from the IPA file: no database, no import needed
+        from infra.scripts.import_ipa import parse_ipa_rows, xlsx_to_text
+
+        text = xlsx_to_text(a.ipa) if a.ipa.lower().endswith((".xlsx", ".xlsm")) else Path(a.ipa).read_text(encoding="utf-8-sig", errors="replace")
+        for r in parse_ipa_rows(text, a.region):
+            url = r["trasparenza"] or r["sito"]
+            if url:
+                k = _key(r["name"])
+                items.append({"nome": r["name"], "url": url, "regione": normalize_region(a.region), "provincia": r["provincia"],
+                              "fascia": fascia_di(pop[k]) if k in pop else fasce_note.get(k, "n/d")})
+    else:
+        from app.db import SessionLocal
+        from shared_models import Entity, WatchlistItem
+        from sqlalchemy import select
+
+        async with SessionLocal() as s:
+            rows = (await s.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id)
+                                    .where(WatchlistItem.active.is_(True)))).all()
+        for it, e in rows:
+            url = it.url_trasparenza or it.url_albo
+            if url and normalize_region(e.region) == normalize_region(a.region):
+                k = _key(e.name)
+                items.append({"nome": e.name, "url": url, "regione": e.region, "provincia": e.province,
+                              "fascia": fascia_di(pop[k]) if k in pop else fasce_note.get(k, "n/d")})
+    if not items:
+        print("Nessun comune trovato" + (" nel file IPA." if a.ipa else " in watchlist: usa --ipa con il file IPA, oppure importa i comuni."))
+        return
+    sample = stratified(items, a.n)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)  # the folder "prove" does not exist the first time
     with open(a.out, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["nome", "url", "regione", "provincia", "fascia"], delimiter=";")

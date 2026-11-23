@@ -64,3 +64,17 @@ def test_campione_is_spread_over_size_classes_and_provinces():
         assert load_population(f.name) == {"arluno": 11800, "segrate": 36000}
     finally:
         os.unlink(f.name)
+
+
+def test_campione_unknown_sizes_do_not_drown_the_known_ones(tmp_path):
+    from infra.scripts.campione import load_fasce, stratified
+
+    items = [{"nome": f"u{i}", "provincia": "MI", "fascia": "n/d", "url": "u"} for i in range(1400)]
+    items += [{"nome": f"k{i}", "provincia": "BG", "fascia": "L" if i < 10 else "S", "url": "u"} for i in range(70)]
+    s = stratified(items, 60)
+    known = [x for x in s if x["fascia"] != "n/d"]
+    assert len(known) >= 20 and {x["fascia"] for x in known} == {"L", "S"}  # about half of the sample has a size
+
+    p = tmp_path / "f.csv"
+    p.write_text('"id",comune,provincia,fascia_pop_stimata\n1,Romano di Lombardia,BG,L\n2,Arluno,MI,M\n3,X,MI,??\n', encoding="utf-8")
+    assert load_fasce(str(p)) == {"romano di lombardia": "L", "arluno": "M"}

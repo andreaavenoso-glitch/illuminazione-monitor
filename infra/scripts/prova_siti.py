@@ -311,7 +311,7 @@ async def main() -> None:
         if not Path(a.campione).exists():
             print(f"File del campione non trovato: {a.campione}\nCrealo prima con:\n"
                   "  docker compose exec -T api python -m infra.scripts.campione --region Lombardia --n 60 "
-                  f"--out {a.campione}")
+                  f"--ipa /workspace/infra/amministrazioni.txt --out {a.campione}")
             return
         with open(a.campione, encoding="utf-8-sig", newline="") as f:
             for r in csv.DictReader(f, delimiter=";"):
