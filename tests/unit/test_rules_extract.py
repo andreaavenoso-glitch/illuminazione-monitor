@@ -150,3 +150,14 @@ def test_looks_like_act_filters_menu_and_service_text():
               "Al via il relamping dell'intero patrimonio comunale",
               "Determina affidamento servizio illuminazione pubblica"):
         assert looks_like_act(t)
+
+
+def test_looks_like_act_title_checks():
+    from app.collectors.rules_extract import looks_like_act
+
+    body = "determina affidamento servizio illuminazione pubblica e altro"
+    assert not looks_like_act(body, "Leggi di più")
+    assert not looks_like_act(body, "Determina affidamento assistenza impianto di videosorveglianza")
+    assert not looks_like_act(body, "Interrogazione del gruppo consiliare")
+    assert looks_like_act(body, "Determina affidamento servizio illuminazione pubblica e videosorveglianza")
+    assert looks_like_act(body, "Individuazione del promotore PPP illuminazione pubblica")

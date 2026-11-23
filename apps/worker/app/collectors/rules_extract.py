@@ -67,7 +67,26 @@ _NOT_AN_ACT = re.compile(
 )
 
 
-def looks_like_act(text: str) -> bool:
+# Other plants / other matters that merely sit next to the word "illuminazione" in a long row: judged on the
+# TITLE, and only when the title itself does not speak of lighting.
+_OTHER_SUBJECT = re.compile(
+    r"videosorveglianz|semaforic|telecamer|fototrappol|interrogazione|interpellanza|mozione|"
+    r"trattamento dei dati|informativa|accesso all.informazione|privacy",
+    re.I,
+)
+_GENERIC_TITLE = re.compile(
+    r"^(leggi( di più| tutto)?|vai alla pagina|tutte le novit\w*|scopri( di più)?|maggiori informazioni|continua|altro)$",
+    re.I,
+)
+
+
+def looks_like_act(text: str, title: str | None = None) -> bool:
+    if title is not None:
+        t = title.strip(" /-")
+        if _GENERIC_TITLE.match(t) or len(t) < 6:
+            return False
+        if _OTHER_SUBJECT.search(t) and not re.search(r"illuminazion|lampion|punti luce|relamping", t, re.I):
+            return False
     return bool(_ACT_CUE.search(text)) and not _NOT_AN_ACT.search(text)
 
 
@@ -80,7 +99,7 @@ def extract_records_by_rules(
     seen: set[tuple[str, str]] = set()
     for c in candidates:
         text = f"{c.title} {c.snippet}".strip()
-        if is_noise(text, ente) or not mentions_any_service(text) or not looks_like_act(text):
+        if is_noise(text, ente) or not mentions_any_service(text) or not looks_like_act(text, c.title):
             continue
         key = (c.href, c.title)
         if key in seen:
