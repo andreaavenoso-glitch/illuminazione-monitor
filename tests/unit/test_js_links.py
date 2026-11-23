@@ -48,7 +48,8 @@ async def test_the_document_behind_the_script_link_is_fetched_and_named(httpx_mo
     page = _page((PDF, "AVVISO PUBBLICO"))
     httpx_mock.add_response(url=BASE, text=page, headers={"content-type": "text/html"})
     httpx_mock.add_response(
-        url=resolve_js_link(PDF, BASE), content=b"not a pdf at all", headers={"content-type": "application/octet-stream"}
+        method="POST", url="https://www.comune.scanzanojonico.mt.it/EG0/EGDOCVISJS.HBL", content=b"not a pdf at all",
+        headers={"content-type": "application/octet-stream"},
     )
     docs, _ = await collect_docs(BASE, _fetch_plain, LIVELLI["base"])
     assert [d.name for d in docs] == ["pagina dell'avviso", "ver 3 NUOVO AVVISO X PPP-signed.pdf"]
@@ -97,7 +98,7 @@ async def test_the_whole_chain_script_link_then_json_then_the_pdf(httpx_mock, mo
 
     program = resolve_js_link(PDF, BASE)
     httpx_mock.add_response(
-        url=program, text='{\r\n"K": "DOWNLOAD",\r\n"PATH": "http:///halley//ht/e1015/ver_3.pdf"\r\n}',
+        method="POST", url="https://www.comune.scanzanojonico.mt.it/EG0/EGDOCVISJS.HBL", text='{\r\n"K": "DOWNLOAD",\r\n"PATH": "http:///halley//ht/e1015/ver_3.pdf"\r\n}',
         headers={"content-type": "text/html; charset=ISO-8859-1"},
     )
     httpx_mock.add_response(
@@ -105,4 +106,39 @@ async def test_the_whole_chain_script_link_then_json_then_the_pdf(httpx_mock, mo
     )
     monkeypatch.setattr(vr, "pdf_to_text", lambda data: "Avviso: proposte entro le ore 12:00 del 20-01-2027" if data.startswith(b"%PDF") else "")
     text, raw = await vr._fetch_plain(program)
+    assert "20-01-2027" in text and raw is None
+
+
+def test_the_post_is_the_one_the_page_script_sends():
+    from app.collectors.js_links import eg0_post, is_eg0_call
+
+    url = resolve_js_link(PDF, BASE)
+    assert is_eg0_call(url) and not is_eg0_call("https://c.it/a.pdf") and not is_eg0_call("https://c.it/x.hbl")
+    address, body = eg0_post(url)
+    assert address == "https://www.comune.scanzanojonico.mt.it/EG0/EGDOCVISJS.HBL"
+    assert body.decode() == (
+        '--AZazAZ\r\n&name="protocollo=https&ser=www.comune.scanzanojonico.mt.it&en=e1015&MESSA=PUBBLICA'
+        '&DSK=0000V601026BK&NOME=ver 3 NUOVO AVVISO X PPP-signed.pdf&FORM=pdf&PAGINA="\r\n\n\r\n--AZazAZ--\r\n'
+    )
+    assert eg0_post("https://c.it/a.pdf") is None
+
+
+@pytest.mark.asyncio
+async def test_the_pdf_of_the_eg0_platform_is_downloaded_with_the_post_of_the_page(httpx_mock, monkeypatch):
+    import app.tasks.verify_records as vr
+    from app.collectors.js_links import eg0_post
+
+    url = resolve_js_link(PDF, BASE)
+    _, body = eg0_post(url)
+    httpx_mock.add_response(
+        method="POST", url="https://www.comune.scanzanojonico.mt.it/EG0/EGDOCVISJS.HBL", match_content=body,
+        text='{\r\n"K": "DOWNLOAD",\r\n"PATH": "https://www.comune.scanzanojonico.mt.it/halley//ht/e1015/ver_3_NUOVO_AVVISO_X_PPP-signed.pdf"\r\n}\r\n',
+        headers={"content-type": "text/html; charset=ISO-8859-1"},
+    )
+    httpx_mock.add_response(
+        method="GET", url="https://www.comune.scanzanojonico.mt.it/halley//ht/e1015/ver_3_NUOVO_AVVISO_X_PPP-signed.pdf",
+        content=b"%PDF-1.4 fake", headers={"content-type": "application/pdf"},
+    )
+    monkeypatch.setattr(vr, "pdf_to_text", lambda data: "Le proposte devono pervenire entro le ore 12:00 del 20-01-2027" if data.startswith(b"%PDF") else "")
+    text, raw = await vr._fetch_plain(url)
     assert "20-01-2027" in text and raw is None

@@ -28,8 +28,10 @@ from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.collectors.archives import bytes_to_text
 from app.collectors.deadline_hunt import Doc, hunt_deadline
 from app.collectors.js_links import (
+    EG0_HEADERS,
     FILE_FORMAT,
     download_target_from_json,
+    eg0_post,
     js_redirect_target,
     resolve_js_link,
 )
@@ -126,8 +128,11 @@ def attachment_links(html: str, *, base_url: str, limit: int = 3) -> list[str]:
 
 
 async def _get(c: httpx.AsyncClient, url: str, hops: int = 2) -> httpx.Response:
-    """GET that also follows a tiny page whose script sends the browser to the real file (up to ``hops`` times)."""
-    r = await c.get(url)
+    """GET that also copes with the pages of some platforms whose script, not a link, delivers the file:
+    * an "EG0 .HBL" call is POSTed the way the page's own script does it, and the PATH it answers is fetched;
+    * a tiny page whose script sends the browser to the real file is followed (up to ``hops`` times)."""
+    post = eg0_post(url)
+    r = await (c.post(post[0], content=post[1], headers=EG0_HEADERS) if post else c.get(url))
     for _ in range(hops):
         if r.status_code >= 400 or not any(k in r.headers.get("content-type", "").lower() for k in ("html", "json", "text")):
             break
@@ -135,6 +140,10 @@ async def _get(c: httpx.AsyncClient, url: str, hops: int = 2) -> httpx.Response:
         if not target or target == url:
             break
         r = await c.get(target)
+        if r.status_code == 404 and "//" in target.split("://", 1)[-1]:
+            scheme, rest = target.split("://", 1)  # the platform answers "halley//ht/...": some servers want one slash
+            collapsed = scheme + "://" + re.sub(r"/{2,}", "/", rest)
+            r = await c.get(collapsed)
     return r
 
 

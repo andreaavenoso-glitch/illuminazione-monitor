@@ -97,3 +97,30 @@ def download_target_from_json(text: str, base_url: str) -> str | None:
     rest = re.sub(r"^https?:/*", "", path)
     rest = re.sub(r"/{2,}", "/", rest).lstrip("/")
     return f"{p.scheme}://{p.netloc}/{rest}" if rest else None
+
+
+# --- the "EG0 .HBL" platform: the page's own script POSTs a small text body to the program and opens the PATH it answers ---
+_BOUNDARY = "AZazAZ"
+EG0_HEADERS = {"Content-Type": f"text/plain;charset=UTF-8; boundary={_BOUNDARY}"}
+
+
+def is_eg0_call(url: str) -> bool:
+    p = urlsplit(url)
+    return p.path.lower().endswith(".hbl") and "MESSA=" in p.query
+
+
+def eg0_post(url: str) -> tuple[str, bytes] | None:
+    """(address, body) of the POST the platform's own script (``SCHIOCCIOLA``) sends for an address built by
+    ``resolve_js_link``: the parameters go in the BODY, with real spaces, between the markers the program expects."""
+    if not is_eg0_call(url):
+        return None
+    from urllib.parse import parse_qsl
+
+    p = urlsplit(url)
+    pairs = parse_qsl(p.query, keep_blank_values=True)  # decoded: "ver 3 NUOVO AVVISO.pdf", as the script sends it
+    valmessa = "&".join(f"{k}={v}" for k, v in pairs)
+    body = (
+        f"--{_BOUNDARY}\r\n&name=\"protocollo={p.scheme}&ser={p.netloc}&{valmessa}&PAGINA=\"\r\n\n"
+        f"\r\n--{_BOUNDARY}--\r\n"
+    )
+    return f"{p.scheme}://{p.netloc}{p.path}", body.encode("utf-8")
