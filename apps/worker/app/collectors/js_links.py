@@ -36,7 +36,10 @@ def resolve_js_link(href: str, base_url: str) -> str | None:
         return None
     if m := _CALL_PROGRAM.search(h):
         p = urlsplit(base_url)
-        return urljoin(f"{p.scheme}://{p.netloc}/", m.group("program").lstrip("/")) + "?" + _encode_params(m.group("params"))
+        # the program of this platform reads the extension after the LAST parameter up to a "&": without a closing "&"
+        # it fails with "Indicizzazione errata"; the page's own script adds one (verified on a real site)
+        params = _encode_params(m.group("params")).rstrip("&") + "&"
+        return urljoin(f"{p.scheme}://{p.netloc}/", m.group("program").lstrip("/")) + "?" + params
     if m := _QUOTED_FILE.search(h):
         return urljoin(base_url, m.group("url"))
     return None
@@ -73,3 +76,24 @@ def js_redirect_target(html: str, base_url: str) -> str | None:
             if target and not target.lower().startswith(("javascript:", "#", "about:")):
                 return urljoin(base_url, target)
     return None
+
+
+_DOWNLOAD_JSON = re.compile(r'''"K"\s*:\s*"DOWNLOAD".*?"PATH"\s*:\s*"(?P<path>[^"]+)"''', re.IGNORECASE | re.DOTALL)
+
+
+def download_target_from_json(text: str, base_url: str) -> str | None:
+    """Some platforms answer the call with ``{"K": "DOWNLOAD", "PATH": "http:///halley//ht/e1015/file.pdf"}``: the path
+    of the real file, with the host left out (``http:///``) and doubled slashes. The file lives on the site itself."""
+    if not text or len(text) > SMALL_PAGE:
+        return None
+    m = _DOWNLOAD_JSON.search(text)
+    if not m:
+        return None
+    path = m.group("path").strip()
+    real_host = re.match(r"^https?://([^/]+)/", path)
+    if real_host:  # a complete address: leave it alone
+        return path
+    p = urlsplit(base_url)
+    rest = re.sub(r"^https?:/*", "", path)
+    rest = re.sub(r"/{2,}", "/", rest).lstrip("/")
+    return f"{p.scheme}://{p.netloc}/{rest}" if rest else None

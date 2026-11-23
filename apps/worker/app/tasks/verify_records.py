@@ -27,7 +27,12 @@ from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.collectors.archives import bytes_to_text
 from app.collectors.deadline_hunt import Doc, hunt_deadline
-from app.collectors.js_links import FILE_FORMAT, js_redirect_target, resolve_js_link
+from app.collectors.js_links import (
+    FILE_FORMAT,
+    download_target_from_json,
+    js_redirect_target,
+    resolve_js_link,
+)
 from app.collectors.main_content import has_document_links, main_region
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
@@ -124,9 +129,9 @@ async def _get(c: httpx.AsyncClient, url: str, hops: int = 2) -> httpx.Response:
     """GET that also follows a tiny page whose script sends the browser to the real file (up to ``hops`` times)."""
     r = await c.get(url)
     for _ in range(hops):
-        if r.status_code >= 400 or "html" not in r.headers.get("content-type", "").lower():
+        if r.status_code >= 400 or not any(k in r.headers.get("content-type", "").lower() for k in ("html", "json", "text")):
             break
-        target = js_redirect_target(r.text, str(r.url))
+        target = js_redirect_target(r.text, str(r.url)) or download_target_from_json(r.text, str(r.url))
         if not target or target == url:
             break
         r = await c.get(target)

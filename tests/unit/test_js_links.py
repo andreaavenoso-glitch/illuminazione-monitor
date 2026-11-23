@@ -13,7 +13,7 @@ ZIP = "javascript:SCHIOCCIOLA('en=e1015&MESSA=PUBBLICA&DSK=0000V501026BK&NOME=al
 def test_the_javascript_call_becomes_the_address_it_opens():
     url = resolve_js_link(PDF, BASE)
     assert url == ("https://www.comune.scanzanojonico.mt.it/EG0/EGDOCVISJS.HBL?en=e1015&MESSA=PUBBLICA&DSK=0000V601026BK"
-                   "&NOME=ver%203%20NUOVO%20AVVISO%20X%20PPP-signed.pdf&FORM=pdf")
+                   "&NOME=ver%203%20NUOVO%20AVVISO%20X%20PPP-signed.pdf&FORM=pdf&")  # the closing & the program needs
     assert file_name_from_url(url) == "ver 3 NUOVO AVVISO X PPP-signed.pdf"
     assert doc_name(url) == "ver 3 NUOVO AVVISO X PPP-signed.pdf"
 
@@ -78,3 +78,31 @@ async def test_the_pdf_behind_a_redirect_page_is_downloaded_and_read(httpx_mock,
     monkeypatch.setattr(vr, "pdf_to_text", lambda data: "Avviso pubblico, scadenza 20/01/2027" if data.startswith(b"%PDF") else "")
     text, raw = await _fetch_plain(first)
     assert text == "Avviso pubblico, scadenza 20/01/2027" and raw is None
+
+
+def test_the_download_answer_gives_the_path_of_the_real_file():
+    from app.collectors.js_links import download_target_from_json
+
+    base = "https://www.comune.scanzanojonico.mt.it/EG0/EGDOCVISJS.HBL?x=1&"
+    body = '{\r\n"K": "DOWNLOAD",\r\n"PATH": "http:///halley//ht/e1015/ver_3_NUOVO_AVVISO_X_PPP-signed.pdf"\r\n}'
+    assert download_target_from_json(body, base) == "https://www.comune.scanzanojonico.mt.it/halley/ht/e1015/ver_3_NUOVO_AVVISO_X_PPP-signed.pdf"
+    complete = '{"K": "DOWNLOAD", "PATH": "https://store.it/d/a.pdf"}'
+    assert download_target_from_json(complete, base) == "https://store.it/d/a.pdf"
+    assert download_target_from_json('{"K": "ERRORE"}', base) is None and download_target_from_json("", base) is None
+
+
+@pytest.mark.asyncio
+async def test_the_whole_chain_script_link_then_json_then_the_pdf(httpx_mock, monkeypatch):
+    import app.tasks.verify_records as vr
+
+    program = resolve_js_link(PDF, BASE)
+    httpx_mock.add_response(
+        url=program, text='{\r\n"K": "DOWNLOAD",\r\n"PATH": "http:///halley//ht/e1015/ver_3.pdf"\r\n}',
+        headers={"content-type": "text/html; charset=ISO-8859-1"},
+    )
+    httpx_mock.add_response(
+        url="https://www.comune.scanzanojonico.mt.it/halley/ht/e1015/ver_3.pdf", content=b"%PDF-1.4 fake", headers={"content-type": "application/pdf"}
+    )
+    monkeypatch.setattr(vr, "pdf_to_text", lambda data: "Avviso: proposte entro le ore 12:00 del 20-01-2027" if data.startswith(b"%PDF") else "")
+    text, raw = await vr._fetch_plain(program)
+    assert "20-01-2027" in text and raw is None
