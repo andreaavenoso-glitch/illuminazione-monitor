@@ -539,6 +539,78 @@ async def region_scan(
     return scan_summary(run, items, datetime.now(tz=UTC), costs=costs, run_cost=run_cost)
 
 
+async def _items_of_run(session: AsyncSession, run: ScanRun, region: str) -> list:
+    """The comuni of a run that belong to ``region`` (an all-regions run is cut down to it)."""
+    items = list((await session.execute(select(ScanItem).where(ScanItem.run_id == run.id))).scalars().all())
+    if run.region is not None:
+        return items
+    rows = (
+        await session.execute(
+            select(ScanItem.id, Entity.region)
+            .join(WatchlistItem, ScanItem.item_id == WatchlistItem.id)
+            .join(Entity, WatchlistItem.entity_id == Entity.id)
+            .where(ScanItem.run_id == run.id)
+        )
+    ).all()
+    keep = {i for i, r in rows if normalize_region(r) == region}
+    return [i for i in items if i.id in keep]
+
+
+@router.get("/{region}/scans")
+async def region_scan_history(
+    region: str,
+    limit: int = Query(30, ge=1, le=100),
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """History: the last runs that covered this region with their metrics (pages, depth, records, cost) and
+    the settings they used, to compare them."""
+    from app.services.scan_history import run_summary
+
+    region = _canonical(region)
+    runs = (
+        await session.execute(
+            select(ScanRun).where((ScanRun.region == region) | (ScanRun.region.is_(None)))
+            .order_by(ScanRun.started_at.desc()).limit(limit)
+        )
+    ).scalars().all()
+    costs = dict(
+        (await session.execute(
+            select(ApiUsage.run_id, func.coalesce(func.sum(ApiUsage.cost_usd), 0))
+            .where(ApiUsage.run_id.in_([r.id for r in runs])).group_by(ApiUsage.run_id)
+        )).all()
+    ) if runs else {}
+    out = []
+    for r in runs:
+        items = await _items_of_run(session, r, region)
+        if not items:
+            continue
+        out.append(run_summary(r, items, costs.get(r.id)))
+    return out
+
+
+@router.get("/{region}/scans/compare")
+async def compare_region_scans(
+    region: str,
+    a: UUID,
+    b: UUID,
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Two runs side by side, comune by comune: pages read, depth reached, records found."""
+    from app.services.scan_history import compare_runs, describe_config_diff
+
+    region = _canonical(region)
+    ra, rb = await session.get(ScanRun, a), await session.get(ScanRun, b)
+    if ra is None or rb is None:
+        raise HTTPException(status_code=404, detail="Raccolta non trovata")
+    out = compare_runs(await _items_of_run(session, ra, region), await _items_of_run(session, rb, region))
+    out["config_diff"] = describe_config_diff(ra.config or {}, rb.config or {})
+    out["a"] = {"id": str(ra.id), "started_at": ra.started_at, "config": ra.config or {}}
+    out["b"] = {"id": str(rb.id), "started_at": rb.started_at, "config": rb.config or {}}
+    return out
+
+
 @router.patch("/{region}/sites/{source_id}")
 async def update_site(
     region: str,

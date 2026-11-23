@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared_models.base import Base
@@ -30,6 +30,8 @@ class ScanRun(Base):
     claude_status: Mapped[str] = mapped_column(String, nullable=False, default="unused")
     claude_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Set by the user ("Ferma raccolta"): the scan skips the comuni not yet started and later slow steps are skipped.
+    # Settings the run used (crawl depth / pages / time, extraction mode, kind of run): what makes two runs comparable.
+    config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 

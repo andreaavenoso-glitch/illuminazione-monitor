@@ -583,6 +583,20 @@ async def _set_run_claude(run_id, status: str, error: str | None, *, only_if_unu
         log.exception("collect_watchlist.progress_update_failed")
 
 
+def _run_config(settings, limit, skip_hours, item_ids) -> dict:
+    """What this run used, kept with it so runs can be compared later (see the Storico tab)."""
+    tipo = "mirata" if item_ids else "prova" if limit else "ripresa" if skip_hours else "completa"
+    return {
+        "tipo": tipo,
+        "crawl_max_pages": settings.crawl_max_pages,
+        "crawl_max_depth": settings.crawl_max_depth,
+        "crawl_time_budget_s": settings.crawl_time_budget_s,
+        "scan_item_timeout_s": settings.scan_item_timeout_s,
+        "extraction_mode": settings.extraction_mode,
+        "servizi": settings.enabled_services or "tutti",
+    }
+
+
 async def _run_watchlist_scan(
     region: str | None = None,
     limit: int | None = None,
@@ -621,6 +635,7 @@ async def _run_watchlist_scan(
         run = ScanRun(
             region=normalize_region(region) if region else None,
             sample_limit=limit, total=len(items), status="running", heartbeat_at=datetime.now(tz=UTC),
+            config=_run_config(get_worker_settings(), limit, skip_scanned_hours, item_ids),
         )
         session.add(run)
         await session.flush()

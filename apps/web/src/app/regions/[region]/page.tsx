@@ -10,6 +10,7 @@ import { Countdown, Icon, KpiTile, StackedBar, TONE, type Tone } from "@/compone
 import { MenuItem, RegionTabs, type TabDef } from "@/components/RegionTabs";
 import { ReferentiTable } from "@/components/ReferentiTable";
 import { TargetedScan } from "@/components/TargetedScan";
+import { ScanHistory } from "@/components/ScanHistory";
 import { ScanView } from "@/components/ScanView";
 import { getToken, getUser, hasRole } from "@/lib/auth";
 import {
@@ -24,7 +25,7 @@ import {
   type ReferentiRiga,
 } from "@/lib/regions";
 
-type Tab = Categoria | "siti" | "scan" | "verifica" | "referenti";
+type Tab = Categoria | "siti" | "scan" | "verifica" | "referenti" | "storico";
 
 const CAT_TONE: Record<Categoria, Tone> = { pre_gara: "sky", manifestazione_interesse: "violet", gara: "emerald" };
 
@@ -304,6 +305,7 @@ export default function RegionPage() {
     { key: "verifica", label: "Da verificare", n: data.da_verificare?.length ?? 0, group: "lavoro", tone: "amber" },
     { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length, group: "lavoro", tone: "neutral" },
     { key: "scan", label: "Raccolta", group: "lavoro", tone: "neutral" },
+    { key: "storico", label: "Storico", group: "lavoro", tone: "neutral" },
   ];
 
   return (
@@ -441,6 +443,8 @@ export default function RegionPage() {
 
       {tab === "scan" ? (
         <ScanView region={region} />
+      ) : tab === "storico" ? (
+        <ScanHistory region={region} />
       ) : tab === "referenti" ? (
         <ReferentiTable
           rows={(data.referenti_comuni ?? []).filter((r) => r.cercato)}
