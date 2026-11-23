@@ -65,6 +65,15 @@ case "${1:-aggiorna}" in
     shift
     docker compose exec -T worker python -m infra.scripts.siti_ko "$@"
     ;;
+  azzera)
+    # bash aggiorna.sh azzera Lombardia            -> solo conteggi
+    # bash aggiorna.sh azzera Lombardia --applica  -> ripulisce (salva prima lo storico)
+    # bash aggiorna.sh azzera all --applica        -> tutte le regioni
+    shift
+    region="${1:?Uso: bash aggiorna.sh azzera <Regione|all> [--applica]}"
+    shift
+    docker compose exec -T api python -m infra.scripts.azzera_prove --region "$region" "$@"
+    ;;
   stato)
     docker compose ps
     echo
@@ -77,7 +86,7 @@ case "${1:-aggiorna}" in
     echo "App: $(app_url)/regions"
     ;;
   *)
-    echo "Uso: bash aggiorna.sh [aggiorna|claude|stato|ko|referenti]"
+    echo "Uso: bash aggiorna.sh [aggiorna|claude|stato|ko|referenti|azzera]"
     exit 2
     ;;
 esac
