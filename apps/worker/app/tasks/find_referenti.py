@@ -105,6 +105,7 @@ async def find_for_record(record_id: UUID) -> dict:
     elezione = max((e for _, t in pages if (e := election_date(t, today))), default=None)
     found: list[tuple[dict, str]] = []
     claude_calls = 0
+    proposed = 0
     by_rules = False
     claude_state.reset()  # a topped-up account is picked up again
     for url, text in pages:
@@ -121,6 +122,7 @@ async def find_for_record(record_id: UUID) -> dict:
         if proposals is None:
             by_rules = True
             proposals = extract_people_by_rules(text)
+        proposed += len(proposals)
         for person in proposals:
             checked = verify_person(person, text)
             if checked:
@@ -150,8 +152,14 @@ async def find_for_record(record_id: UUID) -> dict:
                     setattr(existing, k, v)
                 existing.verified_at = now
         await session.commit()
-    log.info("find_referenti ente=%s pages=%d claude_calls=%d people=%d", ente, len(pages), claude_calls, len(people))
-    return {"ente": ente, "pagine": len(pages), "trovati": len(people), "metodo": "regole" if by_rules else "claude"}
+    log.info(
+        "find_referenti ente=%s pages=%s claude_calls=%d proposed=%d people=%d",
+        ente, [(u[:80], len(t)) for u, t in pages], claude_calls, proposed, len(people),
+    )
+    return {
+        "ente": ente, "pagine": len(pages), "trovati": len(people), "proposte": proposed,
+        "metodo": "regole" if by_rules else "claude", "url": [u for u, _ in pages],
+    }
 
 
 @celery_app.task(name="app.tasks.find_referenti.find_referenti", soft_time_limit=600, time_limit=660)
