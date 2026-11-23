@@ -7,6 +7,11 @@ Run inside the worker container (it has the fetcher and Playwright):
     docker compose exec worker python -m infra.scripts.capture_samples \
         --region Puglia --limit 20 --out /workspace/infra/samples/puglia
 
+One comune only (why did it produce nothing?):
+
+    docker compose exec worker python -m infra.scripts.capture_samples \
+        --region Lombardia --comune Arluno --out /workspace/infra/samples/arluno
+
 Writes one .html per fetched page plus report.json and report.md. The pages
 are public web pages; nothing from the database other than the comune name and
 its URLs is written.
@@ -52,7 +57,7 @@ def summarize(reports: list[dict]) -> dict:
     return {"counts": dict(s), "templates": dict(templates), "errors": dict(errors)}
 
 
-async def run(region: str, limit: int, out: Path, concurrency: int = 3) -> None:
+async def run(region: str, limit: int, out: Path, concurrency: int = 3, comune: str | None = None) -> None:
     from app.collectors.adaptive_fetch import adaptive_fetch_result
     from app.collectors.albo_pretorio_llm import find_bandi_link
     from app.collectors.crawler import crawl
@@ -94,6 +99,9 @@ async def run(region: str, limit: int, out: Path, concurrency: int = 3) -> None:
                    or_(WatchlistItem.url_albo.is_not(None), WatchlistItem.url_trasparenza.is_not(None)))
         )).all()
     pairs = [(i, e) for i, e in rows if normalize_region(e.region) == canonical]
+    if comune:  # one comune by name (substring, any case): diagnose why it produced nothing
+        pairs = [(i, e) for i, e in pairs if comune.lower() in e.name.lower()]
+        limit = max(1, len(pairs))
     sample = select_sample([i for i, _ in pairs], limit)
     by_id = {i.id: e for i, e in pairs}
 
@@ -192,8 +200,9 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--out", required=True)
     ap.add_argument("--concurrency", type=int, default=3, help="comuni letti in parallelo")
+    ap.add_argument("--comune", help="solo il comune che contiene questo nome (es. Arluno)")
     a = ap.parse_args()
-    asyncio.run(run(a.region, a.limit, Path(a.out), a.concurrency))
+    asyncio.run(run(a.region, a.limit, Path(a.out), a.concurrency, a.comune))
 
 
 if __name__ == "__main__":
