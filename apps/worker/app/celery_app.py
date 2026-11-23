@@ -20,6 +20,7 @@ celery_app = Celery(
         "app.tasks.send_region_digests",
         "app.tasks.verify_records",
         "app.tasks.find_referenti",
+        "app.tasks.claude_health",
         "app.tasks.daily_pipeline",
     ],
 )

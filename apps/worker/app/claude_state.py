@@ -26,6 +26,15 @@ def mark_down(error: str, *, seconds: float = RETRY_AFTER_S) -> None:
     global _down_until, _last_error
     _down_until = time.monotonic() + seconds
     _last_error = error
+    # best effort: let the pages know Claude is down (they hide the warning when it recovers)
+    try:
+        import asyncio
+
+        from app import claude_health
+
+        asyncio.get_running_loop().create_task(claude_health.set_status(False, error[:500]))
+    except RuntimeError:
+        pass
 
 
 def reset() -> None:

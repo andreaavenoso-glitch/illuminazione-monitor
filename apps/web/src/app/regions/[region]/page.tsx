@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { ClaudeStatusBanner } from "@/components/ClaudeStatusBanner";
+import { MenuItem, RegionTabs, type TabDef } from "@/components/RegionTabs";
 import { ScanView } from "@/components/ScanView";
 import { getToken, getUser, hasRole } from "@/lib/auth";
 import {
@@ -175,13 +177,13 @@ export default function RegionPage() {
 
   const byCat = (c: Categoria) => data.records.filter((r) => r.categoria === c);
   const failing = data.comuni.filter((c) => c.stato === "failing").length;
-  const tabs: { key: Tab; label: string; n?: number }[] = [
-    { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: byCat("pre_gara").length },
-    { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: byCat("manifestazione_interesse").length },
-    { key: "gara", label: CATEGORIA_LABEL.gara, n: byCat("gara").length },
-    { key: "verifica", label: "Da verificare", n: data.da_verificare?.length ?? 0 },
-    { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length },
-    { key: "scan", label: "Raccolta" },
+  const tabs: TabDef<Tab>[] = [
+    { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: byCat("pre_gara").length, group: "opportunita", tone: "sky" },
+    { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: byCat("manifestazione_interesse").length, group: "opportunita", tone: "violet" },
+    { key: "gara", label: CATEGORIA_LABEL.gara, n: byCat("gara").length, group: "opportunita", tone: "emerald" },
+    { key: "verifica", label: "Da verificare", n: data.da_verificare?.length ?? 0, group: "lavoro", tone: "amber" },
+    { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length, group: "lavoro", tone: "neutral" },
+    { key: "scan", label: "Raccolta", group: "lavoro", tone: "neutral" },
   ];
 
   return (
@@ -196,58 +198,52 @@ export default function RegionPage() {
             </span>
           </h1>
           {admin && (
-            <div className="flex flex-wrap gap-2 text-sm">
-              <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                onClick={() => save.mutate({ enabled: !data.enabled })}>
-                {data.enabled ? "Spegni regione" : "Attiva regione"}
-              </button>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <button type="button" disabled={collect.isPending}
-                className="rounded bg-neutral-900 px-3 py-1 text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+                className="rounded-lg bg-neutral-900 px-4 py-1.5 font-medium text-white shadow-sm hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+                title="Rilegge tutti i comuni della regione"
                 onClick={() => collect.mutate(undefined)}>
                 Raccogli ora
               </button>
               <button type="button" disabled={collect.isPending}
-                className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                className="rounded-lg border px-3 py-1.5 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
                 title="Salta i comuni già letti nelle ultime 24 ore: per riprendere una raccolta interrotta senza rifare e ripagare quelli già fatti"
                 onClick={() => collect.mutate({ resume: true })}>
                 Riprendi
               </button>
               <button type="button" disabled={collect.isPending}
-                className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                className="rounded-lg border px-3 py-1.5 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
                 title="Scansiona solo 10 comuni: per verificare che tutto funzioni senza spendere un giro intero"
                 onClick={() => collect.mutate({ limit: 10 })}>
                 Prova con 10 comuni
               </button>
-              <button type="button" disabled={digest.isPending}
-                className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
-                onClick={() => digest.mutate()}>
-                Invia email ora
-              </button>
-              <button type="button" disabled={processNow.isPending}
-                className="rounded border px-3 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
-                title="Elabora i dati già raccolti (senza rileggere i siti): serve se una raccolta si è interrotta prima della fine"
-                onClick={() => processNow.mutate()}>
-                Elabora ora
-              </button>
-              <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                title="Scarica tutti i record della regione in un file CSV (anche quelli scaduti, segnati)"
-                onClick={downloadCsv}>
-                Scarica CSV
-              </button>
-              <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                title="Referenti dei comuni: indice e un foglio per provincia, da condividere con i colleghi"
-                onClick={() => download("referenti.xlsx", `referenti_${region}.xlsx`)}>
-                Referenti (xlsx)
-              </button>
-              <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                title="Come sopra, con affidabilità, azione, fonti e motivi (uso interno)"
-                onClick={() => download("referenti.xlsx?interno=true", `referenti_${region}_interno.xlsx`)}>
-                Referenti interno
-              </button>
+              <details className="relative">
+                <summary className="cursor-pointer list-none rounded-lg border px-3 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                  Altro ▾
+                </summary>
+                <div className="absolute right-0 z-20 mt-2 w-60 space-y-0.5 rounded-lg border bg-white p-1.5 text-left shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+                  <MenuItem onClick={() => processNow.mutate()} disabled={processNow.isPending}
+                    hint="Elabora i dati già raccolti senza rileggere i siti">Elabora ora</MenuItem>
+                  <MenuItem onClick={() => digest.mutate()} disabled={digest.isPending}
+                    hint="Invia ai referenti email i nuovi avvisi">Invia email ora</MenuItem>
+                  <hr className="my-1 dark:border-neutral-700" />
+                  <MenuItem onClick={downloadCsv} hint="Tutti i record, anche quelli scaduti (segnati)">Scarica CSV</MenuItem>
+                  <MenuItem onClick={() => download("referenti.xlsx", `referenti_${region}.xlsx`)}
+                    hint="Indice e un foglio per provincia, da condividere">Referenti (xlsx)</MenuItem>
+                  <MenuItem onClick={() => download("referenti.xlsx?interno=true", `referenti_${region}_interno.xlsx`)}
+                    hint="Con affidabilità, azione, fonti e motivi (uso interno)">Referenti interno</MenuItem>
+                  <hr className="my-1 dark:border-neutral-700" />
+                  <MenuItem onClick={() => save.mutate({ enabled: !data.enabled })}
+                    hint={data.enabled ? "Smette di raccogliere e notificare" : "Include la regione nelle raccolte"}>
+                    {data.enabled ? "Spegni regione" : "Attiva regione"}
+                  </MenuItem>
+                </div>
+              </details>
             </div>
           )}
         </div>
-        {data.ultimo_scan?.errore && (
+        <ClaudeStatusBanner />
+        {data.ultimo_scan?.errore && !/Claude non disponibile|credit balance|usage limits/i.test(data.ultimo_scan.errore) && (
           <p className="rounded border border-red-300 bg-red-50 p-2 text-xs text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100">
             Ultima raccolta ({fmt(data.ultimo_scan.at)}) non riuscita: {data.ultimo_scan.errore.slice(0, 300)}
           </p>
@@ -278,14 +274,7 @@ export default function RegionPage() {
         </div>
       </header>
 
-      <nav className="flex gap-1 border-b text-sm dark:border-neutral-800">
-        {tabs.map((t) => (
-          <button key={t.key} type="button" onClick={() => setTab(t.key)}
-            className={`-mb-px border-b-2 px-3 py-2 ${tab === t.key ? "border-neutral-900 font-medium dark:border-neutral-100" : "border-transparent text-neutral-500"}`}>
-            {t.label} {t.n !== undefined && <span className="text-xs text-neutral-500">({t.n})</span>}
-          </button>
-        ))}
-      </nav>
+      <RegionTabs tabs={tabs} active={tab} onSelect={setTab} />
 
       {tab === "scan" ? (
         <ScanView region={region} />

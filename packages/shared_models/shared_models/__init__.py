@@ -19,6 +19,7 @@ from shared_models.record_event import RecordEvent
 from shared_models.referente import Referente
 from shared_models.region_settings import RegionSettings
 from shared_models.scan_run import ScanItem, ScanRun
+from shared_models.service_status import ServiceStatus
 from shared_models.source import Source
 from shared_models.user import User
 from shared_models.watchlist_item import WatchlistItem
@@ -39,6 +40,7 @@ __all__ = [
     "RegionSettings",
     "ScanItem",
     "ScanRun",
+    "ServiceStatus",
     "ReliabilityIndex",
     "Source",
     "SourcePriority",

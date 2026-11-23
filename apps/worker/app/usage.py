@@ -49,5 +49,8 @@ async def record_usage(usage: Any, *, model: str, purpose: str, label: str | Non
         async with SessionLocal() as s:
             s.add(ApiUsage(run_id=current_run_id.get(), scan_item_id=current_scan_item_id.get(), **row))
             await s.commit()
+        from app import claude_health
+
+        await claude_health.note_success()
     except Exception:  # noqa: BLE001
         log.exception("usage.record_failed")
