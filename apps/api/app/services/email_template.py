@@ -5,6 +5,7 @@ that is not known is left out or marked "non indicata", never guessed. The user 
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -36,6 +37,17 @@ CAMPI_PREGARA = [
 ]
 CAMPI_EXTRA = [("sopralluogo", "Sopralluogo"), ("pec_invio", "PEC per l'invio dell'offerta"), ("consumi_mwh", "Consumi (MWh/anno)"),
                ("spesa_annua_eur", "Spesa annua"), ("canone_annuo_eur", "Canone annuo di riferimento")]
+_DELEGA_LLPP = re.compile(r"lavori pubblici|ll\.? ?pp|opere pubbliche|manutenzion|illuminazion|urbanistic|patrimonio|energia|ambiente", re.IGNORECASE)
+
+
+def ruolo_label(p: dict, default: str) -> str:
+    """The role of a person as written: an assessore is "ai Lavori pubblici" only when his delega says so (the other
+    assessori are simply assessori: they are listed because they are in the giunta, not because they hold that delega)."""
+    if p.get("ruolo") == "assessore":
+        return "Assessore ai Lavori pubblici" if _DELEGA_LLPP.search(p.get("qualifica") or "") else "Assessore"
+    return default
+
+
 RUOLO_LABEL = [("sindaco", "Sindaco"), ("assessore", "Assessore ai Lavori pubblici"), ("responsabile_tecnico", "Referente tecnico"), ("rup", "RUP")]
 
 
@@ -130,7 +142,7 @@ def build_email(
         if ruolo == "rup" and campi and "rup" in campi:
             continue  # already listed among the documentation data
         for p in [x for x in referenti if x["ruolo"] == ruolo][:2]:
-            contatti.append(f"- {lab}: {_persona(p)}")
+            contatti.append(f"- {ruolo_label(p, lab)}: {_persona(p)}")
     if pec:
         contatti.append(f"- PEC dell'ente: {pec}")
     if contatti:

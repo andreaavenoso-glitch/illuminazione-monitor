@@ -50,7 +50,7 @@ def test_documentation_data_and_referenti_are_listed():
     b = _mail(campi=campi, referenti=people, pec="protocollo@pec.c.it")["corpo"]
     assert "- Importo massimo: € 3.200.000,00" in b and "- CIG: 9876543210" in b and "- RUP: Francesco Chiarella" in b
     assert "- Sindaco: Mario Rossi (Sindaco) – s@c.it" in b
-    assert "- Assessore ai Lavori pubblici: Giulia Bianchi – 0835 1 [da confermare]" in b
+    assert "- Assessore: Giulia Bianchi – 0835 1 [da confermare]" in b  # no delega written: just an assessore
     assert "- PEC dell'ente: protocollo@pec.c.it" in b and "vanno verificati prima di un contatto" in b
 
 
@@ -91,3 +91,12 @@ def test_manifestazione_and_gara_email_have_the_full_data_and_mention_the_summar
         body = _mail_by_category(cat, "Avviso per illuminazione pubblica", campi)
         assert "CIG: B1234567AB" in body and "Sopralluogo: Obbligatorio, da concordare" in body
         assert "In allegato la scheda di sintesi" in body and "Di cosa si tratta" not in body
+
+
+def test_an_assessore_is_for_public_works_only_when_the_delega_says_so():
+    from app.services.email_template import ruolo_label
+
+    assert ruolo_label({"ruolo": "assessore", "qualifica": "Natale Vincenza Angela Assessore, Consigliere di maggioranza"}, "x") == "Assessore"
+    assert ruolo_label({"ruolo": "assessore", "qualifica": None}, "x") == "Assessore"
+    assert ruolo_label({"ruolo": "assessore", "qualifica": "Assessore ai Lavori Pubblici e Urbanistica"}, "x") == "Assessore ai Lavori pubblici"
+    assert ruolo_label({"ruolo": "sindaco", "qualifica": "Sindaco"}, "Sindaco") == "Sindaco"

@@ -24,6 +24,7 @@ from app.services.email_template import (
     TIPO,
     _campo,
     _d,
+    ruolo_label,
 )
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -186,7 +187,7 @@ def build_deck(d: dict[str, Any], template: str | None = None) -> bytes:
         ("Tipo di atto", tipo),
         ("Servizi", ", ".join(servizi) or NA),
     ]
-    for key, label in (("procedura", "Procedura"), ("importo_massimo_eur", "Importo massimo"), ("durata", "Durata"),
+    for key, label in (("procedura", "Procedura"), ("importo_massimo_eur", "Importo massimo"), ("canone_annuo_eur", "Canone annuo di riferimento"), ("durata", "Durata"),
                        ("punti_luce", "Punti luce"), ("cig", "CIG"), ("criterio_aggiudicazione", "Criterio"),
                        ("finanziamento", "Finanziamento")):
         facts.append((label, _campo(key, campi[key]["valore"]) if key in campi else NA))
@@ -213,7 +214,7 @@ def build_deck(d: dict[str, Any], template: str | None = None) -> bytes:
             ok = p.get("stato") == "verificato"
             uncertain = uncertain or not ok
             contatti = " · ".join(x for x in (p.get("email"), p.get("telefono")) if x) or "—"
-            rows.append([label, _short(p.get("nome"), 40), _short(contatti, 55), "verificato" if ok else "da confermare"])
+            rows.append([ruolo_label(p, label), _short(p.get("nome"), 40), _short(contatti, 55), "verificato" if ok else "da confermare"])
     if d.get("pec"):
         rows.append(["PEC dell'ente", d["pec"], "", "da IPA"])
     _table(s, 0.5, 1.35, [3.0, 3.6, 4.1, 1.6], ["Ruolo", "Nome", "Contatti", "Stato"], rows, size=13, row_h=0.5)

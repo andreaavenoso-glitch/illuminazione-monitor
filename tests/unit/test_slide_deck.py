@@ -60,3 +60,14 @@ def test_missing_template_file_falls_back_to_the_default_design():
 
 def test_filename_is_safe():
     assert deck_filename("Comune di Cingia De' Botti", TODAY) == "scheda_Comune_di_Cingia_De__Botti_20261123.pptx"
+
+
+def test_deck_labels_assessori_by_their_delega_and_shows_the_canone():
+    data = build_deck({
+        **FULL,
+        "referenti": [{"ruolo": "assessore", "nome": "Maria Ponzio", "qualifica": "Assessore, Consigliere di maggioranza", "stato": "da_confermare"}],
+        "campi": {**FULL["campi"], "canone_annuo_eur": {"valore": 230000.0, "fonte": "avviso.pdf"}},
+    })
+    text = " | ".join(_texts(data))
+    assert "Assessore | Maria Ponzio" in text.replace("\n", " ") or ("Maria Ponzio" in text and "Assessore ai Lavori pubblici | Maria" not in text)
+    assert "Canone annuo di riferimento" in text and "€ 230.000,00" in text
