@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from app.celery_app import celery_app
@@ -15,10 +15,58 @@ from app.collectors.doc_fields import extract_fields
 from app.db import SessionLocal
 from app.tasks.verify_records import _fetch_plain
 from shared_models import AnalisiRecord, Document, ProcurementRecord
+from shared_models.categories import categorize_record
 from shared_models.pregara import pregara_tipi
+from shared_models.riclassifica import is_higher, verdetto_da_documenti
 from sqlalchemy import select
 
 log = logging.getLogger(__name__)
+
+
+CATEGORIA_LABEL = {"manifestazione_interesse": "manifestazione di interesse", "gara": "gara", "pre_gara": "pre-gara"}
+
+
+def applica_analisi(rec, attached: list[tuple[str, str]], fields: dict, profondita: str, today: date, now: datetime) -> list[str]:
+    """What the analysis of the documents changes on the notice itself (pure on ``rec``, tested without a database):
+
+    * the category: a heading that is a call for interest or a tender moves a pre-gara to its box (never down);
+    * the deadline read in the documents: written on the notice (a deep analysis replaces the one of the listing,
+      a base one only fills it in), so that the notice is confirmed (open) or expired (noise gone);
+    * an outcome / award / revocation: the notice is closed.
+    Returns the notes, in words, of what changed.
+    """
+    notes: list[str] = []
+    current = categorize_record(rec)
+    v = verdetto_da_documenti(attached)
+    if v.categoria and is_higher(v.categoria, current):
+        rec.categoria_analisi = v.categoria
+        notes.append(f"riclassificato in {CATEGORIA_LABEL[v.categoria]}: {v.motivo}")
+    if v.chiuso:
+        rec.verifica_esito, rec.verified_at = "chiuso", now
+        rec.verifica_nota = f"Chiuso dall'analisi dei documenti: {v.motivo}"
+        return notes + [rec.verifica_nota]
+    found = fields.get("scadenza")
+    if not found:
+        if notes or (current in ("manifestazione_interesse", "gara") or rec.categoria_analisi):
+            rec.verifica_nota = "Scadenza non trovata nei documenti letti" + (f" ({profondita})" if profondita else "")
+            notes.append(rec.verifica_nota)
+        return notes
+    doc_deadline = date.fromisoformat(str(found["valore"])[:10])
+    existing = rec.scadenza.date() if isinstance(rec.scadenza, datetime) else rec.scadenza
+    ora = (fields.get("ora_scadenza") or {}).get("valore")
+    if existing is None or profondita == "approfondita":
+        hh, mm = (int(x) for x in str(ora).split(":")) if ora else (23, 59)
+        rec.scadenza = datetime(doc_deadline.year, doc_deadline.month, doc_deadline.day, hh, mm, tzinfo=UTC)
+        effective = doc_deadline
+        what = f"Scadenza {doc_deadline:%d/%m/%Y}{f' ore {ora}' if ora else ''} letta in {found.get('fonte') or 'un documento'} (analisi {profondita})"
+    else:
+        effective = existing
+        what = (f"Scadenza dell'elenco {existing:%d/%m/%Y} (il documento dice {doc_deadline:%d/%m/%Y}: "
+                "«Approfondisci documentazione» la allinea)") if existing != doc_deadline else f"Scadenza {existing:%d/%m/%Y} confermata dal documento"
+    rec.verifica_esito = "aperto" if effective >= today else "chiuso"
+    rec.verified_at, rec.verifica_nota = now, what + ("" if effective >= today else ": già passata")
+    notes.append(rec.verifica_nota)
+    return notes
 
 
 async def analyze(record_id: UUID, profondita: str = "base") -> dict:
@@ -65,11 +113,16 @@ async def analyze(record_id: UUID, profondita: str = "base") -> dict:
         if not (row.profondita == "approfondita" and profondita == "base"):
             row.documenti, row.campi, row.profondita = documenti, fields, profondita
             row.metodo, row.eseguita_il = "regole", datetime.now(tz=UTC)
+        # what the documents say about the notice itself: its box, its deadline, whether it is already over
+        rec = await s.get(ProcurementRecord, record_id)
+        changes = applica_analisi(
+            rec, [(d.name, d.text) for d in readable if d.depth > 0], fields, profondita, today, datetime.now(tz=UTC),
+        ) if rec is not None and readable else []
         await s.commit()
     log.info("analyze_record ente=%s livello=%s documenti=%d letti=%d campi=%d stop=%s",
              ente, profondita, len(collected), len(readable), len(fields), why)
     return {"ente": ente, "profondita": profondita, "documenti": len(collected), "letti": len(readable),
-            "campi": len(fields), "stop": why}
+            "campi": len(fields), "stop": why, "modifiche": changes}
 
 
 @celery_app.task(name="app.tasks.analyze_record.analyze_record", soft_time_limit=900, time_limit=960)

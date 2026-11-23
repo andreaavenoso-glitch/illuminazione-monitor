@@ -243,6 +243,9 @@ def categorize_record(r) -> str | None:
     "Determinazione Nr.95") is not an opportunity whatever its wording."""
     from shared_models.services import detect_services
 
+    forced = getattr(r, "categoria_analisi", None)
+    if forced in (PRE_GARA, MANIFESTAZIONE, GARA):  # the documents were read: they decide, not the title
+        return forced
     text = f"{r.descrizione or ''} {r.tipologia_gara_procedura or ''}"
     cat = categorize(
         stato_procedurale=r.stato_procedurale,

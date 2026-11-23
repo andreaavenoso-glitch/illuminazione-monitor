@@ -75,6 +75,13 @@ function Riga({
         </span>
       </div>
       <p className="mt-1 line-clamp-2 text-neutral-700 dark:text-neutral-300">{r.descrizione}</p>
+      {r.riclassificato && (
+        <div className="mt-1">
+          <span className="chip bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-100" title={r.verifica_nota ?? undefined}>
+            riclassificato dopo l&apos;analisi
+          </span>
+        </div>
+      )}
       {(r.pregara_tipi ?? []).length > 0 && (
         <div className="mt-1 flex flex-wrap gap-1">
           {(r.pregara_tipi ?? []).map((t) => (

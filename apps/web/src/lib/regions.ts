@@ -144,6 +144,7 @@ export interface RegionRecord {
   analisi?: AnalisiDocumenti | null;
   lavorazione?: LavorazioneRecord | null;
   pregara_tipi?: string[];
+  riclassificato?: boolean;
 }
 
 export const SERVIZIO_LABEL: Record<string, string> = {

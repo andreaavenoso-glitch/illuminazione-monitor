@@ -385,6 +385,7 @@ async def region_detail(
             "analisi": analisi.get(rec.id),
             "lavorazione": lavorazioni.get(rec.id),
             "pregara_tipi": pregara_tipi(rec.descrizione) if cat == "pre_gara" else [],
+            "riclassificato": rec.categoria_analisi is not None,
         })
     # Deadlines first (the soonest to expire on top), then the rest, newest first
     # (the sort is stable, so the order of arrival is kept inside each group).

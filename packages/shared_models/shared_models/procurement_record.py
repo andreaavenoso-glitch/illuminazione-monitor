@@ -28,6 +28,8 @@ class ProcurementRecord(Base):
     tipologia_gara_procedura: Mapped[str | None] = mapped_column(String, nullable=True)
     tipo_strumento: Mapped[str | None] = mapped_column(String, nullable=True)
     scadenza: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Category fixed by the analysis of the documents (see riclassifica.py): beats the wording of the title
+    categoria_analisi: Mapped[str | None] = mapped_column(String, nullable=True)
     criterio: Mapped[str | None] = mapped_column(String, nullable=True)
     cig: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     classifiche: Mapped[str | None] = mapped_column(Text, nullable=True)

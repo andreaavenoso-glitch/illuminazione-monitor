@@ -570,6 +570,11 @@ export default function RegionPage() {
                   ) : (
                     <span className="chip bg-emerald-50 text-emerald-700"><Icon name="check" className="h-3.5 w-3.5" />confermato</span>
                   )}
+                  {r.riclassificato && (
+                    <span className="chip bg-violet-50 text-violet-700" title={r.verifica_nota ?? "Dopo l'analisi dei documenti l'avviso è stato spostato nella categoria giusta"}>
+                      riclassificato dopo l&apos;analisi
+                    </span>
+                  )}
                   {r.scaduto && !r.scadenza && <span className="chip bg-red-50 text-red-700">molto vecchio</span>}
                   {r.data_non_verificata && <span className="chip bg-amber-50 text-amber-700">data non verificata</span>}
                   <span className={`chip ${r.notificato ? "bg-emerald-50 text-emerald-700" : "bg-neutral-100 text-neutral-500"}`}>
