@@ -159,3 +159,15 @@ def test_cards_give_name_and_role_and_skip_consiglieri():
     assert names == {("Mario Rossi", "sindaco"), ("Anna Bianchi", "assessore")}
     prio = {u.rsplit("/", 1)[-1]: sc for sc, u, _, _ in menu_links(html, "https://c.it/it/page/politici", {"giunta"})}
     assert prio["rossi-mario"] > prio["verdi-luca"] and prio["bianchi-anna"] > prio["verdi-luca"]
+
+
+def test_person_page_gives_name_from_title_and_role_from_the_first_lines():
+    from app.collectors.referenti_script import person_from_page
+
+    raw = "<html><body><h1>Claudio Bolandrini</h1><p>Sindaco</p><p>Deleghe: bilancio</p></body></html>"
+    text = "Claudio Bolandrini Sindaco Deleghe: bilancio"
+    p = person_from_page("https://c.it/it/persone/bolandrini-claudio", text, raw)
+    assert p and p["nome"] == "Claudio Bolandrini" and p["ruolo"] == "sindaco"
+    raw2 = "<h1>Anna Verdi</h1><p>Consigliere comunale</p>"
+    assert person_from_page("https://c.it/it/persone/verdi-anna", "Anna Verdi Consigliere comunale", raw2) is None
+    assert person_from_page("https://c.it/it/news/x", text, raw) is None

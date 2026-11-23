@@ -32,7 +32,7 @@ from shared_models.referenti_logic import election_date, freshness, has_decree, 
 
 Fetch = Callable[[str], Awaitable[tuple[str, str | None]]]  # url -> (text, raw html or None)
 
-PAGE_BUDGET = 22
+PAGE_BUDGET = 40
 MAX_DEPTH = 3
 
 # (pattern, weight, tag): what a menu entry looks like on the way to the people
@@ -169,6 +169,24 @@ def people_from_cards(raw: str | None) -> list[dict[str, Any]]:
     return out
 
 
+def person_from_page(pg_url: str, text: str, raw: str | None) -> dict[str, Any] | None:
+    """A person's own page ("/persone/mario-rossi"): the name is the page title, the role is written in the first
+    lines ("Sindaco", "Assessore ai lavori pubblici"). Consiglieri and everybody else are left out."""
+    if not raw or not _PERSON_LINK_HREF.search(pg_url):
+        return None
+    soup = BeautifulSoup(raw, "lxml")
+    h1 = soup.find("h1")
+    name = " ".join(h1.get_text(" ", strip=True).split()) if h1 else ""
+    bare = " ".join(re.sub(r"(?i)\b(sindaco|sindaca|assessore|assessora|vicesindaco|dott\.?|dr\.?|ing\.?|arch\.?|avv\.?|geom\.?)\b", "", name).split())
+    if not bare or not looks_like_name(bare) or not _title_case(bare):
+        return None
+    head = " ".join(text.split())[:900]
+    ruolo = _card_role(head)
+    if ruolo not in ("sindaco", "assessore"):
+        return None
+    return {"nome": bare, "ruolo": ruolo, "qualifica": head[:120], "email": None, "telefono": None, "citazione": head[:200]}
+
+
 def score_link(text: str, href: str, person_ok: bool = False) -> tuple[int, set[str]]:
     """How promising a link is on the way to the people, and what kind of page it leads to. A link whose text
     merely LOOKS like a name ("Animali Domestici") is a person's page only when it is listed on a giunta /
@@ -254,7 +272,8 @@ def people_from_pages(pages: list[Page], today: date, elezione: date | None) -> 
     rules decide verificato / da_confermare."""
     out: list[tuple[dict[str, Any], str]] = []
     for pg in pages:
-        for prop in extract_people_by_rules(pg.text) + people_from_cards(pg.raw):
+        own = person_from_page(pg.url, pg.text, pg.raw)
+        for prop in extract_people_by_rules(pg.text) + people_from_cards(pg.raw) + ([own] if own else []):
             chk = verify_person(prop, pg.text)
             if not chk:
                 continue
