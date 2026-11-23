@@ -724,7 +724,9 @@ async def record_slides(
 ):
     """The standard presentation (PPTX) of this opportunity, built from what the app knows."""
     from app.core.config import get_settings
+    from app.services.gate_deck import GateConfig, build_gate, gate_filename, is_gate_template
     from app.services.slide_deck import build_deck, deck_filename
+    from pptx import Presentation
 
     region = _canonical(region)
     rec = await session.get(ProcurementRecord, record_id)
@@ -741,27 +743,34 @@ async def record_slides(
     ).scalar_one_or_none()
     pec = ent.pec if ent and ent.pec else next((p.email for p in people if p.ruolo == "ente" and p.email), None)
     today = today_utc()
-    data = build_deck(
-        {
-            "categoria": _record_category(rec) or "gara", "ente": rec.ente, "provincia": ent.province if ent else None,
-            "descrizione": rec.descrizione, "link": rec.link_bando, "scadenza": rec.scadenza,
-            "scadenza_nota": rec.verifica_nota, "verifica_esito": rec.verifica_esito, "visto_il": rec.first_seen_at,
-            "servizi": [k for k in (rec.servizio or "").split(",") if k],
-            "campi": an.campi if an else None, "documenti": an.documenti if an else None,
-            "metodo": an.metodo if an else None, "analisi_il": an.eseguita_il if an else None,
-            "referenti": [
-                {"ruolo": p.ruolo, "nome": p.nome, "qualifica": p.qualifica, "email": p.email,
-                 "telefono": p.telefono, "stato": p.stato}
-                for p in people if p.ruolo != "ente"
-            ],
-            "pec": pec, "today": today,
-        },
-        template=get_settings().ppt_template_path or None,
-    )
+    cfg = get_settings()
+    payload = {
+        "categoria": _record_category(rec) or "gara", "ente": rec.ente, "provincia": ent.province if ent else None,
+        "descrizione": rec.descrizione, "link": rec.link_bando, "scadenza": rec.scadenza,
+        "scadenza_nota": rec.verifica_nota, "verifica_esito": rec.verifica_esito, "visto_il": rec.first_seen_at,
+        "servizi": [k for k in (rec.servizio or "").split(",") if k],
+        "campi": an.campi if an else None, "documenti": an.documenti if an else None,
+        "metodo": an.metodo if an else None, "analisi_il": an.eseguita_il if an else None,
+        "referenti": [
+            {"ruolo": p.ruolo, "nome": p.nome, "qualifica": p.qualifica, "email": p.email,
+             "telefono": p.telefono, "stato": p.stato}
+            for p in people if p.ruolo != "ente"
+        ],
+        "pec": pec, "today": today,
+    }
+    template = cfg.ppt_template_path or None
+    if template and is_gate_template(Presentation(template)):
+        data = build_gate(payload, template, GateConfig(
+            citta=cfg.ppt_citta, autore=cfg.ppt_autore,
+            resp_commerciale=cfg.ppt_resp_commerciale, resp_tecnico=cfg.ppt_resp_tecnico))
+        filename = gate_filename(rec.ente, today)
+    else:
+        data = build_deck(payload, template=template)
+        filename = deck_filename(rec.ente, today)
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        headers={"Content-Disposition": f'attachment; filename="{deck_filename(rec.ente, today)}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

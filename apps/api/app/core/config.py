@@ -11,6 +11,11 @@ class Settings(BaseSettings):
 
     # Optional company template (.pptx) for the slides of an opportunity: its master (logo, background) is kept.
     ppt_template_path: str = ""
+    # Texts of the "Gate 1" sheet that belong to the user, not to the opportunity (city of the cover, author, owners).
+    ppt_citta: str = ""
+    ppt_autore: str = ""
+    ppt_resp_commerciale: str = ""
+    ppt_resp_tecnico: str = ""
     postgres_host: str = "db"
     postgres_port: int = 5432
     postgres_db: str = "lighting_monitor"

@@ -33,6 +33,15 @@ _PROCEDURA = (
     ("manifestazione di interesse", re.compile(r"manifestazion\w* d.interesse|avviso esplorativo", re.I)),
 )
 _CRITERIO = re.compile(r"offerta economicamente pi[uù]['’]?\s+vantaggiosa|minor prezzo|\bOEPV\b", re.IGNORECASE)
+_ORA_SCADENZA = re.compile(r"(?:entro|scadenz\w*|termine)[^.]{0,90}?ore\s*(\d{1,2})\s*[:.,]\s*(\d{2})", re.IGNORECASE)
+_SOPRALLUOGO = re.compile(r"[^.]{0,100}\bsopralluog\w*[^.]{0,160}", re.IGNORECASE)
+_CONSUMI = re.compile(r"(\d{1,3}(?:\.\d{3})+|\d+(?:,\d+)?)\s*(MWh|kWh)\s*(?:/|all.|l.|per\s)?\s*anno", re.IGNORECASE)
+_SPESA_ANNUA = re.compile(
+    r"(?:spesa|costo|canone|onere)[^.€]{0,70}?(?:annu\w*|/\s*anno|all.anno)[^.€]{0,50}?(?:€|euro)\s*(\d[\d.]*(?:,\d{1,2})?)|"
+    r"(?:€|euro)\s*(\d[\d.]*(?:,\d{1,2})?)\s*(?:/\s*anno|all.anno|annui|annuo)",
+    re.IGNORECASE,
+)
+_PEC_ADDR = re.compile(r"[\w.+-]+@pec\.[\w.-]+|[\w.+-]+@[\w-]+\.legalmail\.it|[\w.+-]+@postecert\.it", re.IGNORECASE)
 _FONDI = re.compile(r"PNRR|FESR|FSC|fondi (europei|strutturali)|conto termico|PR\s+\w+\s+FESR", re.IGNORECASE)
 
 
@@ -71,6 +80,21 @@ def extract_fields(docs: list[tuple[str, str]], today: date) -> dict[str, dict[s
             put("durata", f"{m.group(1)} {m.group(2)}", name, flat[max(0, m.start() - 20): m.end() + 30])
         if m := _PUNTI_LUCE.search(flat):
             put("punti_luce", m.group(1), name, flat[max(0, m.start() - 40): m.end() + 30])
+        if m := _ORA_SCADENZA.search(flat):
+            put("ora_scadenza", f"{int(m.group(1)):02d}:{m.group(2)}", name, flat[max(0, m.start() - 20): m.end() + 20])
+        if m := _SOPRALLUOGO.search(flat):
+            put("sopralluogo", " ".join(m.group(0).split())[:220], name)
+        if m := _CONSUMI.search(flat):
+            kwh = _money_to_float(m.group(1))
+            if kwh:
+                put("consumi_mwh", round(kwh / (1000 if m.group(2).lower() == "kwh" else 1), 1), name,
+                    flat[max(0, m.start() - 40): m.end() + 20])
+        if m := _SPESA_ANNUA.search(flat):
+            v = _money_to_float(m.group(1) or m.group(2))
+            if v and v >= 1000:
+                put("spesa_annua_eur", v, name, flat[max(0, m.start() - 20): m.end() + 20])
+        if m := _PEC_ADDR.search(flat):
+            put("pec_invio", m.group(0).lower().rstrip(".-_"), name)
         procs = [label for label, rx in _PROCEDURA if rx.search(flat)]
         put("procedura", procs, name)
         if m := _CRITERIO.search(flat):

@@ -38,3 +38,21 @@ def test_nothing_is_invented_when_the_text_has_no_data():
 def test_first_document_wins_for_a_field():
     f = extract_fields([("a.pdf", "CIG: AAAAAAAAAA"), ("b.pdf", "CIG: BBBBBBBBBB")], TODAY)
     assert f["cig"]["valore"] == "AAAAAAAAAA" and f["cig"]["fonte"] == "a.pdf"
+
+
+def test_fields_for_the_gate_sheet():
+    from datetime import date
+
+    from app.collectors.doc_fields import extract_fields
+
+    text = (
+        "Le offerte vanno presentate entro le ore 12:00 del 17/11/2026 via PEC a protocollo@pec.comune.x.it. "
+        "Il sopralluogo è obbligatorio e va concordato con l'Ufficio Tecnico. "
+        "Consumi pari a 170.000 kWh/anno. La spesa storica annua è di € 175.000,00 IVA inclusa."
+    )
+    f = extract_fields([("avviso.pdf", text)], date(2026, 11, 23))
+    assert f["ora_scadenza"]["valore"] == "12:00"
+    assert "sopralluogo" in f["sopralluogo"]["valore"].lower()
+    assert f["consumi_mwh"]["valore"] == 170.0
+    assert f["spesa_annua_eur"]["valore"] == 175000.0
+    assert f["pec_invio"]["valore"] == "protocollo@pec.comune.x.it"
