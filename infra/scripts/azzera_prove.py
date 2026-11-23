@@ -40,7 +40,7 @@ def row_to_dict(row: Any) -> dict[str, Any]:
         if col.key in _SKIP_COLUMNS:
             continue
         val = getattr(row, col.key)
-        out[col.key] = val if isinstance(val, (str, int, float, bool, list, dict, type(None))) else str(val)
+        out[col.key] = val if isinstance(val, str | int | float | bool | list | dict | type(None)) else str(val)
     return out
 
 
