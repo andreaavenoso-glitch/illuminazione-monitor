@@ -140,3 +140,10 @@ def test_cleanup_keeps_ipa_comuni_and_flags_the_rest():
     valid, old = split_valid_old(ents, {"Comune di Arluno", "Comune di Milano"})
     assert [e[1] for e in valid] == ["Comune di Arluno", "Comune di Milano"]
     assert [e[1] for e in old] == ["Arluno", "Romano di Lombardia"]
+
+
+def test_seed_comuni_are_off_unless_asked():
+    from infra.scripts.seed_watchlist import seed_comuni_enabled
+
+    assert not seed_comuni_enabled({}) and not seed_comuni_enabled({"SEED_COMUNI": "0"})
+    assert seed_comuni_enabled({"SEED_COMUNI": "1"})

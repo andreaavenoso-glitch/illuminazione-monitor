@@ -218,3 +218,9 @@ Trasparente organizzazione e personale; decreti), legge la PEC dai dati IPA impo
 delle elezioni, controlla la stampa degli ultimi 6 mesi (Google News RSS) e applica le regole di freschezza. Ogni scheda mostra
 la checklist a 12 passi con i link controllati e le lacune; l'export Excel ha PEC e mandato, e (uso interno) il foglio Checklist.
 Per avere le PEC: rilanciare `import_ipa --region all --file ...` (aggiorna le PEC dei comuni gia' presenti).
+
+### I comuni arrivano solo dal file IPA
+`aggiorna.sh` (e il setup del Codespace) NON caricano piu' le vecchie liste di comuni del seed (le 38 di base e il CSV
+Lombardia con nomi senza "Comune di"): duplicavano i comuni IPA a ogni aggiornamento. I comuni si caricano con
+`import_ipa --region all --file ...`; per ripulire i residui `pulisci_regione` (prima senza `--applica`). Chi vuole
+comunque le vecchie liste: `SEED_COMUNI=1`.
