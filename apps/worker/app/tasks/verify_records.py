@@ -27,7 +27,7 @@ from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.collectors.archives import bytes_to_text
 from app.collectors.deadline_hunt import Doc, hunt_deadline
-from app.collectors.js_links import FILE_FORMAT, resolve_js_link
+from app.collectors.js_links import FILE_FORMAT, js_redirect_target, resolve_js_link
 from app.collectors.main_content import has_document_links, main_region
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
@@ -120,12 +120,25 @@ def attachment_links(html: str, *, base_url: str, limit: int = 3) -> list[str]:
     return [u for u, _ in sorted(scored.items(), key=lambda kv: -kv[1])[:limit]]
 
 
+async def _get(c: httpx.AsyncClient, url: str, hops: int = 2) -> httpx.Response:
+    """GET that also follows a tiny page whose script sends the browser to the real file (up to ``hops`` times)."""
+    r = await c.get(url)
+    for _ in range(hops):
+        if r.status_code >= 400 or "html" not in r.headers.get("content-type", "").lower():
+            break
+        target = js_redirect_target(r.text, str(r.url))
+        if not target or target == url:
+            break
+        r = await c.get(target)
+    return r
+
+
 async def _fetch_plain(url: str) -> tuple[str, str | None]:
     """(text, raw html or None) with plain HTTP; ('', None) when it cannot be read. PDF, ZIP archives, Word and
     Excel are read as documents (no raw html); anything else as a web page."""
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=_UA) as c:
-            r = await c.get(url)
+            r = await _get(c, url)
         if r.status_code < 400:
             kind, text, _ = bytes_to_text(r.content, r.headers.get("content-type", ""), url, pdf_to_text)
             if kind:
@@ -142,7 +155,7 @@ async def fetch_doc(url: str, depth: int, settings: WorkerSettings) -> Doc:
     """One document for the deadline hunt, with a note on why it could not be read (scan, blocked, ...)."""
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=_UA) as c:
-            r = await c.get(url)
+            r = await _get(c, url)
     except Exception as exc:  # noqa: BLE001
         return await _browser_doc(url, depth, settings, f"connessione non riuscita ({type(exc).__name__})")
     if r.status_code >= 400:

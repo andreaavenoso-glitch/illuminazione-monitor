@@ -52,3 +52,29 @@ async def test_the_document_behind_the_script_link_is_fetched_and_named(httpx_mo
     )
     docs, _ = await collect_docs(BASE, _fetch_plain, LIVELLI["base"])
     assert [d.name for d in docs] == ["pagina dell'avviso", "ver 3 NUOVO AVVISO X PPP-signed.pdf"]
+
+
+def test_a_tiny_redirect_page_points_to_the_real_file():
+    from app.collectors.js_links import js_redirect_target
+
+    base = "https://c.it/EG0/EGDOCVISJS.HBL?x=1"
+    assert js_redirect_target("<script>window.location.href='/DOC/avviso.pdf';</script>", base) == "https://c.it/DOC/avviso.pdf"
+    assert js_redirect_target('<script>location.replace("../files/a.zip")</script>', base) == "https://c.it/files/a.zip"
+    assert js_redirect_target("<script>window.open('https://store.it/a.pdf','_self')</script>", base) == "https://store.it/a.pdf"
+    assert js_redirect_target('<meta http-equiv="refresh" content="0;url=/d/x.pdf">', base) == "https://c.it/d/x.pdf"
+    assert js_redirect_target("<script>alert('ciao')</script>", base) is None
+    assert js_redirect_target("<html>" + "x" * 5000 + "location.href='/a'</html>", base) is None  # a real page, not a redirect
+
+
+@pytest.mark.asyncio
+async def test_the_pdf_behind_a_redirect_page_is_downloaded_and_read(httpx_mock, monkeypatch):
+    from app.tasks.verify_records import _fetch_plain
+
+    first = "https://c.it/EG0/EGDOCVISJS.HBL?en=1&NOME=avviso.pdf&FORM=pdf"
+    httpx_mock.add_response(url=first, text="<script >window.location.href='/DOC/real.pdf'</script>", headers={"content-type": "text/html"})
+    httpx_mock.add_response(url="https://c.it/DOC/real.pdf", content=b"%PDF-1.4 fake", headers={"content-type": "application/pdf"})
+    import app.tasks.verify_records as vr
+
+    monkeypatch.setattr(vr, "pdf_to_text", lambda data: "Avviso pubblico, scadenza 20/01/2027" if data.startswith(b"%PDF") else "")
+    text, raw = await _fetch_plain(first)
+    assert text == "Avviso pubblico, scadenza 20/01/2027" and raw is None

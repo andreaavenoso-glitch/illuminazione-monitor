@@ -51,3 +51,25 @@ def file_name_from_url(url: str) -> str | None:
         if key in q and q[key]:
             return unquote(q[key][0])
     return None
+
+
+# A tiny page whose only job is to send the browser to the real file: <script>location.href='/DOC/x.pdf'</script>
+_REDIRECTS = (
+    re.compile(r"""(?:window\.|document\.|top\.|self\.)?location(?:\.href)?\s*=\s*(['"])(?P<u>[^'"]+)\1""", re.IGNORECASE),
+    re.compile(r"""location\.(?:replace|assign)\(\s*(['"])(?P<u>[^'"]+)\1""", re.IGNORECASE),
+    re.compile(r"""window\.open\(\s*(['"])(?P<u>[^'"]+)\1""", re.IGNORECASE),
+    re.compile(r"""<meta[^>]+http-equiv=["']?refresh["']?[^>]+content=["'][^"']*url=(?P<u>[^"'>\s]+)""", re.IGNORECASE),
+)
+SMALL_PAGE = 2500
+
+
+def js_redirect_target(html: str, base_url: str) -> str | None:
+    """Where a tiny redirect page sends the browser (None when the page is not one, or sends nowhere useful)."""
+    if not html or len(html) > SMALL_PAGE:
+        return None
+    for rx in _REDIRECTS:
+        if m := rx.search(html):
+            target = m.group("u").strip()
+            if target and not target.lower().startswith(("javascript:", "#", "about:")):
+                return urljoin(base_url, target)
+    return None
