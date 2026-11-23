@@ -153,3 +153,20 @@ def test_json_marker_roundtrip():
     c = census_stats(_census_xlsx())
     assert json.loads(census_text(c).split("[[CENSIMENTO ", 1)[1].split("]]", 1)[0])["apparecchi"] == 10
     assert zipfile.is_zipfile(io.BytesIO(_census_xlsx()))
+
+
+def test_the_model_is_found_wherever_it_was_dropped_under_infra(tmp_path):
+    infra = tmp_path / "infra"
+    deep = infra / "prove" / "modello"
+    deep.mkdir(parents=True)
+    _pptx(deep / "Gate_1_Bovezzo_(BS).pptx", "1| Dati generali PF", "3| Pianificazione gate (1 di 1)")
+    assert find_gate_template(None, (str(infra),)) == str(deep / "Gate_1_Bovezzo_(BS).pptx")
+    # a file in a "modelli" folder wins over one left elsewhere
+    good = infra / "modelli"
+    good.mkdir()
+    _pptx(good / "gate1.pptx", "1| Dati generali PF", "3| Pianificazione gate (1 di 1)")
+    assert find_gate_template(None, (str(infra),)) == str(good / "gate1.pptx")
+    # the sheets this app generates are not mistaken for the model
+    gen = infra / "prove" / "scheda_Comune_x.pptx"
+    _pptx(gen, "In sintesi", "Referenti")
+    assert find_gate_template(None, (str(tmp_path / "vuoto"),)) is None

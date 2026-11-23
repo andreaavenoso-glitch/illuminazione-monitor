@@ -65,7 +65,7 @@ def gate_dates(start: date | None, scadenza: date | None) -> list[date | None]:
     return [start + timedelta(days=round(span * w / GATE_WEEKS[-1])) for w in GATE_WEEKS]
 
 
-MODEL_DIRS = ("/workspace/infra/modelli", "infra/modelli", "/app/infra/modelli")
+MODEL_DIRS = ("/workspace/infra", "infra", "/app/infra")
 NO_MODEL = (
     "Modello A2A (Gate 1) non trovato. Copia il file .pptx nella cartella infra/modelli del Codespace "
     "(oppure indica il percorso in PPT_TEMPLATE_PATH nel file .env) e lancia «bash aggiorna.sh»."
@@ -73,15 +73,18 @@ NO_MODEL = (
 
 
 def find_gate_template(configured: str | None, dirs: tuple[str, ...] = MODEL_DIRS) -> str | None:
-    """The A2A model to fill: the configured file, else the first Gate sheet found in the models folder. None when there is
-    none: the sheet must never come out in another design without anyone noticing."""
+    """The A2A model to fill: the configured file, else the first Gate sheet found anywhere under the infra folder (a
+    ``modelli`` folder is looked at first, but the file may be wherever it was dropped). None when there is none: the
+    sheet must never come out in another design without anyone noticing."""
     from pathlib import Path
 
     candidates: list[str] = [configured] if configured else []
     for d in dirs:
         base = Path(d)
         if base.is_dir():
-            candidates += [str(f) for f in sorted(base.glob("*.pptx")) if not f.name.startswith("~")]
+            found = [f for f in base.rglob("*.pptx") if not f.name.startswith("~") and len(f.relative_to(base).parts) <= 5]
+            found.sort(key=lambda f: (0 if "modell" in f.parent.name.lower() and f.parent != base else 1, str(f)))
+            candidates += [str(f) for f in found[:50]]
     for c in candidates:
         try:
             if Path(c).is_file() and is_gate_template(Presentation(c)):
