@@ -57,6 +57,10 @@ case "${1:-aggiorna}" in
   claude)
     docker compose exec -T worker python -m infra.scripts.check_extraction
     ;;
+  referenti)
+    shift
+    docker compose exec -T worker python -m infra.scripts.debug_referenti "$@"
+    ;;
   ko)
     shift
     docker compose exec -T worker python -m infra.scripts.siti_ko "$@"
@@ -73,7 +77,7 @@ case "${1:-aggiorna}" in
     echo "App: $(app_url)/regions"
     ;;
   *)
-    echo "Uso: bash aggiorna.sh [aggiorna|claude|stato|ko]"
+    echo "Uso: bash aggiorna.sh [aggiorna|claude|stato|ko|referenti]"
     exit 2
     ;;
 esac
