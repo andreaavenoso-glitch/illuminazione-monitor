@@ -30,6 +30,12 @@ def limitations(sites: list[dict], failures: dict | None = None) -> list[str]:
     if blocked:
         out.append("Il sito blocca l'accesso automatico (403) — " + ", ".join(blocked)
                    + ": da qui non si legge. Alternative: piattaforme regionali/nazionali o verifica manuale.")
+    throttled = [s["ente"] for s in sites if s.get("error") and "429" in s["error"]]
+    if throttled:
+        out.append("Il sito limita le richieste (429) — " + ", ".join(throttled[:8])
+                   + ": l'indirizzo di questo server è in attesa. Non è un errore del sito: riprovare più tardi "
+                   "(da qualche minuto a un'ora) e con meno comuni insieme.")
+    blocked = blocked + throttled
     unreachable = [s["ente"] for s in sites if s.get("error") and s["ente"] not in blocked]
     if unreachable:
         out.append(f"Siti non leggibili ({len(unreachable)}): " + ", ".join(unreachable[:8]) + " — errore di rete o pagina vuota.")

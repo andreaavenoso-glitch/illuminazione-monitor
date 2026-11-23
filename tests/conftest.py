@@ -38,3 +38,4 @@ def _no_fetch_retry(monkeypatch):
     adaptive_fetch._HOST_NEXT.clear()
     adaptive_fetch._HOST_INTERVAL.clear()
     adaptive_fetch._RETRY_AFTER.clear()
+    adaptive_fetch._COOLDOWN_UNTIL.clear()

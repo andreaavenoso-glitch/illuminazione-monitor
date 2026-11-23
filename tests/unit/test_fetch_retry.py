@@ -90,3 +90,21 @@ async def test_same_host_requests_are_spaced(monkeypatch):
     assert len(waits) == 2 and waits[0] >= 1.0 and waits[1] >= 2.5 and time.monotonic() - t0 < 1
     await af._wait_turn("altro.it")  # another host: no wait
     assert len(waits) == 2
+
+
+@pytest.mark.asyncio
+async def test_persistent_429_puts_the_host_in_cooldown_and_stops_requests(monkeypatch):
+    async def fake_sleep(sec):
+        return None
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(af, "COOLDOWN_S", 300.0)
+    fake, calls = _impl([af.FetchResult("", "http_429")])
+    monkeypatch.setattr(af, "_adaptive_fetch_result_impl", fake)
+    r1 = await af.adaptive_fetch_result("https://www.comune.x.it/a")
+    n = len(calls)
+    assert not r1.text and n == 3  # first + two retries
+    r2 = await af.adaptive_fetch_result("https://www.comune.x.it/b")
+    assert r2.error == "http_429" and len(calls) == n  # no request while cooling down
+    await af.adaptive_fetch_result("https://altro.it/c")
+    assert len(calls) > n  # other hosts are not affected

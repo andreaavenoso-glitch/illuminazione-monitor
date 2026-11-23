@@ -177,6 +177,9 @@ SLOW_INTERVAL = 4.0
 _HOST_NEXT: dict[str, float] = {}
 _HOST_INTERVAL: dict[str, float] = {}
 _RETRY_AFTER: dict[str, float] = {}
+# A site that keeps answering 429 after the retries is left alone for a while: more requests only prolong the block.
+COOLDOWN_S = 300.0
+_COOLDOWN_UNTIL: dict[str, float] = {}
 
 
 async def _wait_turn(netloc: str) -> None:
@@ -352,7 +355,11 @@ def _worth_retry(netloc: str, error: str | None) -> bool:
 
 async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:
     import asyncio
+    import time
+
     netloc = urlsplit(url).netloc
+    if _COOLDOWN_UNTIL.get(netloc, 0.0) > time.monotonic():
+        return FetchResult(text="", error="http_429")  # still cooling down: no request is sent
     res = await _adaptive_fetch_result_impl(url, **kwargs)
     attempt = 0
     while not res.text and RETRY_ENABLED and attempt < RETRY_ATTEMPTS and _worth_retry(netloc, res.error):
@@ -364,5 +371,8 @@ async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:
     if res.text:
         _HOST_OK.add(netloc)
     else:
+        if res.error == "http_429" and COOLDOWN_S > 0:
+            _COOLDOWN_UNTIL[netloc] = time.monotonic() + COOLDOWN_S
+            log.warning("adaptive_fetch.cooldown", host=netloc, seconds=COOLDOWN_S)
         FAILURES[(netloc, res.error or "vuota")] += 1
     return res

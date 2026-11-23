@@ -86,3 +86,12 @@ def test_unreachable_hosts_are_reported():
     out = limitations([{"ente": "A", "pages": 3, "checklist": [{"passo": "x", "ok": True}]}],
                       {("www.halleyweb.com", "reset"): 5, ("albo.apkappa.it", "timeout"): 2})
     assert any("halleyweb.com (5)" in x and "apkappa.it (2)" in x for x in out)
+
+
+def test_limitations_explains_429_as_a_wait_not_a_broken_site():
+    from infra.scripts.prova_siti import limitations
+
+    out = limitations([{"ente": "Comune di Pioltello", "error": "http_429"}, {"ente": "Comune di X", "error": "connect"}])
+    text = " ".join(out)
+    assert "limita le richieste" in text and "Pioltello" in text
+    assert "Comune di X" in text and "errore di rete" in text
