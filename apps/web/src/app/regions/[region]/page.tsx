@@ -123,7 +123,7 @@ export default function RegionPage() {
               r.error
                 ? `Referenti: ${r.error}`
                 : r.trovati
-                  ? `Referenti di ${d.ente}: trovati ${r.trovati} (metodo: ${r.metodo ?? "?"}, fonti controllate: ${r.pagine ?? "?"}).${r.lacune?.length ? ` Lacune: ${r.lacune.slice(0, 3).join("; ")}.` : ""}${r.stampa ? ` Stampa: ${r.stampa}` : ""}`
+                  ? `Referenti di ${d.ente}: trovati ${r.trovati} (metodo: ${r.metodo ?? "?"}, fonti controllate: ${r.pagine ?? "?"}).${r.lacune?.length ? ` Lacune: ${r.lacune.slice(0, 2).map((x) => x.slice(0, 120)).join("; ")}…` : ""}${r.stampa ? ` Stampa: ${r.stampa.slice(0, 120)}` : ""} Dettagli nella checklist della scheda.`
                   : `Referenti di ${d.ente}: nessun nome trovato (pagine lette: ${r.pagine ?? 0}, proposte lette dal testo: ${r.proposte ?? 0}, metodo: ${r.metodo ?? "?"}). I siti senza una pagina di giunta leggibile vanno guardati a mano.`,
             );
             qc.invalidateQueries({ queryKey: ["region", region] });
@@ -386,6 +386,30 @@ export default function RegionPage() {
                   </ul>
                 ) : (
                   <span className="text-neutral-500">Referenti non ancora cercati.</span>
+                )}
+                {r.ricerca && (
+                  <details className="mt-1 text-neutral-600 dark:text-neutral-400">
+                    <summary className="cursor-pointer">
+                      Checklist {r.ricerca.passi_ok}/12
+                      {r.ricerca.mandato_scadenza && <> · mandato fino al {fmt(r.ricerca.mandato_scadenza).split(",")[0].slice(3)} (stimato)</>}
+                      {" · "}ricerca {r.ricerca.metodo} del {fmt(r.ricerca.eseguita_il).split(",")[0]}
+                    </summary>
+                    <ul className="mt-1 space-y-0.5">
+                      {r.ricerca.passi.map((x) => (
+                        <li key={x.n}>
+                          <span className={x.ok ? "text-emerald-700" : "text-red-700"}>{x.ok ? "✔" : "✖"}</span> {x.n}. {x.passo}
+                          {x.nota && <span className="text-neutral-500"> – {x.nota}</span>}
+                          {x.urls.slice(0, 2).map((u) => (
+                            <a key={u} href={u} target="_blank" rel="noreferrer" className="ml-1 underline">link</a>
+                          ))}
+                        </li>
+                      ))}
+                    </ul>
+                    {r.ricerca.lacune.length > 0 && (
+                      <p className="mt-1">Lacune: {r.ricerca.lacune.slice(0, 5).join(" · ")}</p>
+                    )}
+                    {r.ricerca.stampa && <p>Stampa: {r.ricerca.stampa}</p>}
+                  </details>
                 )}
                 {admin && (
                   <button type="button" className="ml-2 underline" disabled={referenti.isPending}

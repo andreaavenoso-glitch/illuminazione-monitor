@@ -18,6 +18,7 @@ from shared_models.raw_record import RawRecord
 from shared_models.record_event import RecordEvent
 from shared_models.referente import Referente
 from shared_models.region_settings import RegionSettings
+from shared_models.ricerca_referenti import RicercaReferenti
 from shared_models.scan_run import ScanItem, ScanRun
 from shared_models.service_status import ServiceStatus
 from shared_models.source import Source
@@ -37,6 +38,7 @@ __all__ = [
     "RawRecord",
     "RecordEvent",
     "Referente",
+    "RicercaReferenti",
     "RegionSettings",
     "ScanItem",
     "ScanRun",

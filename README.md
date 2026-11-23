@@ -210,3 +210,11 @@ uffici tecnici, Amministrazione Trasparente, decreti, IPA (PEC), elezioni e stam
 fonte e la data della pagina; verificato/da confermare lo decidono le regole di freschezza, non l'agente. Costo stimato
 $0,2-0,5 a comune (modello `REFERENTI_MODEL`, 8 ricerche e 12 aperture di pagina al massimo, a $0,01 per ricerca). Se l'agente
 non e' disponibile si leggono le pagine del comune, poi le regole gratuite.
+
+### Referenti a costo zero (`REFERENTI_MODE=script`, predefinito)
+Uno script segue la checklist del metodo "referenti comuni verificati" senza chiamare Claude: percorre il sito del comune
+(home -> Amministrazione -> organi politici -> schede di sindaco e assessori; uffici LL.PP. / area tecnica; Amministrazione
+Trasparente organizzazione e personale; decreti), legge la PEC dai dati IPA importati (`import_ipa` la salva), cerca la data
+delle elezioni, controlla la stampa degli ultimi 6 mesi (Google News RSS) e applica le regole di freschezza. Ogni scheda mostra
+la checklist a 12 passi con i link controllati e le lacune; l'export Excel ha PEC e mandato, e (uso interno) il foglio Checklist.
+Per avere le PEC: rilanciare `import_ipa --region all --file ...` (aggiorna le PEC dei comuni gia' presenti).

@@ -62,7 +62,9 @@ def test_old_txt_release_columns() -> None:
         "054\tAzienda Unita' Sanitaria Locale Umbria 1\tPerugia\tPG\tUmbria\thttps://www.uslumbria1.it\tAziende Sanitarie Locali\n"
     )
     rows = parse_ipa_rows(text, "Puglia")
-    assert rows == [{"name": "Comune di Bari", "provincia": "BA", "sito": "https://www.comune.bari.it", "trasparenza": None}]
+    assert rows == [
+        {"name": "Comune di Bari", "provincia": "BA", "pec": None, "sito": "https://www.comune.bari.it", "trasparenza": None}
+    ]
 
 
 def test_capture_samples_summary() -> None:
@@ -113,3 +115,13 @@ def test_check_extraction_evaluation() -> None:
     bad = evaluate(ok_records[:-1] + [{"title": "rilascio della tessera elettorale", "body": ""}])
     failed = {label for label, ok, _ in bad if not ok}
     assert failed == {"incarico advisor per proposta PPP", "notizia elettorale"}
+
+
+def test_pec_is_taken_from_the_ipa_mail_columns() -> None:
+    text = (
+        "cod_amm\tdes_amm\tcomune\tprovincia\tregione\tsito_istituzionale\ttipologia_istat\t"
+        "mail1\ttipo_mail1\tmail2\ttipo_mail2\n"
+        "c_a662\tComune di Bari\tBari\tBA\tPuglia\twww.comune.bari.it\tComuni e loro Consorzi e Associazioni\t"
+        "info@comune.bari.it\tAltro\tProtocollo@PEC.comune.bari.it\tPec\n"
+    )
+    assert parse_ipa_rows(text, "Puglia")[0]["pec"] == "protocollo@pec.comune.bari.it"

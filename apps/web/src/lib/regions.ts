@@ -77,6 +77,25 @@ export const RUOLO_LABEL: Record<Referente["ruolo"], string> = {
   ente: "PEC ente",
 };
 
+export interface PassoChecklist {
+  n: number;
+  passo: string;
+  ok: boolean;
+  urls: string[];
+  nota: string;
+}
+
+export interface RicercaReferenti {
+  metodo: string;
+  passi: PassoChecklist[];
+  passi_ok: number;
+  lacune: string[];
+  stampa: string | null;
+  elezione_data: string | null;
+  mandato_scadenza: string | null;
+  eseguita_il: string;
+}
+
 export interface RegionRecord {
   id: string;
   categoria: Categoria;
@@ -93,6 +112,7 @@ export interface RegionRecord {
   servizi: string[];
   referenti: Referente[];
   referenti_sintesi?: ReferentiSintesi;
+  ricerca?: RicercaReferenti | null;
 }
 
 export const SERVIZIO_LABEL: Record<string, string> = {

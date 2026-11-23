@@ -21,11 +21,12 @@ from app.collectors.referenti import (
     verify_person,
 )
 from app.collectors.referenti_agent import research
+from app.collectors.referenti_script import search_referenti
 from app.collectors.rules_extract import extract_people_by_rules
 from app.config import get_worker_settings
 from app.db import SessionLocal
 from app.tasks.verify_records import fetch_document_text, html_to_text
-from shared_models import Entity, ProcurementRecord, Referente, WatchlistItem
+from shared_models import Entity, ProcurementRecord, Referente, RicercaReferenti, WatchlistItem
 from shared_models.referenti_logic import election_date, freshness, has_decree, page_date
 from sqlalchemy import select
 
@@ -94,40 +95,12 @@ async def _save(ente: str, regione: str | None, people: list[dict]) -> None:
         await session.commit()
 
 
-async def find_for_record(record_id: UUID) -> dict:
-    settings = get_worker_settings()
-    async with SessionLocal() as session:
-        rec = await session.get(ProcurementRecord, record_id)
-        if rec is None:
-            return {"error": "record non trovato"}
-        ente, regione, link = rec.ente, rec.regione, rec.link_bando
-        roots = await _site_urls(session, ente, regione, link)
-
-    claude_state.reset()  # a topped-up account is picked up again
-    if (settings.referenti_mode or "auto").lower() in ("auto", "agent") and claude_state.use_claude(settings):
-        status: dict = {"ok": True}
-        res = await research(ente, regione, [link, *roots], settings, status)
-        if res is not None:
-            people = list(res["people"])
-            if res["pec"]:
-                pec, fonte = res["pec"]
-                people.append({
-                    "nome": "PEC dell'ente", "ruolo": "ente", "qualifica": "PEC", "email": pec, "telefono": None,
-                    "citazione": None, "fonte_url": fonte or "https://indicepa.gov.it", "data_fonte": None,
-                    "elezione_data": res["elezione"], "stato": "verificato", "motivo": None,
-                })
-            await _save(ente, regione, people)
-            log.info("find_referenti agent ente=%s people=%d lacune=%s", ente, len(res["people"]), res["lacune"])
-            return {
-                "ente": ente, "trovati": len(res["people"]), "metodo": "agente", "pagine": len(res["urls"]),
-                "proposte": len(res["people"]), "url": res["urls"][:20], "lacune": res["lacune"],
-                "stampa": res["stampa"], "mandato_scadenza": str(res["mandato_scadenza"] or ""),
-            }
-        if status.get("fatal") and claude_state.can_fall_back(settings):
-            claude_state.mark_down(status.get("error", "errore"))
-        # otherwise (or on a fatal refusal): read the comune's own pages, as before
-
+async def _gather_pages(link: str, roots: list[str], settings) -> tuple[list[tuple[str, str]], list[str]]:
+    """The record's own document, the comune's home page and the menu pages that lead to the people
+    (all read here with plain HTTP / browser, not by the web tool, which only opens URLs it has
+    been shown). Returns the pages (url, text) and the candidate menu links."""
     pages: list[tuple[str, str]] = []  # (url, text)
+    menu_links: list[str] = []
     # 1) the record's own document: the RUP is often named there
     doc = await fetch_document_text(link, settings)
     if doc:
@@ -146,13 +119,130 @@ async def find_for_record(record_id: UUID) -> dict:
         base = home.url or root
         pages.append((base, html_to_text(home.text)))
         seen.add(base)
-        for u in rank_people_links(home.text, base_url=base, limit=MAX_PAGES):
+        ranked = rank_people_links(home.text, base_url=base, limit=15)
+        menu_links.extend(u for u in ranked if u not in menu_links)
+        for u in ranked[:MAX_PAGES]:
             if u in seen or len(pages) >= MAX_PAGES + 1:
                 continue
             seen.add(u)
             text = await fetch_document_text(u, settings)
             if text:
                 pages.append((u, text))
+    return pages, menu_links
+
+
+async def _script_fetch(url: str, settings) -> tuple[str, str | None]:
+    """(text, raw html) of a page of the comune: plain HTTP (PDF too), then the browser for JS sites."""
+    from app.tasks.verify_records import _fetch_plain
+
+    text, raw = await _fetch_plain(url)
+    if text:
+        return text, raw
+    res = await adaptive_fetch_result(
+        url, timeout=30, max_html_chars=settings.crawl_max_html_chars,
+        playwright_min_chars=settings.smart_collector_playwright_min_chars,
+        playwright_wait_ms=settings.smart_collector_playwright_wait_ms, label="referenti", try_variants=True,
+    )
+    return (html_to_text(res.text), res.text) if res.text else ("", None)
+
+
+async def _fetch_press(url: str) -> str:
+    import httpx
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=20) as c:
+        r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
+    return r.text if r.status_code < 400 else ""
+
+
+async def _save_ricerca(ente: str, regione: str | None, metodo: str, res: dict) -> None:
+    async with SessionLocal() as session:
+        row = (
+            await session.execute(
+                select(RicercaReferenti).where(RicercaReferenti.ente == ente, RicercaReferenti.regione == regione)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = RicercaReferenti(ente=ente, regione=regione)
+            session.add(row)
+        row.metodo = metodo
+        row.checklist = {"passi": res.get("checklist") or [], "urls": res.get("urls") or [], "stampa_articoli": res.get("press") or []}
+        row.lacune = res.get("lacune") or []
+        row.stampa = res.get("stampa")
+        row.elezione_data = res.get("elezione")
+        row.mandato_scadenza = res.get("mandato_scadenza")
+        row.eseguita_il = datetime.now(tz=UTC)
+        await session.commit()
+
+
+async def find_for_record(record_id: UUID) -> dict:
+    settings = get_worker_settings()
+    async with SessionLocal() as session:
+        rec = await session.get(ProcurementRecord, record_id)
+        if rec is None:
+            return {"error": "record non trovato"}
+        ente, regione, link = rec.ente, rec.regione, rec.link_bando
+        roots = await _site_urls(session, ente, regione, link)
+
+    claude_state.reset()  # a topped-up account is picked up again
+    mode = (settings.referenti_mode or "script").lower()
+    if mode in ("script", "auto"):
+        async with SessionLocal() as session:
+            ent = (
+                await session.execute(select(Entity).where(Entity.name == ente, Entity.region == regione))
+            ).scalar_one_or_none()
+            pec = ent.pec if ent else None
+        async def fetch(u: str):
+            return await _script_fetch(u, settings)
+        # the record's own document first (the RUP is often named there), then the comune's site
+        res = await search_referenti(
+            ente, [*roots, link], fetch, _fetch_press, pec=pec, today=datetime.now(tz=UTC).date()
+        )
+        people = list(res["people"])
+        if pec:
+            people.append({
+                "nome": "PEC dell'ente", "ruolo": "ente", "qualifica": "PEC (IPA)", "email": pec, "telefono": None,
+                "citazione": None, "fonte_url": "https://indicepa.gov.it", "data_fonte": None,
+                "elezione_data": res["elezione"], "stato": "verificato", "motivo": None,
+            })
+        has_mayor = any(p["ruolo"] == "sindaco" for p in res["people"])
+        if mode == "script" or has_mayor or not claude_state.use_claude(settings):
+            await _save(ente, regione, people)
+            await _save_ricerca(ente, regione, "script", res)
+            ok = sum(1 for c in res["checklist"] if c["ok"])
+            log.info("find_referenti script ente=%s people=%d checklist=%d/12", ente, len(res["people"]), ok)
+            return {
+                "ente": ente, "trovati": len(res["people"]), "metodo": "script (gratuito)", "pagine": len(res["urls"]),
+                "proposte": len(res["people"]), "url": res["urls"][:20], "lacune": res["lacune"], "stampa": res["stampa"],
+                "checklist_ok": ok, "mandato_scadenza": str(res["mandato_scadenza"] or ""),
+            }
+        # auto: the script found no sindaco -> let the agent try, below
+    pages, menu_links = await _gather_pages(link, roots, settings)
+    if mode in ("auto", "agent") and claude_state.use_claude(settings):
+        status: dict = {"ok": True}
+        res = await research(
+            ente, regione, [link, *roots], settings, status, pages=pages, menu_links=menu_links
+        )
+        if res is not None:
+            people = list(res["people"])
+            if res["pec"]:
+                pec, fonte = res["pec"]
+                people.append({
+                    "nome": "PEC dell'ente", "ruolo": "ente", "qualifica": "PEC", "email": pec, "telefono": None,
+                    "citazione": None, "fonte_url": fonte or "https://indicepa.gov.it", "data_fonte": None,
+                    "elezione_data": res["elezione"], "stato": "verificato", "motivo": None,
+                })
+            await _save(ente, regione, people)
+            await _save_ricerca(ente, regione, "agente", {"lacune": res["lacune"], "stampa": res["stampa"], "elezione": res["elezione"], "mandato_scadenza": res["mandato_scadenza"], "urls": res["urls"], "checklist": []})
+            log.info("find_referenti agent ente=%s people=%d lacune=%s", ente, len(res["people"]), res["lacune"])
+            return {
+                "ente": ente, "trovati": len(res["people"]), "metodo": "agente", "pagine": len(res["urls"]),
+                "proposte": len(res["people"]), "url": res["urls"][:20], "lacune": res["lacune"],
+                "stampa": res["stampa"], "mandato_scadenza": str(res["mandato_scadenza"] or ""),
+            }
+        if status.get("fatal") and claude_state.can_fall_back(settings):
+            claude_state.mark_down(status.get("error", "errore"))
+        # otherwise (or on a fatal refusal): read the comune's own pages, as before
+
     today = datetime.now(tz=UTC).date()
     # last election written on any page of the ente
     elezione = max((e for _, t in pages if (e := election_date(t, today))), default=None)

@@ -20,9 +20,10 @@ class WorkerSettings(BaseSettings):
     anthropic_model: str = "claude-haiku-4-5"
     # auto | claude | rules: see app.claude_state (auto = Claude, free rules when it is unavailable)
     extraction_mode: str = "auto"
-    # Referenti: "agent" = Claude researches the web (search + fetch) following the verified-referenti
-    # checklist; "pagine" = reads the comune's own pages only; "auto" = agent when Claude is available.
-    referenti_mode: str = "auto"
+    # Referenti: "script" (default, free) = a program follows the 12-step checklist on the comune's own site,
+    # IPA and the local press; "agent" = Claude researches the web instead (costs); "auto" = script first,
+    # then the agent only if the script found no sindaco; "pagine" = the older reader of a few pages.
+    referenti_mode: str = "script"
     referenti_model: str = "claude-sonnet-5-5"
     referenti_max_searches: int = 8
     referenti_max_fetches: int = 12

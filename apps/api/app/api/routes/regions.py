@@ -16,6 +16,7 @@ from shared_models import (
     RawRecord,
     Referente,
     RegionSettings,
+    RicercaReferenti,
     ScanItem,
     ScanRun,
     Source,
@@ -272,6 +273,19 @@ async def region_detail(
             "stato": p.stato, "verified_at": p.verified_at,
             "data_fonte": p.data_fonte, "elezione_data": p.elezione_data, "motivo": p.motivo,
         })
+    ricerche = {
+        r.ente: {
+            "metodo": r.metodo,
+            "passi": (r.checklist or {}).get("passi", []),
+            "passi_ok": sum(1 for x in (r.checklist or {}).get("passi", []) if x.get("ok")),
+            "lacune": r.lacune or [],
+            "stampa": r.stampa,
+            "elezione_data": r.elezione_data,
+            "mandato_scadenza": r.mandato_scadenza,
+            "eseguita_il": r.eseguita_il,
+        }
+        for r in (await session.execute(select(RicercaReferenti).where(RicercaReferenti.regione == region))).scalars().all()
+    }
     records = []
     da_verificare: list[dict] = []
     hidden = 0
@@ -306,6 +320,7 @@ async def region_detail(
             "servizi": [k for k in (rec.servizio or "").split(",") if k],
             "referenti": ref_by_ente.get(rec.ente, []),
             "referenti_sintesi": _sintesi(rec.ente, ref_by_ente.get(rec.ente, [])),
+            "ricerca": ricerche.get(rec.ente),
         })
     # Deadlines first (the soonest to expire on top), then the rest, newest first
     # (the sort is stable, so the order of arrival is kept inside each group).
@@ -358,7 +373,24 @@ async def region_referenti_xlsx(
             "ruolo": p.ruolo, "nome": p.nome, "stato": p.stato, "email": p.email, "telefono": p.telefono,
             "fonte_url": p.fonte_url, "motivo": p.motivo, "verified_at": p.verified_at,
         })
-    entries = [{"ente": e, "provincia": provs.get(e), "people": ppl} for e, ppl in by_ente.items()]
+    ric = {
+        r.ente: r
+        for r in (await session.execute(select(RicercaReferenti).where(RicercaReferenti.regione == region))).scalars().all()
+    }
+    entries = [
+        {
+            "ente": e, "provincia": provs.get(e), "people": ppl,
+            "ricerca": (
+                {
+                    "passi": (ric[e].checklist or {}).get("passi", []), "lacune": ric[e].lacune or [],
+                    "stampa": ric[e].stampa, "mandato_scadenza": ric[e].mandato_scadenza,
+                    "elezione_data": ric[e].elezione_data,
+                }
+                if e in ric else None
+            ),
+        }
+        for e, ppl in by_ente.items()
+    ]
     return Response(
         content=referenti_workbook(entries, interno=interno),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

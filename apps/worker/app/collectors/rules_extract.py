@@ -163,7 +163,8 @@ def extract_people_by_rules(text: str) -> list[dict[str, Any]]:
             people.append({
                 "nome": cand,
                 "ruolo": ruolo,
-                "qualifica": flat[m.start(): m.end()].strip()[:80],
+                # the role as written plus, for an assessore, the delega between the role and the name
+                "qualifica": (flat[m.start(): m.end()] + " " + (between if ruolo == "assessore" else "")).strip()[:120],
                 "email": email.group(0) if email else None,
                 "telefono": phone.group(0) if phone else None,
                 "citazione": flat[max(0, m.start() - 30): m.end() + 80][:200],

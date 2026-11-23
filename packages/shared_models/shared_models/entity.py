@@ -21,6 +21,8 @@ class Entity(Base):
     province: Mapped[str | None] = mapped_column(String, nullable=True)
     municipality: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # PEC of the ente from IPA (indicepa.gov.it), the only source accepted for it.
+    pec: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

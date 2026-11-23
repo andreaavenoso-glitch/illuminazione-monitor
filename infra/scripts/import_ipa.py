@@ -54,6 +54,15 @@ def _pick(row: dict, key: str) -> str:
     return ""
 
 
+def _pec(row: dict) -> str | None:
+    """The PEC address of an IPA row: the mailN whose tipo_mailN is "Pec" (IPA lists up to five)."""
+    norm = {_norm_col(k): (v or "").strip() for k, v in row.items() if k}
+    for i in range(1, 6):
+        if norm.get(f"tipomail{i}", "").lower() == "pec" and "@" in norm.get(f"mail{i}", ""):
+            return norm[f"mail{i}"].lower()
+    return None
+
+
 def xlsx_to_text(path: str) -> str:
     """First sheet of an .xlsx as tab-separated text (header row first), so
     the same parser handles IPA's xlsx, txt and csv releases."""
@@ -108,6 +117,7 @@ def parse_ipa_rows(text: str, region: str, *, only_comuni: bool = True) -> list[
         out.append({
             "name": name,
             "provincia": _pick(row, "provincia") or None,
+            "pec": _pec(row),
             "sito": _clean_url(_pick(row, "sito")),
             "trasparenza": _clean_url(_pick(row, "trasparenza")),
         })
@@ -139,10 +149,12 @@ async def run(region: str, text: str, *, prune: bool = False, only_comuni: bool 
             )).scalar_one_or_none()
             if ent is None:
                 ent = Entity(name=r["name"], region=canonical, province=r["provincia"],
-                             municipality=r["name"], entity_type="comune")
+                             municipality=r["name"], entity_type="comune", pec=r.get("pec"))
                 session.add(ent)
                 await session.flush()
                 new_e += 1
+            if r.get("pec") and ent.pec != r["pec"]:
+                ent.pec = r["pec"]  # IPA is the source of the PEC: refreshed on every import
             if (await session.execute(
                 select(WatchlistItem).where(WatchlistItem.entity_id == ent.id)
             )).scalar_one_or_none():
