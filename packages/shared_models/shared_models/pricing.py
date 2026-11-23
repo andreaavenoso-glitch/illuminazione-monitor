@@ -14,7 +14,12 @@ PRICES: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-sonnet-4-5": (3.0, 15.0),
     "claude-opus-4-5": (5.0, 25.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-opus-5-5": (4.0, 20.0),
 }
+# Server-side web search: $10 per 1,000 searches (the tokens it adds are in the usual counts).
+WEB_SEARCH_USD = 0.01
 # The app runs Haiku by default; a model missing from the table is priced as
 # Haiku and flagged as such, instead of silently showing $0.
 DEFAULT_PRICE: tuple[float, float] = PRICES["claude-haiku-4-5"]

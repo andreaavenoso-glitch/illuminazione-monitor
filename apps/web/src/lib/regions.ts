@@ -49,7 +49,7 @@ export interface RegionSite {
 
 export interface Referente {
   nome: string;
-  ruolo: "sindaco" | "assessore" | "responsabile_tecnico" | "rup";
+  ruolo: "sindaco" | "assessore" | "responsabile_tecnico" | "rup" | "ente";
   qualifica: string | null;
   email: string | null;
   telefono: string | null;
@@ -74,6 +74,7 @@ export const RUOLO_LABEL: Record<Referente["ruolo"], string> = {
   assessore: "Assessore",
   responsabile_tecnico: "Responsabile tecnico",
   rup: "RUP",
+  ente: "PEC ente",
 };
 
 export interface RegionRecord {

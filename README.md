@@ -202,3 +202,11 @@ Altrimenti "da confermare" con il motivo. Il controllo della stampa degli ultimi
 Invia - verifica nomi / Invia con cautela). Senza il nome del tecnico: PEC "alla c.a. del Sindaco, dell'Assessore ai LL.PP.
 e del Responsabile dell'Area Tecnica". Export: "Referenti (xlsx)" = indice + un foglio per provincia (da condividere);
 "Referenti interno" aggiunge affidabilita', azione, fonti e motivi.
+
+### Ricerca referenti con agente web (`REFERENTI_MODE`)
+In modalita' `agent` (o `auto` con Claude disponibile) "Trova referenti" usa Claude con ricerca web e apertura delle pagine,
+seguendo la checklist del metodo "referenti comuni verificati": sito del comune come base, schede di tutti gli assessori,
+uffici tecnici, Amministrazione Trasparente, decreti, IPA (PEC), elezioni e stampa degli ultimi 6 mesi. Ogni persona ha la
+fonte e la data della pagina; verificato/da confermare lo decidono le regole di freschezza, non l'agente. Costo stimato
+$0,2-0,5 a comune (modello `REFERENTI_MODEL`, 8 ricerche e 12 aperture di pagina al massimo, a $0,01 per ricerca). Se l'agente
+non e' disponibile si leggono le pagine del comune, poi le regole gratuite.

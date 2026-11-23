@@ -158,3 +158,64 @@ def test_page_furniture_is_not_a_name():
     assert verify_person(_p("Condividi Facebook Twitter", "sindaco"), page) is None
     assert looks_like_name("Mario Rossi") and looks_like_name("Maria Rosaria De Luca")
     assert not looks_like_name("Facebook Twitter") and not looks_like_name("Area Tecnica")
+
+
+# --- ricerca web con agente ---------------------------------------------------------------
+def test_agent_result_is_normalized_and_freshness_decides_the_state():
+    from app.collectors.referenti_agent import normalize_result, parse_json
+
+    raw = """```json
+    {"elezione_data": "2024-06-09", "mandato_scadenza": "2029-06-30",
+     "pec": {"valore": "protocollo@pec.comune.it", "fonte_url": "https://indicepa.gov.it/x"},
+     "persone": [
+       {"ruolo": "sindaco", "nome": "Mario Rossi", "qualifica": "Sindaco", "email": "s@c.it", "telefono": null,
+        "fonte_url": "https://c.it/giunta", "data_pagina": "2025-03-01", "decreto_in_vigore": false,
+        "citazione": "Sindaco Mario Rossi", "stato": "VERIFICATO", "note": ""},
+       {"ruolo": "assessore", "nome": "Giulia Bianchi", "qualifica": "Assessore LLPP", "email": null, "telefono": null,
+        "fonte_url": "https://c.it/giunta", "data_pagina": "2024-04-10", "decreto_in_vigore": false,
+        "citazione": "x", "stato": "VERIFICATO", "note": ""},
+       {"ruolo": "responsabile_tecnico", "nome": "Condividi Facebook Twitter", "fonte_url": "https://c.it/u", "stato": "VERIFICATO"},
+       {"ruolo": "bidello", "nome": "Luca Neri", "fonte_url": "https://c.it/u", "stato": "VERIFICATO"},
+       {"ruolo": "responsabile_tecnico", "nome": "Paolo Verdi", "fonte_url": "https://c.it/u", "data_pagina": null,
+        "decreto_in_vigore": true, "stato": "VERIFICATO"},
+       {"ruolo": "rup", "nome": "Anna Gialli", "fonte_url": "", "stato": "VERIFICATO"}
+     ],
+     "lacune": ["telefono assessore"], "url_controllati": ["https://c.it/giunta"], "stampa": "nessun rimpasto"}
+    ```"""
+    out = normalize_result(parse_json(raw), date(2026, 11, 23))
+    by = {p["nome"]: p for p in out["people"]}
+    assert set(by) == {"Mario Rossi", "Giulia Bianchi", "Paolo Verdi"}  # furniture, unknown role, no source: dropped
+    assert by["Mario Rossi"]["stato"] == "verificato"
+    assert by["Giulia Bianchi"]["stato"] == "da_confermare" and "precedente alle elezioni" in by["Giulia Bianchi"]["motivo"]
+    assert by["Paolo Verdi"]["stato"] == "verificato"  # decree in force
+    assert out["pec"] == ("protocollo@pec.comune.it", "https://indicepa.gov.it/x")
+    assert out["elezione"] == date(2024, 6, 9) and out["lacune"] == ["telefono assessore"]
+
+
+def test_agent_parse_json_rejects_garbage():
+    from app.collectors.referenti_agent import parse_json
+
+    assert parse_json("niente json qui") is None and parse_json("{rotto") is None
+
+
+def test_agent_tools_are_the_server_side_web_tools():
+    from types import SimpleNamespace
+
+    from app.collectors.referenti_agent import tools
+
+    t = tools(SimpleNamespace(referenti_max_searches=5, referenti_max_fetches=9))
+    assert [x["type"] for x in t] == ["web_search_20260209", "web_fetch_20260209"]
+    assert t[0]["max_uses"] == 5 and t[1]["max_uses"] == 9
+
+
+def test_web_search_is_billed_per_search():
+    from types import SimpleNamespace
+
+    from app.usage import usage_row
+
+    u = SimpleNamespace(
+        input_tokens=1000, output_tokens=100, cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        server_tool_use=SimpleNamespace(web_search_requests=5),
+    )
+    row = usage_row(u, model="claude-sonnet-5-5", purpose="referenti_agent", label="x")
+    assert abs(row["cost_usd"] - (1000 * 2e-6 + 100 * 10e-6 + 5 * 0.01)) < 1e-6

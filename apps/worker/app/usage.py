@@ -14,7 +14,7 @@ from uuid import UUID
 from app.config import get_worker_settings
 from app.db import SessionLocal
 from shared_models import ApiUsage
-from shared_models.pricing import cost_usd
+from shared_models.pricing import WEB_SEARCH_USD, cost_usd
 
 log = logging.getLogger(__name__)
 
@@ -32,12 +32,13 @@ def usage_row(usage: Any, *, model: str, purpose: str, label: str | None) -> dic
         "cache_read_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
         "cache_write_tokens": int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
     }
+    searches = int(getattr(getattr(usage, "server_tool_use", None), "web_search_requests", 0) or 0)
     return {
         "model": model,
         "purpose": purpose,
         "label": (label or "")[:200] or None,
         **counts,
-        "cost_usd": round(cost_usd(model, override=override, **counts), 6),
+        "cost_usd": round(cost_usd(model, override=override, **counts) + searches * WEB_SEARCH_USD, 6),
     }
 
 

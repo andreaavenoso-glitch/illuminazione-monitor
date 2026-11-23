@@ -20,6 +20,7 @@ from app.collectors.referenti import (
     site_root,
     verify_person,
 )
+from app.collectors.referenti_agent import research
 from app.collectors.rules_extract import extract_people_by_rules
 from app.config import get_worker_settings
 from app.db import SessionLocal
@@ -65,6 +66,34 @@ async def _site_urls(session, ente: str, regione: str | None, record_link: str) 
     return roots[:2]
 
 
+async def _save(ente: str, regione: str | None, people: list[dict]) -> None:
+    """Upsert the people of an ente; names saved by an older version that are page furniture
+    ("Condividi Facebook Twitter") are removed (the PEC row, ruolo "ente", is kept)."""
+    now = datetime.now(tz=UTC)
+    async with SessionLocal() as session:
+        for old in (
+            await session.execute(select(Referente).where(Referente.ente == ente, Referente.regione == regione))
+        ).scalars().all():
+            if old.ruolo != "ente" and not looks_like_name(old.nome):
+                await session.delete(old)
+        for p in people:
+            existing = (
+                await session.execute(
+                    select(Referente).where(
+                        Referente.ente == ente, Referente.regione == regione,
+                        Referente.ruolo == p["ruolo"], Referente.nome == p["nome"],
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(Referente(ente=ente, regione=regione, verified_at=now, **p))
+            else:
+                for k, v in p.items():
+                    setattr(existing, k, v)
+                existing.verified_at = now
+        await session.commit()
+
+
 async def find_for_record(record_id: UUID) -> dict:
     settings = get_worker_settings()
     async with SessionLocal() as session:
@@ -73,6 +102,30 @@ async def find_for_record(record_id: UUID) -> dict:
             return {"error": "record non trovato"}
         ente, regione, link = rec.ente, rec.regione, rec.link_bando
         roots = await _site_urls(session, ente, regione, link)
+
+    claude_state.reset()  # a topped-up account is picked up again
+    if (settings.referenti_mode or "auto").lower() in ("auto", "agent") and claude_state.use_claude(settings):
+        status: dict = {"ok": True}
+        res = await research(ente, regione, [link, *roots], settings, status)
+        if res is not None:
+            people = list(res["people"])
+            if res["pec"]:
+                pec, fonte = res["pec"]
+                people.append({
+                    "nome": "PEC dell'ente", "ruolo": "ente", "qualifica": "PEC", "email": pec, "telefono": None,
+                    "citazione": None, "fonte_url": fonte or "https://indicepa.gov.it", "data_fonte": None,
+                    "elezione_data": res["elezione"], "stato": "verificato", "motivo": None,
+                })
+            await _save(ente, regione, people)
+            log.info("find_referenti agent ente=%s people=%d lacune=%s", ente, len(res["people"]), res["lacune"])
+            return {
+                "ente": ente, "trovati": len(res["people"]), "metodo": "agente", "pagine": len(res["urls"]),
+                "proposte": len(res["people"]), "url": res["urls"][:20], "lacune": res["lacune"],
+                "stampa": res["stampa"], "mandato_scadenza": str(res["mandato_scadenza"] or ""),
+            }
+        if status.get("fatal") and claude_state.can_fall_back(settings):
+            claude_state.mark_down(status.get("error", "errore"))
+        # otherwise (or on a fatal refusal): read the comune's own pages, as before
 
     pages: list[tuple[str, str]] = []  # (url, text)
     # 1) the record's own document: the RUP is often named there
@@ -107,7 +160,6 @@ async def find_for_record(record_id: UUID) -> dict:
     claude_calls = 0
     proposed = 0
     by_rules = False
-    claude_state.reset()  # a topped-up account is picked up again
     for url, text in pages:
         if not has_role_words(text):
             continue
@@ -128,30 +180,7 @@ async def find_for_record(record_id: UUID) -> dict:
             if checked:
                 found.append((_apply_freshness(checked, text, elezione, today), url))
     people = merge_people(found)
-    now = datetime.now(tz=UTC)
-    async with SessionLocal() as session:
-        # names saved by an older version that are page furniture ("Condividi Facebook Twitter")
-        for old in (
-            await session.execute(select(Referente).where(Referente.ente == ente, Referente.regione == regione))
-        ).scalars().all():
-            if not looks_like_name(old.nome):
-                await session.delete(old)
-        for p in people:
-            existing = (
-                await session.execute(
-                    select(Referente).where(
-                        Referente.ente == ente, Referente.regione == regione,
-                        Referente.ruolo == p["ruolo"], Referente.nome == p["nome"],
-                    )
-                )
-            ).scalar_one_or_none()
-            if existing is None:
-                session.add(Referente(ente=ente, regione=regione, verified_at=now, **p))
-            else:
-                for k, v in p.items():
-                    setattr(existing, k, v)
-                existing.verified_at = now
-        await session.commit()
+    await _save(ente, regione, people)
     log.info(
         "find_referenti ente=%s pages=%s claude_calls=%d proposed=%d people=%d",
         ente, [(u[:80], len(t)) for u, t in pages], claude_calls, proposed, len(people),

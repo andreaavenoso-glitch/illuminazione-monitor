@@ -112,7 +112,7 @@ export default function RegionPage() {
       for (let i = 0; i < 80; i++) {
         await new Promise((r) => setTimeout(r, 3000));
         try {
-          const st = await api.get<{ status: string; result?: { trovati?: number; pagine?: number; proposte?: number; metodo?: string; error?: string }; error?: string }>(
+          const st = await api.get<{ status: string; result?: { trovati?: number; pagine?: number; proposte?: number; metodo?: string; error?: string; lacune?: string[]; stampa?: string }; error?: string }>(
             `/admin/task-status/${d.task_id}`,
           );
           if (st.status === "SUCCESS") {
@@ -121,7 +121,7 @@ export default function RegionPage() {
               r.error
                 ? `Referenti: ${r.error}`
                 : r.trovati
-                  ? `Referenti di ${d.ente}: trovati ${r.trovati} (metodo: ${r.metodo ?? "?"}, pagine lette: ${r.pagine ?? "?"}).`
+                  ? `Referenti di ${d.ente}: trovati ${r.trovati} (metodo: ${r.metodo ?? "?"}, fonti controllate: ${r.pagine ?? "?"}).${r.lacune?.length ? ` Lacune: ${r.lacune.slice(0, 3).join("; ")}.` : ""}${r.stampa ? ` Stampa: ${r.stampa}` : ""}`
                   : `Referenti di ${d.ente}: nessun nome trovato (pagine lette: ${r.pagine ?? 0}, proposte lette dal testo: ${r.proposte ?? 0}, metodo: ${r.metodo ?? "?"}). I siti senza una pagina di giunta leggibile vanno guardati a mano.`,
             );
             qc.invalidateQueries({ queryKey: ["region", region] });

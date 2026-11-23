@@ -20,6 +20,12 @@ class WorkerSettings(BaseSettings):
     anthropic_model: str = "claude-haiku-4-5"
     # auto | claude | rules: see app.claude_state (auto = Claude, free rules when it is unavailable)
     extraction_mode: str = "auto"
+    # Referenti: "agent" = Claude researches the web (search + fetch) following the verified-referenti
+    # checklist; "pagine" = reads the comune's own pages only; "auto" = agent when Claude is available.
+    referenti_mode: str = "auto"
+    referenti_model: str = "claude-sonnet-5-5"
+    referenti_max_searches: int = 8
+    referenti_max_fetches: int = 12
     # Override of the price table (USD per million tokens) for the cost counter; 0 = use the table.
     anthropic_price_input_per_mtok: float = 0.0
     anthropic_price_output_per_mtok: float = 0.0
