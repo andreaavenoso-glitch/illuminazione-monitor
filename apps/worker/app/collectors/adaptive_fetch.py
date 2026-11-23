@@ -298,6 +298,7 @@ FAILURES: Counter = Counter()
 # Hosts that have answered at least once in this process: when one of them fails, it is probably a hiccup.
 _HOST_OK: set[str] = set()
 RETRY_PAUSE = 2.0
+RETRY_ENABLED = True  # tests of a single attempt switch it off
 _PERMANENT = ("http_403", "http_404", "http_401", "http_410", "ssl", "dns")
 
 
@@ -317,7 +318,7 @@ async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:
 
     netloc = urlsplit(url).netloc
     res = await _adaptive_fetch_result_impl(url, **kwargs)
-    if not res.text and _worth_retry(netloc, res.error):
+    if not res.text and RETRY_ENABLED and _worth_retry(netloc, res.error):
         await asyncio.sleep(RETRY_PAUSE)
         log.info("adaptive_fetch.retry", url=url, error=res.error)
         res = await _adaptive_fetch_result_impl(url, **kwargs)

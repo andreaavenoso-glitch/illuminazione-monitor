@@ -5,6 +5,7 @@ from app.collectors import adaptive_fetch as af
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
     monkeypatch.setattr(af, "RETRY_PAUSE", 0)
+    monkeypatch.setattr(af, "RETRY_ENABLED", True)
     af.FAILURES.clear()
     af._HOST_OK.clear()
 
