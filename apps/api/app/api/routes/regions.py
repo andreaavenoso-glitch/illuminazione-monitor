@@ -715,6 +715,56 @@ async def record_email(
     return draft
 
 
+@router.get("/{region}/records/{record_id}/slide.pptx")
+async def record_slides(
+    region: str,
+    record_id: UUID,
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """The standard presentation (PPTX) of this opportunity, built from what the app knows."""
+    from app.core.config import get_settings
+    from app.services.slide_deck import build_deck, deck_filename
+
+    region = _canonical(region)
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    people = (
+        await session.execute(select(Referente).where(Referente.ente == rec.ente, Referente.regione == region))
+    ).scalars().all()
+    ent = (
+        await session.execute(select(Entity).where(Entity.name == rec.ente, Entity.region == region))
+    ).scalar_one_or_none()
+    an = (
+        await session.execute(select(AnalisiRecord).where(AnalisiRecord.procurement_record_id == rec.id))
+    ).scalar_one_or_none()
+    pec = ent.pec if ent and ent.pec else next((p.email for p in people if p.ruolo == "ente" and p.email), None)
+    today = today_utc()
+    data = build_deck(
+        {
+            "categoria": _record_category(rec) or "gara", "ente": rec.ente, "provincia": ent.province if ent else None,
+            "descrizione": rec.descrizione, "link": rec.link_bando, "scadenza": rec.scadenza,
+            "scadenza_nota": rec.verifica_nota, "verifica_esito": rec.verifica_esito, "visto_il": rec.first_seen_at,
+            "servizi": [k for k in (rec.servizio or "").split(",") if k],
+            "campi": an.campi if an else None, "documenti": an.documenti if an else None,
+            "metodo": an.metodo if an else None, "analisi_il": an.eseguita_il if an else None,
+            "referenti": [
+                {"ruolo": p.ruolo, "nome": p.nome, "qualifica": p.qualifica, "email": p.email,
+                 "telefono": p.telefono, "stato": p.stato}
+                for p in people if p.ruolo != "ente"
+            ],
+            "pec": pec, "today": today,
+        },
+        template=get_settings().ppt_template_path or None,
+    )
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="{deck_filename(rec.ente, today)}"'},
+    )
+
+
 @router.post("/{region}/records/{record_id}/analizza")
 async def analyze_record_endpoint(
     region: str,

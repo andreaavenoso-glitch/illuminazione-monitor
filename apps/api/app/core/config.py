@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
 
+    # Optional company template (.pptx) for the slides of an opportunity: its master (logo, background) is kept.
+    ppt_template_path: str = ""
     postgres_host: str = "db"
     postgres_port: int = 5432
     postgres_db: str = "lighting_monitor"

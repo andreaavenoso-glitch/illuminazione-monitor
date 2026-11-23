@@ -661,10 +661,11 @@ export default function RegionPage() {
                       onClick={() => analizza.mutate(r.id)}>
                       {r.analisi ? "Aggiorna analisi documentazione" : "Analizza documentazione"}
                     </button>
-                    <button type="button" disabled
-                      className="rounded-lg border border-dashed px-3 py-1 text-xs text-neutral-400"
-                      title="Le slide si generano dai dati estratti: da definire insieme">
-                      Genera slide (in arrivo)
+                    <button type="button"
+                      className="rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                      title="Presentazione standard (PowerPoint): sintesi, referenti, documentazione, prossimi passi"
+                      onClick={() => download(`records/${r.id}/slide.pptx`, `scheda_${r.ente}.pptx`)}>
+                      Genera slide (PPT)
                     </button>
                   </div>
                 )}

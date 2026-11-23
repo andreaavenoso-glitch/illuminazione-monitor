@@ -33,6 +33,11 @@ case "${1:-aggiorna}" in
       echo "    nuove librerie per il worker: ricostruisco l'immagine (qualche minuto)..."
       docker compose build worker && echo "$req_hash" > .worker_requirements.sha
     fi
+    api_hash=$(sha1sum apps/api/requirements.txt | cut -d' ' -f1)
+    if [ "$(cat .api_requirements.sha 2>/dev/null)" != "$api_hash" ]; then
+      echo "    nuove librerie per l'API: ricostruisco l'immagine (qualche minuto)..."
+      docker compose build api && echo "$api_hash" > .api_requirements.sha
+    fi
     docker compose up -d --force-recreate api worker
     docker compose restart web
     echo "==> 4/5 Aspetto che l'API risponda (fino a 2 minuti)..."
