@@ -248,5 +248,9 @@ async def verify_region(region: str, *, limit: int = 200) -> dict[str, int]:
 
 
 @celery_app.task(name="app.tasks.verify_records.verify_region_records", soft_time_limit=3600, time_limit=3700)
-def verify_region_records(region: str) -> dict[str, int]:
+def verify_region_records(region: str, respect_stop: bool = False) -> dict[str, int]:
+    from app.stop import region_stopped
+
+    if respect_stop and asyncio.run(region_stopped(region)):  # chained after a collection the user stopped
+        return {"checked": 0, "stopped": 1}
     return asyncio.run(verify_region(region))

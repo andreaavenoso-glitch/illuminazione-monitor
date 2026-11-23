@@ -65,13 +65,13 @@ def test_region_run_reads_the_comuni_first_and_normalizes_last() -> None:
         "collect_watchlist_albo", "collect_regional_sites", "normalize_records", "score_and_dedupe",
         "verify_region_records",
     ]
-    assert steps[0][1] == {"region": "Puglia", "limit": 10, "skip_scanned_hours": None}
-    assert steps[1][1] == {"region": "Puglia"}
+    assert steps[0][1] == {"region": "Puglia", "limit": 10, "skip_scanned_hours": None, "item_ids": None}
+    assert steps[1][1] == {"region": "Puglia", "respect_stop": True}
 
 
 def test_resume_passes_the_skip_window_to_the_comuni_step_only() -> None:
     from app.services.admin_service import region_scan_steps
 
     steps = region_scan_steps("Puglia", None, 24.0)
-    assert steps[0][1] == {"region": "Puglia", "limit": None, "skip_scanned_hours": 24.0}
-    assert steps[1][1] == {"region": "Puglia"}
+    assert steps[0][1] == {"region": "Puglia", "limit": None, "skip_scanned_hours": 24.0, "item_ids": None}
+    assert steps[1][1] == {"region": "Puglia", "respect_stop": True}

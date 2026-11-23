@@ -9,6 +9,7 @@ import { ClaudeStatusBanner } from "@/components/ClaudeStatusBanner";
 import { Countdown, Icon, KpiTile, StackedBar, TONE, type Tone } from "@/components/ui";
 import { MenuItem, RegionTabs, type TabDef } from "@/components/RegionTabs";
 import { ReferentiTable } from "@/components/ReferentiTable";
+import { TargetedScan } from "@/components/TargetedScan";
 import { ScanView } from "@/components/ScanView";
 import { getToken, getUser, hasRole } from "@/lib/auth";
 import {
@@ -56,6 +57,7 @@ export default function RegionPage() {
   const [showExpired, setShowExpired] = useState(false);
   const [draft, setDraft] = useState<{ id: string; oggetto: string; corpo: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [targeted, setTargeted] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["region", region, showExpired],
@@ -177,6 +179,34 @@ export default function RegionPage() {
       }
     }
   };
+  const activeScans = useQuery({
+    queryKey: ["active-scans"],
+    queryFn: () => api.get<{ region: string | null; total: number; done: number }[]>("/regions/scans/active"),
+    refetchInterval: 5000,
+  });
+  const running = (activeScans.data ?? []).some((a) => a.region === region || a.region === null);
+  const stop = useMutation({
+    mutationFn: () => api.post<{ stopped: boolean }>(`/regions/${encodeURIComponent(region)}/stop`),
+    onSuccess: (d) => {
+      qc.invalidateQueries({ queryKey: ["active-scans"] });
+      setMessage(
+        d.stopped
+          ? "Stop richiesto: finisco i comuni in corso (fino a qualche minuto), salto gli altri e poi elaboro quello che ho già raccolto."
+          : "Nessuna raccolta in corso per questa regione.",
+      );
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
+  const collectSelected = useMutation({
+    mutationFn: (ids: string[]) =>
+      api.post<{ comuni: number }>(`/regions/${encodeURIComponent(region)}/collect-selected`, { ids }),
+    onSuccess: (d) => {
+      setTargeted(false);
+      setTab("scan");
+      setMessage(`Raccolta mirata avviata su ${d.comuni} comuni. Segui l'avanzamento qui sotto.`);
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
   const prepareEmail = useMutation({
     mutationFn: (recordId: string) =>
       api.get<{ oggetto: string; corpo: string }>(`/regions/${encodeURIComponent(region)}/records/${recordId}/email`),
@@ -308,6 +338,20 @@ export default function RegionPage() {
                 onClick={() => collect.mutate({ limit: 10 })}>
                 Prova con 10 comuni
               </button>
+              <button type="button" disabled={collect.isPending}
+                className="rounded-lg border border-white/40 px-3 py-1.5 hover:bg-white/15 disabled:opacity-50"
+                title="Scegli esattamente quali comuni leggere (per provincia, nome, stato)"
+                onClick={() => setTargeted((v) => !v)}>
+                Raccolta mirata
+              </button>
+              {running && (
+                <button type="button" disabled={stop.isPending}
+                  className="animate-pulse rounded-lg bg-red-500 px-3 py-1.5 font-semibold text-white shadow-sm hover:bg-red-600 disabled:opacity-50"
+                  title="Ferma la raccolta in corso: i comuni già letti restano salvati"
+                  onClick={() => stop.mutate()}>
+                  ■ Ferma raccolta
+                </button>
+              )}
               <details className="relative">
                 <summary className="cursor-pointer list-none rounded-lg border border-white/40 px-3 py-1.5 hover:bg-white/15">
                   Altro ▾
@@ -338,6 +382,10 @@ export default function RegionPage() {
           <p className="rounded border border-red-300 bg-red-50 p-2 text-xs text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100">
             Ultima raccolta ({fmt(data.ultimo_scan.at)}) non riuscita: {data.ultimo_scan.errore.slice(0, 300)}
           </p>
+        )}
+        {targeted && (
+          <TargetedScan comuni={data.comuni} busy={collectSelected.isPending}
+            onStart={(ids) => collectSelected.mutate(ids)} onClose={() => setTargeted(false)} />
         )}
         {message && <p className="rounded bg-sky-50 p-2 text-xs text-sky-900 dark:bg-sky-950 dark:text-sky-100">{message}</p>}
         <div className="text-xs text-neutral-600 dark:text-neutral-400">

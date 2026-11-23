@@ -68,6 +68,7 @@ from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
+from app.stop import run_stopped
 from app.usage import current_run_id, current_scan_item_id
 from shared_models import (
     Entity,
@@ -583,7 +584,10 @@ async def _set_run_claude(run_id, status: str, error: str | None, *, only_if_unu
 
 
 async def _run_watchlist_scan(
-    region: str | None = None, limit: int | None = None, skip_scanned_hours: float | None = None
+    region: str | None = None,
+    limit: int | None = None,
+    skip_scanned_hours: float | None = None,
+    item_ids: list[str] | None = None,
 ) -> dict[str, int]:
     configure_services(parse_enabled(get_worker_settings().enabled_services))
     totals = {"items_scanned": 0, "records_found": 0, "records_valid": 0, "errors": 0}
@@ -605,6 +609,9 @@ async def _run_watchlist_scan(
             item for item, item_region, _ in rows
             if wanted is None or normalize_region(item_region) in wanted
         ]
+        if item_ids:  # targeted collection: exactly the comuni the user selected
+            wanted_ids = {str(i) for i in item_ids}
+            items = [i for i in items if str(i.id) in wanted_ids]
         items = filter_stale(items, skip_scanned_hours)
         items = select_sample(items, limit)
         log.info("collect_watchlist.scope region=%s items=%d limit=%s", region, len(items), limit)
@@ -648,6 +655,10 @@ async def _run_watchlist_scan(
             # updates, which is safe on one event loop.
             sid = scan_item_ids[item_id]
             current_scan_item_id.set(sid)
+            if await run_stopped(run.id):
+                stats["items_skipped_stopped"] += 1
+                await _update_scan_item(run.id, sid, status="skipped", ended_at=datetime.now(tz=UTC), error="raccolta fermata")
+                return
             if claude_down.is_set():
                 stats["items_skipped_claude_down"] += 1
                 await _update_scan_item(run.id, sid, status="skipped", error="Claude non disponibile")
@@ -736,10 +747,11 @@ async def _normalize_now() -> None:
 async def _finish_run(run_id, error: str | None) -> None:
     try:
         async with SessionLocal() as s:
+            stopped = bool(await s.scalar(select(ScanRun.stop_requested).where(ScanRun.id == run_id)))
             await s.execute(
                 update(ScanRun).where(ScanRun.id == run_id).values(
                     ended_at=datetime.now(tz=UTC), heartbeat_at=datetime.now(tz=UTC),
-                    status="failed" if error else "done", error=error,
+                    status="stopped" if stopped else ("failed" if error else "done"), error=error,
                 )
             )
             await s.commit()
@@ -755,10 +767,13 @@ async def _finish_run(run_id, error: str | None) -> None:
     time_limit=4 * 3600 + 300,
 )
 def collect_watchlist_albo(
-    region: str | None = None, limit: int | None = None, skip_scanned_hours: float | None = None
+    region: str | None = None,
+    limit: int | None = None,
+    skip_scanned_hours: float | None = None,
+    item_ids: list[str] | None = None,
 ) -> dict[str, int]:
     """Scan the watchlist; ``region`` limits it to one region (any, enabled or
     not), otherwise only the enabled regions are scanned. ``limit`` caps the
     number of comuni (trial run); ``skip_scanned_hours`` skips the ones read more
     recently than that (resume an interrupted run)."""
-    return asyncio.run(_run_watchlist_scan(region, limit, skip_scanned_hours))
+    return asyncio.run(_run_watchlist_scan(region, limit, skip_scanned_hours, item_ids))

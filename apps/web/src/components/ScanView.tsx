@@ -19,6 +19,7 @@ const STATUS_LABEL: Record<ScanRunView["status"], string> = {
   done: "conclusa",
   failed: "conclusa con errori",
   interrupted: "interrotta (il worker si è fermato)",
+  stopped: "fermata dall'utente",
 };
 
 function clock(sec: number): string {
@@ -90,7 +91,7 @@ export function ScanView({ region }: { region: string }) {
           </span>
         </div>
         <div className="mt-2 h-3 w-full overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
-          <div className={`h-full ${data.status === "interrupted" || data.status === "failed" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+          <div className={`h-full ${data.status === "interrupted" || data.status === "failed" || data.status === "stopped" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
         </div>
         <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
           {data.done}/{data.total} comuni ({pct}%) · {data.running} in corso

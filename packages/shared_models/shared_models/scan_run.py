@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,8 @@ class ScanRun(Base):
     # unused (no call yet) | ok | down (the API refuses every call)
     claude_status: Mapped[str] = mapped_column(String, nullable=False, default="unused")
     claude_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set by the user ("Ferma raccolta"): the scan skips the comuni not yet started and later slow steps are skipped.
+    stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

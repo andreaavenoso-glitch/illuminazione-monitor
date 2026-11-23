@@ -134,5 +134,9 @@ def collect_single_source(source_id: str) -> dict[str, int]:
 
 
 @celery_app.task(name="app.tasks.collect_sources.collect_regional_sites")
-def collect_regional_sites(region: str | None = None) -> dict[str, int]:
+def collect_regional_sites(region: str | None = None, respect_stop: bool = False) -> dict[str, int]:
+    from app.stop import region_stopped
+
+    if respect_stop and asyncio.run(region_stopped(region)):
+        return {"stopped": 1, "sources_run": 0, "records_valid": 0, "errors": 0}
     return asyncio.run(_collect_regional(region))

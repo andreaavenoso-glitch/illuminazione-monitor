@@ -664,6 +664,59 @@ async def find_referenti_for_region(region: str, _: User = Depends(require_role(
     return {"status": "dispatched", "region": region, "task_id": dispatch_find_referenti_region(region)}
 
 
+class SelectedScan(BaseModel):
+    ids: list[UUID]
+
+
+@router.post("/{region}/collect-selected")
+async def collect_selected(
+    region: str,
+    payload: SelectedScan,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Targeted collection: exactly the comuni chosen on the page (watchlist ids of this region)."""
+    from app.services.admin_service import dispatch_region_scan
+
+    region = _canonical(region)
+    if not payload.ids or len(payload.ids) > 3000:
+        raise HTTPException(status_code=400, detail="Seleziona da 1 a 3000 comuni")
+    rows = (
+        await session.execute(
+            select(WatchlistItem.id, Entity.region)
+            .join(Entity, WatchlistItem.entity_id == Entity.id)
+            .where(WatchlistItem.id.in_(payload.ids))
+        )
+    ).all()
+    ok = [str(i) for i, r in rows if normalize_region(r) == region]
+    if not ok:
+        raise HTTPException(status_code=404, detail="Nessuno dei comuni scelti e' di questa regione")
+    return {"status": "dispatched", "region": region, "comuni": len(ok), **dispatch_region_scan(region, None, None, ok)}
+
+
+@router.post("/{region}/stop")
+async def stop_collection(
+    region: str,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """"Ferma raccolta": the running scan of this region (or an all-regions one) skips the comuni not yet
+    started, the slow steps after it are skipped, and what was already collected is still processed."""
+    region = _canonical(region)
+    now = datetime.now(tz=UTC)
+    runs = (
+        await session.execute(
+            select(ScanRun).where(ScanRun.status == "running", ScanRun.ended_at.is_(None))
+            .where((ScanRun.region == region) | (ScanRun.region.is_(None)))
+        )
+    ).scalars().all()
+    live = [r for r in runs if r.heartbeat_at is None or (now - r.heartbeat_at).total_seconds() <= 600]
+    for r in live:
+        r.stop_requested = True
+    await session.commit()
+    return {"stopped": bool(live), "runs": len(live)}
+
+
 @router.post("/{region}/process")
 async def process_region(region: str, _: User = Depends(require_role("admin"))) -> dict:
     """Normalize and score what has been collected so far (no new reading)."""

@@ -221,7 +221,7 @@ export interface ScanItemView {
 export interface ScanRunView {
   id: string;
   region: string | null;
-  status: "running" | "done" | "failed" | "interrupted";
+  status: "running" | "done" | "failed" | "interrupted" | "stopped";
   started_at: string;
   ended_at: string | null;
   elapsed_s: number;

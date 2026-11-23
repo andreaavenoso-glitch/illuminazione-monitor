@@ -100,7 +100,10 @@ def dispatch_backfill(days: int) -> str:
 
 
 def region_scan_steps(
-    region: str, limit: int | None = None, skip_scanned_hours: float | None = None
+    region: str,
+    limit: int | None = None,
+    skip_scanned_hours: float | None = None,
+    item_ids: list[str] | None = None,
 ) -> list[tuple[str, dict]]:
     """The steps of a region run, in order: (task name, kwargs). The comuni come
     first, because they are what the progress view shows and what the user waits
@@ -110,13 +113,14 @@ def region_scan_steps(
     return [
         (
             "app.tasks.collect_watchlist.collect_watchlist_albo",
-            {"region": region, "limit": limit, "skip_scanned_hours": skip_scanned_hours},
+            {"region": region, "limit": limit, "skip_scanned_hours": skip_scanned_hours, "item_ids": item_ids},
         ),
-        ("app.tasks.collect_sources.collect_regional_sites", {"region": region}),
+        # both skipped when the user stopped the collection ("Ferma raccolta")
+        ("app.tasks.collect_sources.collect_regional_sites", {"region": region, "respect_stop": True}),
         ("app.tasks.normalize_records.normalize_records", {}),
         ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
         # Last: open the link of every gara / manifestazione without a deadline.
-        ("app.tasks.verify_records.verify_region_records", {"region": region}),
+        ("app.tasks.verify_records.verify_region_records", {"region": region, "respect_stop": True}),
     ]
 
 
@@ -148,7 +152,10 @@ def dispatch_find_referenti_region(region: str) -> str:
 
 
 def dispatch_region_scan(
-    region: str, limit: int | None = None, skip_scanned_hours: float | None = None
+    region: str,
+    limit: int | None = None,
+    skip_scanned_hours: float | None = None,
+    item_ids: list[str] | None = None,
 ) -> dict[str, str]:
     """One region end to end, strictly in order (see ``region_scan_steps``).
     ``task_id`` is the last step: when it is SUCCESS the whole run is done."""
@@ -156,7 +163,7 @@ def dispatch_region_scan(
 
     app = _celery_app()
     result = chain(
-        *[app.signature(name, kwargs=kwargs, immutable=True) for name, kwargs in region_scan_steps(region, limit, skip_scanned_hours)]
+        *[app.signature(name, kwargs=kwargs, immutable=True) for name, kwargs in region_scan_steps(region, limit, skip_scanned_hours, item_ids)]
     ).apply_async()
     return {"task_id": str(result.id)}
 
