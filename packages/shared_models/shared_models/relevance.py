@@ -277,6 +277,10 @@ def record_state(
     deadline = _as_date(scadenza)
     if category in STRICT_CATEGORIES:
         if deadline is None:
+            # a tender / call whose own address carries a year two or more back is long over (deadlines are weeks away)
+            uy_old = url_year(url)
+            if uy_old is not None and uy_old < today.year - 1:
+                return SCADUTO, False
             return DA_VERIFICARE, False
         if deadline < today:
             return SCADUTO, False

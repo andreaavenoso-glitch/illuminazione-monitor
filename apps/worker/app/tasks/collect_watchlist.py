@@ -69,7 +69,7 @@ from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from app.stop import run_stopped
-from app.tasks.verify_records import html_to_text
+from app.tasks.verify_records import notice_page
 from app.usage import current_run_id, current_scan_item_id
 from shared_models import (
     Entity,
@@ -248,7 +248,7 @@ async def _process_page(
                 if details:
                     record = merge_detail_into_record(record, details)
                 # The deadline written on the page itself: free, and the only source in rules mode.
-                if not record.get("scadenza") and (dl := deadline_from_text(html_to_text(detail_html))):
+                if not record.get("scadenza") and (dl := deadline_from_text(notice_page(detail_html)[0])):
                     record = {**record, "scadenza": dl.isoformat()}
                 # A detail page whose every date is old (attachments from 2023,
                 # an award notice) is a closed procedure, whatever the list said.

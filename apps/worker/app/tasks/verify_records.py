@@ -27,6 +27,7 @@ from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.collectors.archives import bytes_to_text
 from app.collectors.deadline_hunt import Doc, hunt_deadline
+from app.collectors.main_content import main_region
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from bs4 import BeautifulSoup
@@ -49,6 +50,12 @@ MAX_PDF_PAGES = 12
 MAX_TEXT_CHARS = 60000
 _UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
 _CLAUDE_CUES = ("scadenz", "entro il", "entro le", "termine", "presentazione delle", "manifestare")
+
+
+def notice_page(html: str) -> tuple[str, str]:
+    """(text, html) of the NOTICE in a web page: the central part, without menu, sidebar and footer."""
+    region = main_region(html)
+    return html_to_text(region), region
 
 
 def html_to_text(html: str) -> str:
@@ -119,7 +126,8 @@ async def _fetch_plain(url: str) -> tuple[str, str | None]:
             if kind:
                 return text[:MAX_TEXT_CHARS * 2], None
             if len(r.text) > 3000:
-                return html_to_text(r.text)[:MAX_TEXT_CHARS], r.text
+                text, region = notice_page(r.text)
+                return text[:MAX_TEXT_CHARS], region
     except Exception as exc:  # noqa: BLE001
         log.info("verify.plain_fetch_failed url=%s err=%s", url, exc)
     return "", None
@@ -143,10 +151,11 @@ async def fetch_doc(url: str, depth: int, settings: WorkerSettings) -> Doc:
             return Doc(url, "pdf", "", None, depth, "lettore PDF mancante: ricostruire il worker")
     if kind:
         return Doc(url, "pdf" if kind == "pdf" else "archivio", text[:MAX_TEXT_CHARS * 2], None, depth, "" if text else note)
-    text = html_to_text(r.text)[:MAX_TEXT_CHARS]
+    text, region = notice_page(r.text)
+    text = text[:MAX_TEXT_CHARS]
     if len(text) < 200:  # almost empty: probably built by JavaScript
         return await _browser_doc(url, depth, settings, "pagina quasi vuota")
-    return Doc(url, "html", text, r.text, depth)
+    return Doc(url, "html", text, region, depth)
 
 
 async def _browser_doc(url: str, depth: int, settings: WorkerSettings, why: str) -> Doc:
@@ -156,7 +165,8 @@ async def _browser_doc(url: str, depth: int, settings: WorkerSettings, why: str)
         playwright_wait_ms=settings.smart_collector_playwright_wait_ms, label="verify", try_variants=False,
     )
     if res.text:
-        return Doc(url, "html", html_to_text(res.text)[:MAX_TEXT_CHARS], res.text, depth, f"letta col browser ({why})")
+        text, region = notice_page(res.text)
+        return Doc(url, "html", text[:MAX_TEXT_CHARS], region, depth, f"letta col browser ({why})")
     return Doc(url, "html", "", None, depth, f"non apribile: {why}")
 
 
@@ -177,7 +187,8 @@ async def fetch_document_text(url: str, settings: WorkerSettings, *, attachments
         )
         if not res.text:
             return ""
-        text, raw = html_to_text(res.text)[:MAX_TEXT_CHARS], res.text
+        text, raw = notice_page(res.text)
+        text = text[:MAX_TEXT_CHARS]
     if attachments and raw:
         parts = [text]
         for link in attachment_links(raw, base_url=url):
