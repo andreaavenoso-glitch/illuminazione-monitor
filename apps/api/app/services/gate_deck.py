@@ -19,12 +19,20 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from app.services.email_template import SERVIZIO_LABEL, TIPO, _campo, _d
+from app.services.email_template import SERVIZIO_LABEL, TIPO, _d
+from app.services.gate_content import (
+    DC,
+    concorrenza_items,
+    desiderata_items,
+    economica_rows,
+    informazioni_items,
+    procedura_text,
+    refs,
+)
 from pptx import Presentation
 from pptx.oxml.ns import qn
 from pptx.util import Pt
 
-DC = "[da compilare]"
 MESI = ("gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre",
         "novembre", "dicembre")
 # Standard weeks of the gate (the model's own): kick-off, hand-over, go/no-go, pre-valutazione, fine progettazione...
@@ -55,6 +63,32 @@ def gate_dates(start: date | None, scadenza: date | None) -> list[date | None]:
     if span <= 0:
         return [end if i == len(GATE_WEEKS) - 1 else start for i in range(len(GATE_WEEKS))]
     return [start + timedelta(days=round(span * w / GATE_WEEKS[-1])) for w in GATE_WEEKS]
+
+
+MODEL_DIRS = ("/workspace/infra/modelli", "infra/modelli", "/app/infra/modelli")
+NO_MODEL = (
+    "Modello A2A (Gate 1) non trovato. Copia il file .pptx nella cartella infra/modelli del Codespace "
+    "(oppure indica il percorso in PPT_TEMPLATE_PATH nel file .env) e lancia «bash aggiorna.sh»."
+)
+
+
+def find_gate_template(configured: str | None, dirs: tuple[str, ...] = MODEL_DIRS) -> str | None:
+    """The A2A model to fill: the configured file, else the first Gate sheet found in the models folder. None when there is
+    none: the sheet must never come out in another design without anyone noticing."""
+    from pathlib import Path
+
+    candidates: list[str] = [configured] if configured else []
+    for d in dirs:
+        base = Path(d)
+        if base.is_dir():
+            candidates += [str(f) for f in sorted(base.glob("*.pptx")) if not f.name.startswith("~")]
+    for c in candidates:
+        try:
+            if Path(c).is_file() and is_gate_template(Presentation(c)):
+                return c
+        except Exception:  # noqa: BLE001 -- not a presentation / protected: next one
+            continue
+    return None
 
 
 def is_gate_template(prs: Any) -> bool:
@@ -100,7 +134,13 @@ def _set_par(par: Any, label: str | None, value: str) -> None:
     _drop_highlight(par)
 
 
-def _fill_lines(tf: Any, items: list[tuple[str | None, str]]) -> None:
+def _fit_size(items: list[tuple[str | None, str]], base: float = 15.0) -> float | None:
+    """A smaller type when the lines are many or long, so that the text stays inside the page (the model's own is 15 pt)."""
+    total = sum(len(a or "") + len(b) for a, b in items)
+    return 11.0 if total > 1100 else 12.0 if total > 800 else 13.5 if total > 600 else None
+
+
+def _fill_lines(tf: Any, items: list[tuple[str | None, str]], size: float | None = None) -> None:
     """Replace all paragraphs of a text frame with ``items`` (label, text), cloned from its first paragraph."""
     paras = list(tf.paragraphs)
     proto = copy.deepcopy(paras[0]._p)
@@ -113,9 +153,12 @@ def _fill_lines(tf: Any, items: list[tuple[str | None, str]]) -> None:
         prev = node
     for par, (label, value) in zip(tf.paragraphs, items, strict=False):
         _set_par(par, label, value)
+        if size:
+            for r in par.runs:
+                r.font.size = Pt(size)
 
 
-def _cell(cell: Any, text: str, *, bold_head: str | None = None) -> None:
+def _cell(cell: Any, text: str, *, bold_head: str | None = None, size: float | None = None) -> None:
     """A table cell with one paragraph; the first run's formatting is kept. ``bold_head`` is bold, ``text`` follows."""
     tf = cell.text_frame
     for p in tf.paragraphs[1:]:
@@ -131,6 +174,9 @@ def _cell(cell: Any, text: str, *, bold_head: str | None = None) -> None:
         runs[0].text = text
         for r in runs[1:]:
             r._r.getparent().remove(r._r)
+    if size:
+        for r in par.runs:
+            r.font.size = Pt(size)
 
 
 def _shape(slide: Any, name: str) -> Any:
@@ -184,7 +230,6 @@ def build_gate(d: dict[str, Any], template: str, cfg: GateConfig) -> bytes:
     scad = _d(d.get("scadenza"))
     servizi = [SERVIZIO_LABEL.get(s, s) for s in (d.get("servizi") or [])]
     proc = _v(campi, "procedura")
-    proc_txt = ", ".join(proc) if isinstance(proc, list) else (proc or None)
     pec = _v(campi, "pec_invio") or d.get("pec")
 
     by_index: dict[int, Callable[[Any], None]] = {}
@@ -221,11 +266,12 @@ def build_gate(d: dict[str, Any], template: str, cfg: GateConfig) -> bytes:
         ora = _v(campi, "ora_scadenza")
         if scad:
             head = it_date(scad) + (f", ore {ora}" if ora else "")
-            _cell(t.cell(3, 1), (f" – via PEC a {pec}" if pec else ""), bold_head=head)
+            _cell(t.cell(3, 1), (f" – via PEC a {pec}" if pec else "") + refs(campi, "scadenza", "ora_scadenza", "pec_invio", width=22), bold_head=head, size=10)
         else:
             _cell(t.cell(3, 1), " – verificare sul documento originale", bold_head="Scadenza non trovata")
         sop = _v(campi, "sopralluogo")
-        _cell(t.cell(4, 1), sop or "Non indicato nei documenti letti – da verificare")
+        sop = (sop if len(str(sop)) <= 150 else str(sop)[:147].rstrip() + "…") if sop else sop
+        _cell(t.cell(4, 1), (sop + refs(campi, "sopralluogo", width=22)) if sop else "Non indicato nei documenti letti – da verificare", size=10)
         # RUP / referenti tecnici
         rup = (_people(d, "rup") or [None])[0]
         tec = (_people(d, "responsabile_tecnico") or [None])[0]
@@ -239,23 +285,14 @@ def build_gate(d: dict[str, Any], template: str, cfg: GateConfig) -> bytes:
             contatti = " – ".join(x for x in (who.get("telefono"), who.get("email")) if x)
             _set_par(pars[1], None, contatti or "contatti non trovati") if len(pars) > 1 else None
         elif _v(campi, "rup"):
-            _set_par(pars[0], str(_v(campi, "rup")), " – RUP (dalla documentazione)")
+            _set_par(pars[0], str(_v(campi, "rup")), " – RUP" + refs(campi, "rup", width=22))
             _set_par(pars[1], None, "contatti non trovati") if len(pars) > 1 else None
         else:
             _set_par(pars[0], "Non individuato", " – usare «Referenti del comune» nell'app")
             _set_par(pars[1], None, DC) if len(pars) > 1 else None
         for p in pars[2:]:
             p._p.getparent().remove(p._p)
-        bits = [tipo]
-        if proc_txt:
-            bits.append(f"procedura: {proc_txt}")
-        if _v(campi, "importo_massimo_eur"):
-            bits.append("importo " + _campo("importo_massimo_eur", _v(campi, "importo_massimo_eur")))
-        if _v(campi, "durata"):
-            bits.append(f"durata {_v(campi, 'durata')}")
-        if _v(campi, "cig"):
-            bits.append(f"CIG {_v(campi, 'cig')}")
-        _cell(t.cell(6, 1), " – ".join(bits) + (f" – {d['link']}" if d.get("link") else ""))
+        _cell(t.cell(6, 1), procedura_text(campi, tipo, d.get("link")), size=10)
 
     def slide_posizionamento(s: Any) -> None:
         pic = _shape(s, "Immagine 5")
@@ -278,23 +315,10 @@ def build_gate(d: dict[str, Any], template: str, cfg: GateConfig) -> bytes:
     def slide_economica(s: Any) -> None:
         t = _table(s, "Tabella PEF")
         if t is not None:
-            spesa, cons = _v(campi, "spesa_annua_eur"), _v(campi, "consumi_mwh")
-            fonte = lambda k: (campi[k].get("fonte") or DC) if k in campi else DC  # noqa: E731
-            _cell(t.cell(1, 0), "Spesa storica (energia, O&M, straordinaria)")
-            _cell(t.cell(1, 1), f"{_campo('importo_massimo_eur', spesa)}/anno (come scritto nel documento)" if spesa else DC)
-            _cell(t.cell(1, 2), fonte("spesa_annua_eur"))
-            _cell(t.cell(2, 0), "Energia")
-            _cell(t.cell(2, 1), f"~{cons:g} MWh/anno" if cons else DC)
-            _cell(t.cell(2, 2), fonte("consumi_mwh"))
-            canone = _v(campi, "canone_annuo_eur")
-            if canone:
-                _cell(t.cell(3, 0), "Canone annuo di riferimento (base di gara)")
-                _cell(t.cell(3, 1), f"{_campo('canone_annuo_eur', canone)}/anno")
-                _cell(t.cell(3, 2), fonte("canone_annuo_eur"))
-            else:
-                _cell(t.cell(3, 0), "Manutenzione")
-                _cell(t.cell(3, 1), DC)
-                _cell(t.cell(3, 2), DC)
+            for i, (voce, valore, fonte) in enumerate(economica_rows(campi), start=1):
+                _cell(t.cell(i, 0), voce)
+                _cell(t.cell(i, 1), valore)
+                _cell(t.cell(i, 2), fonte)
         note = _shape(s, "Testo 21")
         if note is not None:
             _set_par(note.text_frame.paragraphs[0], "Leva energetica: ", DC)
@@ -303,46 +327,21 @@ def build_gate(d: dict[str, Any], template: str, cfg: GateConfig) -> bytes:
         t = _table(s)
         if t is None:
             return
-        items: list[tuple[str | None, str]] = [(f"{tipo}: ", d.get("link") or DC)]
-        for doc in (d.get("documenti") or [])[:6]:
-            items.append((f"{(doc.get('nome') or 'Documento')[:42]}: ", doc.get("url") or ""))
-        if scad:
-            items.append(("Scadenza: ", f"{scad:%d/%m/%Y}" + (f" – {d['scadenza_nota']}" if d.get("scadenza_nota") else "")))
-        else:
-            items.append(("Scadenza: ", "non trovata – verificare sul documento"))
-        missing = [lab for k, lab in (("cig", "CIG"), ("importo_massimo_eur", "importo"), ("durata", "durata"),
-                                       ("punti_luce", "punti luce"), ("criterio_aggiudicazione", "criterio")) if k not in campi]
-        items.append(("Non trovato nei documenti: ", ", ".join(missing) if missing else "nulla di rilevante"))
+        items = informazioni_items(campi, tipo, d.get("link"), d.get("documenti") or [], scad, d.get("scadenza_nota"))
         _fill_lines(t.cell(1, 0).text_frame, items[:9])
 
     def slide_desiderata(s: Any) -> None:
         tb = _shape(s, "CasellaDiTesto 9")
         if tb is None:
             return
-        pl = _v(campi, "punti_luce")
-        items = [
-            ("Consistenza: ", f"{pl} punti luce" if pl else DC),
-            ("Procedura: ", proc_txt or DC),
-            ("Importo: ", _campo("importo_massimo_eur", _v(campi, "importo_massimo_eur")) if _v(campi, "importo_massimo_eur") else DC),
-            ("Durata: ", str(_v(campi, "durata")) if _v(campi, "durata") else DC),
-            ("Criterio di aggiudicazione: ", str(_v(campi, "criterio_aggiudicazione")) if _v(campi, "criterio_aggiudicazione") else DC),
-            ("Finanziamento: ", str(_v(campi, "finanziamento")) if _v(campi, "finanziamento") else DC),
-            ("Consumi: ", f"~{_v(campi, 'consumi_mwh'):g} MWh/anno" if _v(campi, "consumi_mwh") else DC),
-            ("Sorgenti e stato degli impianti: ", DC),
-            ("Reti, quadri e sostegni: ", DC),
-            ("Requisiti richiesti (telecontrollo, SLA, apparecchi): ", DC),
-            ("Centro storico e vincoli: ", DC),
-            ("Servizi smart: ", DC),
-        ]
-        _fill_lines(tb.text_frame, items)
+        items = desiderata_items(campi)
+        _fill_lines(tb.text_frame, items, _fit_size(items))
 
     def slide_concorrenza(s: Any) -> None:
         tb = _shape(s, "CasellaDiTesto 9")
         if tb is None:
             return
-        _fill_lines(tb.text_frame, [(f"{lab}: ", DC) for lab in (
-            "Proponente", "Gestore uscente", "Manutentore", "Visibilità dell'avviso", "Prelazione",
-            "Convenzioni Consip", "Leve nostre")])
+        _fill_lines(tb.text_frame, concorrenza_items(campi))
 
     def slide_interlocutori(s: Any) -> None:
         tb = _shape(s, "CasellaDiTesto 9")

@@ -5,10 +5,13 @@ line in ``extract_fields``; nothing else changes (the table stores the fields as
 """
 from __future__ import annotations
 
+import json
 import re
+from bisect import bisect_right
 from datetime import date
 from typing import Any
 
+from app.collectors.census import MARKER as _CENSUS
 from app.collectors.rules_extract import extract_people_by_rules
 from shared_models.relevance import dates_in_text, deadline_from_text
 
@@ -63,6 +66,18 @@ _TERMINE_GIORNI = re.compile(
 )
 _PER_PRESENTARE = re.compile(r"propost|offert|domand|manifestazion|candidatur|partecipa|present|pervenir|trasmett|inviar", re.IGNORECASE)
 _NON_E_UN_TERMINE = re.compile(r"ricors|\btar\b|impugn|accesso agli atti|chiariment|quesit|richieste? di", re.IGNORECASE)
+# --- significant elements of a PPP / tender notice -------------------------------------------------------------------
+_PROPONENTE = re.compile(
+    r"proposta\s+(?:della|di)\s+(?:societ[àa]\s+)?(?P<nome>(?:[A-ZÀ-Ý][\w&'À-ÿ-]*\s+){1,5}?(?:S\.?\s?p\.?\s?A|S\.?\s?r\.?\s?l|S\.?\s?c\.?\s?a\.?\s?r\.?\s?l|S\.?\s?t\.?\s?p))\s*\.?\s*,?\s*"
+    r"(?:prot\.?\s*(?:n\.?\s*)?(?P<prot>\d+)\s+del\s+(?P<data>\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}))?",
+)
+_FINANZIAMENTO = re.compile(r"(PR\s+\w+\s+FESR(?:\s*FSE\+?)?\s*\d{4}\s*[–-]\s*\d{4}).{0,140}?Azione\s+([\dA-Z]+(?:\.[\dA-Z]+)*)", re.IGNORECASE)
+_SCAD_FINANZIAMENTO = re.compile(r"domanda\s+regionale[^.]{0,60}?(\d{1,2}/\d{1,2}/\d{4})\s*,?\s*ore\s*(\d{1,2})\s*[:.,]\s*(\d{2})", re.IGNORECASE)
+_REQUISITI = re.compile(r"requisiti\s+di\s+(?:capacit\w+|ordine|idoneit\w+|partecipazione)[^.]{0,220}\.", re.IGNORECASE)
+_CRITERI_VALUTAZIONE = re.compile(r"criteri\s+di\s+valutazione[^.]{0,480}\.", re.IGNORECASE)
+_ALLEGATO = re.compile(r"Allegat[oi]\s+([A-Z0-9]{1,3})\s*[–\-:]\s*([^.;]{5,70})")
+_CONTRIBUTO = re.compile(r"contributo[^.%]{0,90}?(\d{1,3}(?:,\d+)?)\s*%", re.IGNORECASE)
+_MEMBER = re.compile(r"\[([^\[\]]+?\.(?:pdf|docx|xlsx|txt|csv|html?|xml|md))\] ", re.IGNORECASE)
 _FONDI = re.compile(r"PNRR|FESR|FSC|fondi (europei|strutturali)|conto termico|PR\s+\w+\s+FESR", re.IGNORECASE)
 
 
@@ -73,82 +88,151 @@ def _money_to_float(raw: str) -> float | None:
         return None
 
 
+def split_members(text: str) -> list[tuple[str | None, str]]:
+    """The text of an archive is "[file.pdf] text [other.docx] text": one piece per file, so that a field can name its file."""
+    marks = [(m.start(), m.end(), m.group(1)) for m in _MEMBER.finditer(text) if not m.group(1).startswith("Archivio con")]
+    if not marks:
+        return [(None, text)]
+    out: list[tuple[str | None, str]] = []
+    if text[: marks[0][0]].strip():
+        out.append((None, text[: marks[0][0]]))
+    for k, (_, end, name) in enumerate(marks):
+        out.append((name, text[end: marks[k + 1][0] if k + 1 < len(marks) else len(text)]))
+    return out
+
+
+def _pos_of_date(flat: str, d: date) -> int | None:
+    m = re.search(rf"\b0?{d.day}\s*[/.\-]\s*0?{d.month}\s*[/.\-]\s*(?:{d.year}|{d.year % 100:02d})\b", flat)
+    return m.start() if m else None
+
+
 def extract_fields(docs: list[tuple[str, str]], today: date) -> dict[str, dict[str, Any]]:
-    """``docs`` = [(name, text)]. Returns {field: {"valore", "fonte", "contesto"}} for what is written."""
+    """``docs`` = [(name, text)]. Returns {field: {"valore", "fonte", "contesto"}} for what is written. ``fonte`` names the
+    document and, when it has several pages (a PDF, with a form feed between pages), the page: "avviso.pdf, p. 5"; a file
+    inside an archive is named "allegati.zip › relazione.pdf"."""
     out: dict[str, dict[str, Any]] = {}
 
-    def put(key: str, value: Any, fonte: str, contesto: str = "") -> None:
-        if key not in out and value not in (None, "", []):
+    def scan(name: str, text: str) -> None:
+        parts = [" ".join(p.split()) for p in text.split("\f")]
+        flat = " ".join(parts)
+        starts, acc = [], 0
+        for part in parts:
+            starts.append(acc)
+            acc += len(part) + 1
+
+        def put(key: str, value: Any, contesto: str = "", pos: int | None = None, replace: bool = False) -> None:
+            if value in (None, "", []) or (key in out and not replace):
+                return
+            fonte = name if pos is None or len(parts) < 2 else f"{name}, p. {bisect_right(starts, pos)}"
             out[key] = {"valore": value, "fonte": fonte, "contesto": " ".join(contesto.split())[:200]}
 
-    for name, text in docs:
-        flat = " ".join(text.split())
+        def near(m: re.Match, before: int = 40, after: int = 40) -> str:
+            return flat[max(0, m.start() - before): m.end() + after]
+
+        if cm := _CENSUS.search(text):  # a lighting census read by column (census.py): the data set
+            try:
+                stats = json.loads(cm.group(1))
+            except ValueError:
+                stats = None
+            if stats:
+                sheets = " e ".join(f"«{t}»" for t in stats.get("fogli", []))
+                put("censimento", stats, f"fogli {sheets}", replace=True)
+                put("punti_luce", str(stats["apparecchi"]), "apparecchi censiti", replace=True)
+                if stats.get("consumo_mwh"):
+                    put("consumi_mwh", float(stats["consumo_mwh"]), "stima: potenza installata × ore annue dei quadri", replace=True)
         if m := _CIG.search(flat):
-            put("cig", m.group(1), name, flat[max(0, m.start() - 40): m.end() + 40])
+            put("cig", m.group(1), near(m), m.start())
         if d := deadline_from_text(flat):
-            put("scadenza", d.isoformat(), name)
+            put("scadenza", d.isoformat(), pos=_pos_of_date(flat, d))
         amounts = []
         for m in _MONEY.finditer(flat):
             v = _money_to_float(m.group(1) or m.group(2))
             ctx = flat[max(0, m.start() - 90): m.end() + 20]
             if v and v >= 1000 and _MONEY_LABEL.search(ctx):
-                amounts.append((v, ctx))
+                amounts.append((v, ctx, m.start()))
         if amounts:
             top = max(amounts, key=lambda a: a[0])
-            put("importo_massimo_eur", top[0], name, top[1])
-            put("importi_citati_eur", sorted({a[0] for a in amounts}, reverse=True)[:6], name)
+            put("importo_massimo_eur", top[0], top[1], top[2])
+            put("importi_citati_eur", sorted({a[0] for a in amounts}, reverse=True)[:6])
         if m := _DURATA.search(flat):
-            put("durata", f"{m.group(1)} {m.group(2)}", name, flat[max(0, m.start() - 20): m.end() + 30])
+            put("durata", f"{m.group(1)} {m.group(2)}", near(m, 20, 30), m.start())
         if m := _PUNTI_LUCE.search(flat):
-            put("punti_luce", m.group(1), name, flat[max(0, m.start() - 40): m.end() + 30])
+            put("punti_luce", m.group(1), near(m, 40, 30), m.start())
         if m := _ORA_SCADENZA.search(flat):
-            put("ora_scadenza", f"{int(m.group(1)):02d}:{m.group(2)}", name, flat[max(0, m.start() - 20): m.end() + 20])
+            put("ora_scadenza", f"{int(m.group(1)):02d}:{m.group(2)}", near(m, 20, 20), m.start())
         if m := _SOPRALLUOGO.search(flat):
-            put("sopralluogo", " ".join(m.group(0).split())[:220], name)
+            put("sopralluogo", " ".join(m.group(0).split())[:220], pos=m.start())
         if m := _CONSUMI.search(flat):
             kwh = _money_to_float(m.group(1))
             if kwh:
-                put("consumi_mwh", round(kwh / (1000 if m.group(2).lower() == "kwh" else 1), 1), name,
-                    flat[max(0, m.start() - 40): m.end() + 20])
+                put("consumi_mwh", round(kwh / (1000 if m.group(2).lower() == "kwh" else 1), 1), near(m, 40, 20), m.start())
         if m := _SPESA_ANNUA.search(flat):
             v = _money_to_float(m.group(1) or m.group(2))
             if v and v >= 1000:
-                put("spesa_annua_eur", v, name, flat[max(0, m.start() - 20): m.end() + 20])
+                put("spesa_annua_eur", v, near(m, 20, 20), m.start())
         if m := _CANONE_ANNUO.search(flat):
             v = _money_to_float(m.group(1))
             if v and v >= 1000:
-                put("canone_annuo_eur", v, name, flat[max(0, m.start() - 20): m.end() + 60])
+                put("canone_annuo_eur", v, near(m, 20, 60), m.start())
         if m := _PEC_ADDR.search(flat):
-            put("pec_invio", m.group(0).lower().rstrip(".-_"), name)
-        if m := _ATTO.search(flat):
+            put("pec_invio", m.group(0).lower().rstrip(".-_"), pos=m.start())
+        atti = []
+        for m in _ATTO.finditer(flat):
             kind = {"deliberazione": "Delibera", "delibera": "Delibera"}.get(m.group(1).lower(), "Determina")
             organ = {"giunta": " di Giunta", "consiglio": " di Consiglio"}.get((m.group(2) or "").lower(), "")
             anno = f"/{m.group(4)}" if m.group(4) else ""
-            put("atto_estremi", f"{kind}{organ} n. {m.group(3)}{anno} del {m.group(5)}", name, flat[max(0, m.start() - 20): m.end() + 30])
+            atti.append((f"{kind}{organ} n. {m.group(3)}{anno} del {m.group(5)}", m))
+        if atti:
+            put("atto_estremi", atti[0][0], near(atti[0][1], 20, 30), atti[0][1].start())
+            put("atti_citati", list(dict.fromkeys(a for a, _ in atti))[:10], pos=atti[0][1].start())
         if m := _IMPEGNO.search(flat):
             v = _money_to_float(m.group(1) or m.group(2))
             if v and v >= 500:
-                put("impegno_spesa_eur", v, name, flat[max(0, m.start() - 20): m.end() + 30])
+                put("impegno_spesa_eur", v, near(m, 20, 30), m.start())
         if m := _INCARICATO.search(flat):
-            put("incaricato", " ".join(m.group(1).split()), name, flat[max(0, m.start() - 30): m.end() + 20])
+            put("incaricato", " ".join(m.group(1).split()), near(m, 30, 20), m.start())
+        if m := _PROPONENTE.search(flat):
+            nome = re.sub(r"\s+\.", ".", " ".join(m.group("nome").split()))
+            nome = nome if nome.endswith(".") or not re.search(r"S\.?p\.?A$|S\.?r\.?l$", nome, re.I) else nome + "."
+            put("proponente", {"nome": nome, "protocollo": m.group("prot"), "data": m.group("data")}, near(m, 30, 60), m.start())
         for m in _TERMINE_GIORNI.finditer(flat):
             before = flat[max(0, m.start() - 140): m.start()]
             if m.group(3).lower() != "pubblicazione" or _NON_E_UN_TERMINE.search(before) or not _PER_PRESENTARE.search(flat[max(0, m.start() - 200): m.end() + 60]):
                 continue  # an appeal term, a request for clarifications, a term counted from something else
             kind = (m.group(2) or "").lower()
-            put("termine_giorni", {"giorni": int(m.group(1)), "lavorativi": kind in ("lavorativi", "feriali")}, name,
-                flat[max(0, m.start() - 60): m.end() + 40])
+            put("termine_giorni", {"giorni": int(m.group(1)), "lavorativi": kind in ("lavorativi", "feriali")}, near(m, 60, 40), m.start())
             break
-        procs = [label for label, rx in _PROCEDURA if rx.search(flat)]
-        put("procedura", procs, name)
+        procs = [(label, rx.search(flat)) for label, rx in _PROCEDURA]
+        found = [(label, mm) for label, mm in procs if mm]
+        put("procedura", [label for label, _ in found], pos=found[0][1].start() if found else None)
         if m := _CRITERIO.search(flat):
-            put("criterio_aggiudicazione", m.group(0), name, flat[max(0, m.start() - 40): m.end() + 40])
-        if m := _FONDI.search(flat):
-            put("finanziamento", m.group(0), name, flat[max(0, m.start() - 60): m.end() + 60])
-        for p in extract_people_by_rules(text):
+            put("criterio_aggiudicazione", m.group(0), near(m), m.start())
+        if m := _FINANZIAMENTO.search(flat):
+            prog = re.sub(r"\s*([–-])\s*", r"\1", " ".join(m.group(1).split()))
+            put("finanziamento", f"{prog}, Azione {m.group(2)}", near(m, 20, 80), m.start())
+        elif m := _FONDI.search(flat):
+            put("finanziamento", m.group(0), near(m, 60, 60), m.start())
+        if m := _SCAD_FINANZIAMENTO.search(flat):
+            dd, mo, yy = (int(x) for x in m.group(1).split("/"))
+            put("scadenza_finanziamento", f"{yy:04d}-{mo:02d}-{dd:02d} {int(m.group(2)):02d}:{m.group(3)}", near(m, 40, 20), m.start())
+        if m := _CONTRIBUTO.search(flat):
+            put("contributo_percentuale", m.group(1).replace(",", "."), near(m, 40, 20), m.start())
+        if m := _REQUISITI.search(flat):
+            put("requisiti", " ".join(m.group(0).split())[:260], pos=m.start())
+        if m := _CRITERI_VALUTAZIONE.search(flat):
+            put("criteri_valutazione", " ".join(m.group(0).split())[:260], pos=m.start())
+        allegati = list(dict.fromkeys(f"Allegato {m.group(1)} – {m.group(2).strip()}" for m in _ALLEGATO.finditer(flat)))
+        if allegati:
+            put("allegati_citati", allegati[:8], pos=_ALLEGATO.search(flat).start())
+        for p in extract_people_by_rules(text.replace("\f", " ")):
             if p["ruolo"] == "rup":
-                put("rup", p["nome"], name, p.get("citazione") or "")
+                pos = flat.find((p.get("citazione") or "")[:30]) if p.get("citazione") else -1
+                put("rup", p["nome"], p.get("citazione") or "", pos if pos >= 0 else None)
         past = [d for d in dates_in_text(flat) if d <= today]
         if past:
-            put("data_documento", max(past).isoformat(), name)
+            put("data_documento", max(past).isoformat())
+
+    for name, text in docs:
+        for member, piece in split_members(text):
+            scan(name if member is None else f"{name} › {member}", piece)
     return out

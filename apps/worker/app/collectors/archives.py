@@ -18,6 +18,14 @@ from dataclasses import dataclass
 PdfReader = Callable[[bytes], str]
 
 
+def workbook_text(content: bytes) -> str:
+    """A workbook as text: a lighting census gives its figures (read by column); any other workbook the text of its cells."""
+    from app.collectors.census import census_stats, census_text
+
+    stats = census_stats(content)
+    return census_text(stats) if stats else xlsx_to_text(content)
+
+
 @dataclass(frozen=True)
 class Limits:
     max_members: int = 40
@@ -148,7 +156,7 @@ def archive_to_text(
         elif kind == "docx":
             text = docx_to_text(data)
         elif kind == "xlsx":
-            text = xlsx_to_text(data)
+            text = workbook_text(data)
         elif kind == "zip":
             if _level >= 1:
                 notes.append(f"{name}: archivio dentro un archivio, saltato")
@@ -181,7 +189,7 @@ def bytes_to_text(content: bytes, content_type: str, url: str, pdf_reader: PdfRe
         text = docx_to_text(content)
         return "docx", text, "" if text else "documento Word vuoto"
     if kind == "xlsx":
-        text = xlsx_to_text(content)
+        text = workbook_text(content)
         return "xlsx", text, "" if text else "foglio Excel senza testo"
     if kind == "zip":
         text, read, notes = archive_to_text(content, pdf_reader)

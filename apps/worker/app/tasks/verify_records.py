@@ -78,16 +78,18 @@ def html_to_text(html: str) -> str:
 
 
 def pdf_to_text(data: bytes) -> str:
+    """The text of a PDF with a form feed (\\f) between pages, so that a field can say on which page it was read."""
     try:
         from pypdf import PdfReader
     except ImportError:
         return ""
     try:
         reader = PdfReader(io.BytesIO(data))
-        parts = [(p.extract_text() or "") for p in reader.pages[:MAX_PDF_PAGES]]
+        parts = [" ".join((p.extract_text() or "").split()) for p in reader.pages[:MAX_PDF_PAGES]]
     except Exception:  # noqa: BLE001 - scanned/encrypted/corrupt PDF
         return ""
-    return " ".join(" ".join(parts).split())
+    text = "\f".join(parts)
+    return text if text.replace("\f", "").strip() else ""
 
 
 _ATTACH_TEXT = re.compile(

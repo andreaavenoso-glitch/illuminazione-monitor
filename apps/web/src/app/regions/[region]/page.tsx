@@ -314,7 +314,13 @@ export default function RegionPage() {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) {
-      setMessage(`Esportazione non riuscita (${res.status})`);
+      let why = "";
+      try {
+        why = ((await res.json()) as { detail?: string }).detail ?? "";
+      } catch {
+        /* no JSON body */
+      }
+      setMessage(why ? `Esportazione non riuscita: ${why}` : `Esportazione non riuscita (${res.status})`);
       return;
     }
     const url = URL.createObjectURL(await res.blob());

@@ -735,14 +735,14 @@ async def record_email(
 async def record_slides(
     region: str,
     record_id: UUID,
+    generica: bool = Query(False, description="Standard presentation instead of the A2A model (only if asked)"),
     _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ):
     """The standard presentation (PPTX) of this opportunity, built from what the app knows."""
     from app.core.config import get_settings
-    from app.services.gate_deck import GateConfig, build_gate, gate_filename, is_gate_template
+    from app.services.gate_deck import NO_MODEL, GateConfig, build_gate, find_gate_template, gate_filename
     from app.services.slide_deck import build_deck, deck_filename
-    from pptx import Presentation
 
     region = _canonical(region)
     rec = await session.get(ProcurementRecord, record_id)
@@ -774,15 +774,18 @@ async def record_slides(
         ],
         "pec": pec, "today": today,
     }
-    template = cfg.ppt_template_path or None
-    if template and is_gate_template(Presentation(template)):
+    template = find_gate_template(cfg.ppt_template_path or None)
+    if template:
         data = build_gate(payload, template, GateConfig(
             citta=cfg.ppt_citta, autore=cfg.ppt_autore,
             resp_commerciale=cfg.ppt_resp_commerciale, resp_tecnico=cfg.ppt_resp_tecnico))
         filename = gate_filename(rec.ente, today)
-    else:
-        data = build_deck(payload, template=template)
+    elif generica:
+        data = build_deck(payload)
         filename = deck_filename(rec.ente, today)
+    else:
+        # the sheet must correspond to the A2A document: no other design is produced without being asked
+        raise HTTPException(status_code=409, detail=NO_MODEL)
     await _stamp(session, rec.id, "sintesi_il")
     return Response(
         content=data,
