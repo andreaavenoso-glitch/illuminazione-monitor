@@ -295,10 +295,34 @@ async def _fetch_with_playwright(
 FAILURES: Counter = Counter()
 
 
+# Hosts that have answered at least once in this process: when one of them fails, it is probably a hiccup.
+_HOST_OK: set[str] = set()
+RETRY_PAUSE = 2.0
+_PERMANENT = ("http_403", "http_404", "http_401", "http_410", "ssl", "dns")
+
+
+def _worth_retry(netloc: str, error: str | None) -> bool:
+    """One more try only for what may be momentary (timeout, connection, 5xx, empty page) and only on a host
+    that works or is not known to fail: platforms that always reset our connections would just cost double."""
+    if error and (error in _PERMANENT or error.startswith("http_4") and error != "http_429"):
+        return False
+    if netloc in _HOST_OK:
+        return True
+    return sum(n for (h, _), n in FAILURES.items() if h == netloc) < 2
+
+
 async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:
+    import asyncio
     from urllib.parse import urlsplit
 
+    netloc = urlsplit(url).netloc
     res = await _adaptive_fetch_result_impl(url, **kwargs)
-    if not res.text:
-        FAILURES[(urlsplit(url).netloc, res.error or "vuota")] += 1
+    if not res.text and _worth_retry(netloc, res.error):
+        await asyncio.sleep(RETRY_PAUSE)
+        log.info("adaptive_fetch.retry", url=url, error=res.error)
+        res = await _adaptive_fetch_result_impl(url, **kwargs)
+    if res.text:
+        _HOST_OK.add(netloc)
+    else:
+        FAILURES[(netloc, res.error or "vuota")] += 1
     return res
