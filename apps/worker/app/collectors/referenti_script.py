@@ -115,6 +115,60 @@ def _context_text(a: Any) -> str:
     return ""
 
 
+_CARD_ROLE = re.compile(r"\b(vice ?sindaco|sindac[oa]|assessor[ea]|consigliere|consigliera|consigliere comunale)\b", re.I)
+_PERSON_LINK_HREF = re.compile(r"persone|persona|scheda|amministrator|politic|/people/|/person/", re.I)
+
+
+def card_text(a: Any) -> str:
+    """The text of the card a link sits in: climb until a role word shows up (max 4 levels, ≤260 chars)."""
+    node, best = a, ""
+    for _ in range(4):
+        node = node.parent
+        if node is None:
+            break
+        txt = " ".join(node.get_text(" ", strip=True).split())
+        if len(txt) > 260:
+            break
+        best = txt
+        if _CARD_ROLE.search(txt):
+            break
+    return best
+
+
+def _card_role(ctx: str) -> str | None:
+    m = _CARD_ROLE.search(ctx)
+    if not m:
+        return None
+    w = m.group(1).lower().replace(" ", "")
+    if w.startswith("consigli"):
+        return "consigliere"
+    if w == "vicesindaco":
+        return "assessore"
+    return "sindaco" if w.startswith("sindac") else "assessore"
+
+
+def people_from_cards(raw: str | None) -> list[dict[str, Any]]:
+    """Name + role from the cards of an elenco page: <a>Mario Rossi</a> with "Sindaco" / "Assessore ..." in the
+    same card. Consiglieri are left out; checked afterwards on the page text like every other person."""
+    if not raw:
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for a in BeautifulSoup(raw, "lxml").find_all("a", href=True):
+        text = " ".join(a.get_text(" ", strip=True).split())
+        bare = re.sub(r"(?i)\b(sindaco|sindaca|assessore|assessora|vicesindaco|dott\.?|dr\.?|ing\.?|arch\.?|avv\.?|geom\.?)\b", "", text)
+        bare = " ".join(bare.split())
+        if not (_PERSON_LINK_HREF.search(a["href"]) or _title_case(bare)) or not looks_like_name(bare) or not _title_case(bare):
+            continue
+        ctx = card_text(a)
+        ruolo = _card_role(ctx)
+        if ruolo not in ("sindaco", "assessore") or bare.lower() in seen:
+            continue
+        seen.add(bare.lower())
+        out.append({"nome": bare, "ruolo": ruolo, "qualifica": ctx[:120], "email": None, "telefono": None, "citazione": ctx[:200]})
+    return out
+
+
 def score_link(text: str, href: str, person_ok: bool = False) -> tuple[int, set[str]]:
     """How promising a link is on the way to the people, and what kind of page it leads to. A link whose text
     merely LOOKS like a name ("Animali Domestici") is a person's page only when it is listed on a giunta /
@@ -148,6 +202,9 @@ def menu_links(raw: str, base: str, parent_tags: set[str] | None = None) -> list
         sc, tags = score_link(text, a["href"].strip(), person_ok)
         if sc <= 0:
             continue
+        if "scheda" in tags:  # on an elenco: sindaco / assessori first, consiglieri last
+            role = _card_role(card_text(a))
+            sc = 60 if role in ("sindaco", "assessore") else (5 if role == "consigliere" else sc)
         url = safe_join(base, a["href"].strip())
         if not url:
             continue
@@ -197,7 +254,7 @@ def people_from_pages(pages: list[Page], today: date, elezione: date | None) -> 
     rules decide verificato / da_confermare."""
     out: list[tuple[dict[str, Any], str]] = []
     for pg in pages:
-        for prop in extract_people_by_rules(pg.text):
+        for prop in extract_people_by_rules(pg.text) + people_from_cards(pg.raw):
             chk = verify_person(prop, pg.text)
             if not chk:
                 continue

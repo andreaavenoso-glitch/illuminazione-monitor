@@ -145,3 +145,17 @@ def test_generic_link_uses_card_title_and_menu_words_are_not_names():
     assert "giunta" in out["https://c.it/it/page/x1"][1] and "giunta" in out["https://c.it/it/page/x2"][1]
     assert "https://c.it/it/legal_notices" not in out and "https://c.it/it/page/fb" not in out
     assert "scheda" in out["https://c.it/it/page/m"][1]
+
+
+def test_cards_give_name_and_role_and_skip_consiglieri():
+    from app.collectors.referenti_script import menu_links, people_from_cards
+
+    html = (
+        '<ul><li><a href="/it/persone/rossi-mario">Mario Rossi</a><span>Sindaco</span></li>'
+        '<li><a href="/it/persone/bianchi-anna">Anna Bianchi</a><span>Assessore ai Lavori Pubblici</span></li>'
+        '<li><a href="/it/persone/verdi-luca">Luca Verdi</a><span>Consigliere comunale</span></li></ul>'
+    )
+    names = {(p["nome"], p["ruolo"]) for p in people_from_cards(html)}
+    assert names == {("Mario Rossi", "sindaco"), ("Anna Bianchi", "assessore")}
+    prio = {u.rsplit("/", 1)[-1]: sc for sc, u, _, _ in menu_links(html, "https://c.it/it/page/politici", {"giunta"})}
+    assert prio["rossi-mario"] > prio["verdi-luca"] and prio["bianchi-anna"] > prio["verdi-luca"]
