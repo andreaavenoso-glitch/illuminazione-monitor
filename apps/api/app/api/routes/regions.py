@@ -99,6 +99,31 @@ def _sintesi(ente: str, people: list[dict]) -> dict:
     return {"affidabilita_pct": pct, "etichetta": label, "azione": azione(people), "stampa_url": press_search_url(ente)}
 
 
+def _referenti_table(records, da_verificare, ref_by_ente, ricerche, pec_by_ente) -> list[dict]:
+    """One row per comune that has a notice (or a search done): sindaco, assessore, tecnico, PEC."""
+    enti = {r["ente"] for r in records} | {r["ente"] for r in da_verificare} | set(ref_by_ente)
+    rows = []
+    for ente in sorted(enti):
+        ppl = ref_by_ente.get(ente, [])
+        best: dict[str, list[dict]] = {}
+        for p in ppl:
+            best.setdefault(p["ruolo"], []).append(p)
+        s = _sintesi(ente, [p for p in ppl if p["ruolo"] != "ente"])
+        rows.append({
+            "ente": ente,
+            "sindaco": best.get("sindaco", []),
+            "assessore": best.get("assessore", []),
+            "tecnico": best.get("responsabile_tecnico", []) + best.get("rup", []),
+            "pec": pec_by_ente.get(ente) or next((p["email"] for p in best.get("ente", []) if p.get("email")), None),
+            "affidabilita_pct": s["affidabilita_pct"], "etichetta": s["etichetta"], "azione": s["azione"],
+            "stampa_url": s["stampa_url"],
+            "cercato": ente in ricerche,
+            "passi_ok": (ricerche.get(ente) or {}).get("passi_ok"),
+            "mandato_scadenza": (ricerche.get(ente) or {}).get("mandato_scadenza"),
+        })
+    return rows
+
+
 def _dedupe(records: list) -> list:
     """One record per act: the same determina listed on the albo, the transparency
     page and the news feed counts once. Prefers the copy with a deadline, then the
@@ -286,6 +311,10 @@ async def region_detail(
         }
         for r in (await session.execute(select(RicercaReferenti).where(RicercaReferenti.regione == region))).scalars().all()
     }
+    pec_by_ente = {
+        e.name: e.pec
+        for e in (await session.execute(select(Entity).where(Entity.region == region, Entity.pec.is_not(None)))).scalars().all()
+    }
     records = []
     da_verificare: list[dict] = []
     hidden = 0
@@ -333,6 +362,7 @@ async def region_detail(
         "last_digest_at": rs.last_digest_at if rs else None,
         "scadute_nascoste": 0 if scadute else hidden,
         "da_verificare": da_verificare,
+        "referenti_comuni": _referenti_table(records, da_verificare, ref_by_ente, ricerche, pec_by_ente),
         "ultimo_scan": None if last_scan is None else {
             "status": last_scan.status, "errore": last_scan.error_message,
             "at": last_scan.started_at, "trovati": last_scan.records_found,
@@ -550,6 +580,26 @@ async def find_referenti_endpoint(
     if rec is None or normalize_region(rec.regione) != region:
         raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
     return {"status": "dispatched", "ente": rec.ente, "task_id": dispatch_find_referenti(record_id)}
+
+
+@router.post("/{region}/referenti/ente")
+async def find_referenti_for_ente(
+    region: str, ente: str = Query(..., min_length=3), _: User = Depends(require_role("admin"))
+) -> dict:
+    """Referenti of one comune, without needing one of its notices."""
+    from app.services.admin_service import dispatch_find_referenti_ente
+
+    region = _canonical(region)
+    return {"status": "dispatched", "ente": ente, "task_id": dispatch_find_referenti_ente(ente, region)}
+
+
+@router.post("/{region}/referenti/run")
+async def find_referenti_for_region(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    """Referenti of every comune of the region that has a notice (free in the default script mode)."""
+    from app.services.admin_service import dispatch_find_referenti_region
+
+    region = _canonical(region)
+    return {"status": "dispatched", "region": region, "task_id": dispatch_find_referenti_region(region)}
 
 
 @router.post("/{region}/process")

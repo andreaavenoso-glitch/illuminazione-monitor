@@ -219,3 +219,25 @@ def test_web_search_is_billed_per_search():
     )
     row = usage_row(u, model="claude-sonnet-5-5", purpose="referenti_agent", label="x")
     assert abs(row["cost_usd"] - (1000 * 2e-6 + 100 * 10e-6 + 5 * 0.01)) < 1e-6
+
+
+def test_referenti_table_groups_people_by_role_and_adds_pec():
+    from app.api.routes.regions import _referenti_table
+
+    p = lambda ruolo, nome, stato="verificato", email=None: {  # noqa: E731
+        "ruolo": ruolo, "nome": nome, "stato": stato, "email": email, "telefono": None,
+        "fonte_url": "https://c.it", "qualifica": None, "motivo": None, "citazione": None,
+    }
+    people = {
+        "Comune di A": [p("sindaco", "Mario Rossi"), p("assessore", "Giulia Bianchi"),
+                        p("responsabile_tecnico", "Paolo Neri"), p("rup", "Anna Gialli")],
+        "Comune di B": [p("ente", "PEC dell'ente", email="b@pec.it")],
+    }
+    rows = _referenti_table([{"ente": "Comune di A"}, {"ente": "Comune di C"}], [], people, {"Comune di A": {"passi_ok": 9}}, {"Comune di C": "c@pec.it"})
+    by = {r["ente"]: r for r in rows}
+    assert set(by) == {"Comune di A", "Comune di B", "Comune di C"}
+    a = by["Comune di A"]
+    assert [x["nome"] for x in a["sindaco"]] == ["Mario Rossi"] and a["azione"] == "Invia"
+    assert [x["nome"] for x in a["tecnico"]] == ["Paolo Neri", "Anna Gialli"] and a["passi_ok"] == 9 and a["cercato"]
+    assert by["Comune di C"]["pec"] == "c@pec.it" and by["Comune di C"]["azione"] == "Da cercare" and not by["Comune di C"]["cercato"]
+    assert by["Comune di B"]["pec"] == "b@pec.it"

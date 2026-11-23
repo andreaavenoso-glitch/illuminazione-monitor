@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { ClaudeStatusBanner } from "@/components/ClaudeStatusBanner";
 import { MenuItem, RegionTabs, type TabDef } from "@/components/RegionTabs";
+import { ReferentiTable } from "@/components/ReferentiTable";
 import { ScanView } from "@/components/ScanView";
 import { getToken, getUser, hasRole } from "@/lib/auth";
 import {
@@ -17,9 +18,11 @@ import {
   SERVIZIO_LABEL,
   type RegionDetail,
   RUOLO_LABEL,
+  type Referente,
+  type ReferentiRiga,
 } from "@/lib/regions";
 
-type Tab = Categoria | "siti" | "scan" | "verifica";
+type Tab = Categoria | "siti" | "scan" | "verifica" | "referenti";
 
 const ERROR_LABELS: Record<string, string> = {
   http_404: "pagina non trovata (404)",
@@ -141,6 +144,51 @@ export default function RegionPage() {
     },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
+  const trackTask = async (taskId: string, label: string) => {
+    for (let i = 0; i < 2400; i++) {
+      await new Promise((r) => setTimeout(r, 4000));
+      try {
+        const st = await api.get<{ status: string; result?: { trovati?: number; error?: string; enti?: number; con_sindaco?: number }; error?: string }>(
+          `/admin/task-status/${taskId}`,
+        );
+        if (st.status === "SUCCESS") {
+          const r = st.result ?? {};
+          setMessage(
+            r.error
+              ? `${label}: ${r.error}`
+              : r.enti !== undefined
+                ? `${label}: cercati ${r.enti} comuni, con almeno un nome trovato: ${r.con_sindaco ?? 0}.`
+                : `${label}: trovati ${r.trovati ?? 0} nomi.`,
+          );
+          qc.invalidateQueries({ queryKey: ["region", region] });
+          return;
+        }
+        if (st.status === "FAILURE") {
+          setMessage(`${label} fallita: ${(st.error ?? "errore").slice(0, 200)}`);
+          return;
+        }
+      } catch {
+        /* keep waiting */
+      }
+    }
+  };
+  const referentiEnte = useMutation({
+    mutationFn: (ente: string) =>
+      api.post<{ task_id: string }>(`/regions/${encodeURIComponent(region)}/referenti/ente?ente=${encodeURIComponent(ente)}`),
+    onSuccess: (d, ente) => {
+      setMessage(`Ricerca referenti di ${ente} avviata…`);
+      void trackTask(d.task_id, `Referenti di ${ente}`);
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
+  const referentiRegione = useMutation({
+    mutationFn: () => api.post<{ task_id: string }>(`/regions/${encodeURIComponent(region)}/referenti/run`),
+    onSuccess: (d) => {
+      setMessage("Ricerca dei referenti per tutti i comuni con avvisi avviata (gratuita, circa 1-2 minuti a comune). Puoi lasciare la pagina.");
+      void trackTask(d.task_id, "Referenti della regione");
+    },
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
   const digest = useMutation({
     mutationFn: () => api.post(`/regions/${encodeURIComponent(region)}/send-digest`),
     onSuccess: () =>
@@ -181,6 +229,7 @@ export default function RegionPage() {
     { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: byCat("pre_gara").length, group: "opportunita", tone: "sky" },
     { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: byCat("manifestazione_interesse").length, group: "opportunita", tone: "violet" },
     { key: "gara", label: CATEGORIA_LABEL.gara, n: byCat("gara").length, group: "opportunita", tone: "emerald" },
+    { key: "referenti", label: "Referenti", n: data.referenti_comuni?.length ?? 0, group: "lavoro", tone: "violet" },
     { key: "verifica", label: "Da verificare", n: data.da_verificare?.length ?? 0, group: "lavoro", tone: "amber" },
     { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length, group: "lavoro", tone: "neutral" },
     { key: "scan", label: "Raccolta", group: "lavoro", tone: "neutral" },
@@ -278,6 +327,14 @@ export default function RegionPage() {
 
       {tab === "scan" ? (
         <ScanView region={region} />
+      ) : tab === "referenti" ? (
+        <ReferentiTable
+          rows={data.referenti_comuni ?? []}
+          admin={admin}
+          busy={referentiEnte.isPending || referentiRegione.isPending}
+          onFind={(e) => referentiEnte.mutate(e)}
+          onFindAll={() => referentiRegione.mutate()}
+        />
       ) : tab === "verifica" ? (
         <ul className="space-y-3">
           <li className="text-xs text-neutral-500">

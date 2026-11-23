@@ -175,13 +175,23 @@ async def _save_ricerca(ente: str, regione: str | None, metodo: str, res: dict) 
 
 
 async def find_for_record(record_id: UUID) -> dict:
-    settings = get_worker_settings()
     async with SessionLocal() as session:
         rec = await session.get(ProcurementRecord, record_id)
         if rec is None:
             return {"error": "record non trovato"}
         ente, regione, link = rec.ente, rec.regione, rec.link_bando
-        roots = await _site_urls(session, ente, regione, link)
+    return await find_for_ente(ente, regione, link)
+
+
+async def find_for_ente(ente: str, regione: str | None, link: str | None = None) -> dict:
+    """Referenti of one ente. ``link`` (the notice's own page) is optional: without it the search starts
+    from the comune's site on the watchlist."""
+    settings = get_worker_settings()
+    async with SessionLocal() as session:
+        roots = await _site_urls(session, ente, regione, link or "")
+    if not roots and not link:
+        return {"ente": ente, "error": "nessun sito del comune in watchlist: impossibile cercare", "trovati": 0}
+    link = link or roots[0]
 
     claude_state.reset()  # a topped-up account is picked up again
     mode = (settings.referenti_mode or "script").lower()
@@ -195,7 +205,7 @@ async def find_for_record(record_id: UUID) -> dict:
             return await _script_fetch(u, settings)
         # the record's own document first (the RUP is often named there), then the comune's site
         res = await search_referenti(
-            ente, [*roots, link], fetch, _fetch_press, pec=pec, today=datetime.now(tz=UTC).date()
+            ente, [*roots, link] if link not in roots else roots, fetch, _fetch_press, pec=pec, today=datetime.now(tz=UTC).date()
         )
         people = list(res["people"])
         if pec:
@@ -284,3 +294,51 @@ async def find_for_record(record_id: UUID) -> dict:
 @celery_app.task(name="app.tasks.find_referenti.find_referenti", soft_time_limit=600, time_limit=660)
 def find_referenti(record_id: str) -> dict:
     return asyncio.run(find_for_record(UUID(record_id)))
+
+
+@celery_app.task(name="app.tasks.find_referenti.find_referenti_ente", soft_time_limit=600, time_limit=660)
+def find_referenti_ente(ente: str, regione: str | None = None) -> dict:
+    return asyncio.run(find_for_ente(ente, regione))
+
+
+async def _region_entes(region: str) -> list[str]:
+    """Enti of the region that have a notice worth acting on (any category, open or to verify)."""
+    from datetime import timedelta
+
+    from shared_models.categories import categorize_record
+
+    since = datetime.now(tz=UTC) - timedelta(days=365)
+    async with SessionLocal() as session:
+        recs = (
+            await session.execute(
+                select(ProcurementRecord).where(
+                    ProcurementRecord.regione == region,
+                    ProcurementRecord.master_record_id.is_(None),
+                    ProcurementRecord.first_seen_at >= since,
+                )
+            )
+        ).scalars().all()
+    return sorted({r.ente for r in recs if categorize_record(r) is not None})
+
+
+async def find_for_region(region: str) -> dict:
+    entes = await _region_entes(region)
+    out = {"region": region, "enti": len(entes), "con_sindaco": 0, "senza_sito": 0, "errori": 0}
+    for ente in entes:
+        try:
+            r = await asyncio.wait_for(find_for_ente(ente, region), timeout=300)
+        except Exception:  # noqa: BLE001
+            out["errori"] += 1
+            log.exception("find_referenti.region_failed ente=%s", ente)
+            continue
+        if r.get("error"):
+            out["senza_sito"] += 1
+        elif r.get("trovati"):
+            out["con_sindaco"] += 1
+        await asyncio.sleep(1)
+    return out
+
+
+@celery_app.task(name="app.tasks.find_referenti.find_referenti_region", soft_time_limit=4 * 3600, time_limit=4 * 3600 + 300)
+def find_referenti_region(region: str) -> dict:
+    return asyncio.run(find_for_region(region))

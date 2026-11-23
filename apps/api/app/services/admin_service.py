@@ -132,6 +132,16 @@ def dispatch_find_referenti(record_id: UUID) -> str:
     return str(result.id)
 
 
+def dispatch_find_referenti_ente(ente: str, region: str | None) -> str:
+    app = _celery_app()
+    return str(app.send_task("app.tasks.find_referenti.find_referenti_ente", kwargs={"ente": ente, "regione": region}).id)
+
+
+def dispatch_find_referenti_region(region: str) -> str:
+    app = _celery_app()
+    return str(app.send_task("app.tasks.find_referenti.find_referenti_region", kwargs={"region": region}).id)
+
+
 def dispatch_region_scan(
     region: str, limit: int | None = None, skip_scanned_hours: float | None = None
 ) -> dict[str, str]:

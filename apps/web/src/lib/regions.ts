@@ -141,8 +141,24 @@ export interface RecordDaVerificare {
   servizi: string[];
 }
 
+export interface ReferentiRiga {
+  ente: string;
+  sindaco: Referente[];
+  assessore: Referente[];
+  tecnico: Referente[];
+  pec: string | null;
+  affidabilita_pct: number;
+  etichetta: "certo" | "probabile" | "ipotetico";
+  azione: string;
+  stampa_url: string;
+  cercato: boolean;
+  passi_ok: number | null;
+  mandato_scadenza: string | null;
+}
+
 export interface RegionDetail {
   scadute_nascoste: number;
+  referenti_comuni?: ReferentiRiga[];
   da_verificare: RecordDaVerificare[];
   ultimo_scan: { status: string; errore: string | null; at: string; trovati: number } | null;
   region: string;
