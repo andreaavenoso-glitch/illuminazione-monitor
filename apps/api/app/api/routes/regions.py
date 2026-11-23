@@ -30,6 +30,7 @@ from shared_models.regions import REGIONS, normalize_region
 from shared_models.relevance import (
     APERTO,
     DA_VERIFICARE,
+    SCADUTO,
     act_signature,
     collapse_duplicates,
     record_state,
@@ -176,6 +177,7 @@ async def list_regions(
             "comuni": 0, "ok": 0, "failing": 0, "unchecked": 0,
             "regional_sites": src_count.get(r, 0),
             "pre_gara": 0, "manifestazione_interesse": 0, "gara": 0, "da_notificare": 0,
+            "confermate": 0, "da_verificare": 0,
         }
         for r in REGIONS
     }
@@ -188,10 +190,19 @@ async def list_regions(
     for rec in await _recent_records(session):
         r = normalize_region(rec.regione)
         cat = _record_category(rec)
-        if r and cat and _open(rec, cat, today):
-            per[r][cat] += 1
+        if not (r and cat):
+            continue
+        state, _ = _state(rec, cat, today)
+        if state == SCADUTO:
+            continue
+        # Every candidate counts (wide net); "confermate" says how many have a confirmed deadline / date.
+        per[r][cat] += 1
+        if state == APERTO:
+            per[r]["confermate"] += 1
             if rec.notified_at is None:
-                per[r]["da_notificare"] += 1
+                per[r]["da_notificare"] += 1  # e-mails only ever carry confirmed notices
+        else:
+            per[r]["da_verificare"] += 1
     # Active regions first, then alphabetical.
     return sorted(per.values(), key=lambda x: (not x["enabled"], x["region"]))
 
@@ -331,6 +342,7 @@ async def region_detail(
         state, no_date = _state(rec, cat, today)
         valid = state == APERTO
         if state == DA_VERIFICARE:
+            # the work queue of the "Da verificare" tab; the notice also stays in its category list, flagged
             da_verificare.append({
                 "id": str(rec.id), "categoria": cat, "ente": rec.ente, "descrizione": rec.descrizione,
                 "link": rec.link_bando, "first_seen_at": rec.first_seen_at,
@@ -338,12 +350,13 @@ async def region_detail(
                 "scadenza": rec.scadenza,
                 "servizi": [k for k in (rec.servizio or "").split(",") if k],
             })
-            continue
+            valid = True  # shown, but not confirmed
         if not valid:
             hidden += 1
             if not scadute:
                 continue
         records.append({
+            "confermato": state == APERTO,
             "scaduto": not valid,
             "data_non_verificata": no_date,
             "id": str(rec.id), "categoria": cat, "ente": rec.ente,
@@ -452,6 +465,7 @@ async def region_records_csv(
             "data_pubblicazione": rec.data_pubblicazione.date().isoformat() if rec.data_pubblicazione else "",
             "scadenza": rec.scadenza.date().isoformat() if rec.scadenza else "",
             "ancora_valido": "si" if _open(rec, cat, today) else "no",
+            "stato_verifica": {APERTO: "confermato", DA_VERIFICARE: "da verificare", SCADUTO: "scaduto"}[_state(rec, cat, today)[0]],
             "stato": rec.stato_procedurale, "atto_tipo": rec.atto_tipo or "", "link": rec.link_bando,
             "visto_il": rec.first_seen_at.date().isoformat() if rec.first_seen_at else "",
         })

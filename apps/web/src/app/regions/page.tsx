@@ -57,6 +57,7 @@ function RegionCard({ r, admin }: { r: RegionSummary; admin: boolean }) {
         />
         <div className="mt-1 flex justify-between text-[11px] text-neutral-500">
           <span>{n} opportunità</span>
+          <span>{r.confermate} confermate{r.da_verificare > 0 ? ` · ${r.da_verificare} da verificare` : ""}</span>
           {r.da_notificare > 0 && <span className="text-amber-600">{r.da_notificare} in attesa di email</span>}
         </div>
       </div>
@@ -120,7 +121,7 @@ export default function RegionsPage() {
       {error && <p className="text-sm text-red-600">Impossibile caricare le regioni.</p>}
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiTile label="Opportunità aperte" value={total} icon="bulb" tone="brand" />
+        <KpiTile label="Opportunità trovate" value={total} icon="bulb" tone="brand" hint={`${sum((r) => r.confermate)} confermate · ${sum((r) => r.da_verificare)} da verificare`} />
         <KpiTile label="Pre-gare" value={pre} icon="bolt" tone="sky" hint="segnali prima dell'avviso" />
         <KpiTile label="Manifestazioni di interesse" value={man} icon="hand" tone="violet" hint="con scadenza confermata" />
         <KpiTile label="Gare" value={gara} icon="flag" tone="emerald" hint="con scadenza confermata" />

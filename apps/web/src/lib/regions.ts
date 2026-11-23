@@ -20,6 +20,8 @@ export interface RegionSummary {
   manifestazione_interesse: number;
   gara: number;
   da_notificare: number;
+  confermate: number;
+  da_verificare: number;
 }
 
 export interface RegionComune {
@@ -114,6 +116,7 @@ export interface RegionRecord {
   notificato: boolean;
   score: number | null;
   scaduto: boolean;
+  confermato?: boolean;
   data_non_verificata?: boolean;
   servizi: string[];
   referenti: Referente[];

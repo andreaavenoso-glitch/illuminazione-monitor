@@ -58,6 +58,7 @@ export default function RegionPage() {
   const [draft, setDraft] = useState<{ id: string; oggetto: string; corpo: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [targeted, setTargeted] = useState(false);
+  const [onlyConfirmed, setOnlyConfirmed] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["region", region, showExpired],
@@ -291,12 +292,14 @@ export default function RegionPage() {
   if (isLoading) return <p className="text-sm text-neutral-500">Caricamento…</p>;
   if (error || !data) return <p className="text-sm text-red-600">Regione non trovata.</p>;
 
-  const byCat = (c: Categoria) => data.records.filter((r) => r.categoria === c);
+  const byCat = (c: Categoria) => data.records.filter((r) => r.categoria === c && (!onlyConfirmed || r.confermato !== false));
+  const confirmedIn = (c: Categoria) => data.records.filter((r) => r.categoria === c && r.confermato !== false).length;
+  const allIn = (c: Categoria) => data.records.filter((r) => r.categoria === c).length;
   const failing = data.comuni.filter((c) => c.stato === "failing").length;
   const tabs: TabDef<Tab>[] = [
-    { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: byCat("pre_gara").length, group: "opportunita", tone: "sky" },
-    { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: byCat("manifestazione_interesse").length, group: "opportunita", tone: "violet" },
-    { key: "gara", label: CATEGORIA_LABEL.gara, n: byCat("gara").length, group: "opportunita", tone: "emerald" },
+    { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: allIn("pre_gara"), group: "opportunita", tone: "sky" },
+    { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: allIn("manifestazione_interesse"), group: "opportunita", tone: "violet" },
+    { key: "gara", label: CATEGORIA_LABEL.gara, n: allIn("gara"), group: "opportunita", tone: "emerald" },
     { key: "referenti", label: "Referenti", n: (data.referenti_comuni ?? []).filter((r) => r.cercato).length, group: "lavoro", tone: "violet" },
     { key: "verifica", label: "Da verificare", n: data.da_verificare?.length ?? 0, group: "lavoro", tone: "amber" },
     { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length, group: "lavoro", tone: "neutral" },
@@ -414,10 +417,10 @@ export default function RegionPage() {
       </header>
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiTile label="Pre-gare" hint="segnali prima dell'avviso" value={byCat("pre_gara").length} icon="bolt" tone="sky" onClick={() => setTab("pre_gara")} active={tab === "pre_gara"} />
-        <KpiTile label="Manifestazioni di interesse" hint="con scadenza confermata" value={byCat("manifestazione_interesse").length} icon="hand" tone="violet"
+        <KpiTile label="Pre-gare" hint={`${confirmedIn("pre_gara")} con data confermata`} value={allIn("pre_gara")} icon="bolt" tone="sky" onClick={() => setTab("pre_gara")} active={tab === "pre_gara"} />
+        <KpiTile label="Manifestazioni di interesse" hint={`${confirmedIn("manifestazione_interesse")} con scadenza confermata`} value={allIn("manifestazione_interesse")} icon="hand" tone="violet"
           onClick={() => setTab("manifestazione_interesse")} active={tab === "manifestazione_interesse"} />
-        <KpiTile label="Gare" hint="con scadenza confermata" value={byCat("gara").length} icon="flag" tone="emerald" onClick={() => setTab("gara")} active={tab === "gara"} />
+        <KpiTile label="Gare" hint={`${confirmedIn("gara")} con scadenza confermata`} value={allIn("gara")} icon="flag" tone="emerald" onClick={() => setTab("gara")} active={tab === "gara"} />
         <KpiTile label="Da verificare" value={data.da_verificare?.length ?? 0} icon="alert" tone="amber"
           hint="senza scadenza confermata" onClick={() => setTab("verifica")} active={tab === "verifica"} />
       </section>
@@ -473,6 +476,16 @@ export default function RegionPage() {
         </ul>
       ) : tab !== "siti" ? (
         <ul className="space-y-3">
+          <li className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500">
+            <span>
+              Tutti i candidati trovati: quelli <b className="text-amber-700">da verificare</b> non hanno ancora la scadenza letta nel documento
+              (non partono nelle email finché non sono confermati).
+            </span>
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input type="checkbox" checked={onlyConfirmed} onChange={(e) => setOnlyConfirmed(e.target.checked)} />
+              solo confermati
+            </label>
+          </li>
           {data.scadute_nascoste > 0 && (
             <li className="text-xs text-neutral-500">
               {data.scadute_nascoste} avvisi con scadenza passata (o molto vecchi) nascosti.{" "}
@@ -501,6 +514,11 @@ export default function RegionPage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Countdown iso={r.scadenza} />
+                  {r.confermato === false ? (
+                    <span className="chip bg-amber-50 text-amber-700" title="Scadenza non ancora letta nel documento: usa Verifica ora">da verificare</span>
+                  ) : (
+                    <span className="chip bg-emerald-50 text-emerald-700"><Icon name="check" className="h-3.5 w-3.5" />confermato</span>
+                  )}
                   {r.scaduto && !r.scadenza && <span className="chip bg-red-50 text-red-700">molto vecchio</span>}
                   {r.data_non_verificata && <span className="chip bg-amber-50 text-amber-700">data non verificata</span>}
                   <span className={`chip ${r.notificato ? "bg-emerald-50 text-emerald-700" : "bg-neutral-100 text-neutral-500"}`}>

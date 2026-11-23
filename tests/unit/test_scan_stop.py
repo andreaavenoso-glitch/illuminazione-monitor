@@ -33,3 +33,16 @@ def test_stopped_is_a_known_status_in_the_progress_view():
         pages_read=0, pages_skipped=0, claude_calls=0, claude_errors=0, records_found=0, deepest=0, stopped_by=None,
     )
     assert scan_summary(run, [item], now)["status"] == "stopped"
+
+
+def test_automatic_verification_covers_only_gare_and_manifestazioni():
+    kw = {n.rsplit(".", 1)[-1]: k for n, k in region_scan_steps("Puglia")}
+    assert kw["verify_region_records"]["only_strict"] is True
+
+
+def test_crawl_is_wide_by_default():
+    from app.config import WorkerSettings
+
+    s = WorkerSettings()
+    assert s.crawl_max_pages >= 40 and s.crawl_max_depth >= 6 and s.crawl_time_budget_s >= 240
+    assert s.scan_item_timeout_s > s.crawl_time_budget_s  # the per-comune ceiling leaves room for Claude and details

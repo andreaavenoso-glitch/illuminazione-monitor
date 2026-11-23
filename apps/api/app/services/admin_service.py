@@ -120,7 +120,8 @@ def region_scan_steps(
         ("app.tasks.normalize_records.normalize_records", {}),
         ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
         # Last: open the link of every gara / manifestazione without a deadline.
-        ("app.tasks.verify_records.verify_region_records", {"region": region, "respect_stop": True}),
+        # automatic run: only gare and manifestazioni (where a false positive hurts); pre-gare on demand
+        ("app.tasks.verify_records.verify_region_records", {"region": region, "respect_stop": True, "only_strict": True}),
     ]
 
 

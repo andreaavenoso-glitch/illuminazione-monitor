@@ -184,7 +184,7 @@ async def _claude_deadline(text: str, url: str, settings: WorkerSettings) -> dat
         return None
 
 
-async def verify_region(region: str, *, limit: int = 200) -> dict[str, int]:
+async def verify_region(region: str, *, limit: int = 200, only_strict: bool = False) -> dict[str, int]:
     settings = get_worker_settings()
     today = today_utc()
     now = datetime.now(tz=UTC)
@@ -206,8 +206,8 @@ async def verify_region(region: str, *, limit: int = 200) -> dict[str, int]:
             cat = categorize_record(r)
             if cat is None:
                 continue
-            if cat not in STRICT_CATEGORIES and r.scadenza is not None:
-                continue  # pre-gara with a deadline: already dated
+            if cat not in STRICT_CATEGORIES and (r.scadenza is not None or only_strict):
+                continue  # pre-gara with a deadline is already dated; on the automatic run pre-gare are left to "Verifica ora"
             if r.verified_at is not None and (
                 r.verifica_esito != "non_trovata" or r.verified_at > now - timedelta(days=RECHECK_AFTER_DAYS)
             ):
@@ -248,9 +248,9 @@ async def verify_region(region: str, *, limit: int = 200) -> dict[str, int]:
 
 
 @celery_app.task(name="app.tasks.verify_records.verify_region_records", soft_time_limit=3600, time_limit=3700)
-def verify_region_records(region: str, respect_stop: bool = False) -> dict[str, int]:
+def verify_region_records(region: str, respect_stop: bool = False, only_strict: bool = False) -> dict[str, int]:
     from app.stop import region_stopped
 
     if respect_stop and asyncio.run(region_stopped(region)):  # chained after a collection the user stopped
         return {"checked": 0, "stopped": 1}
-    return asyncio.run(verify_region(region))
+    return asyncio.run(verify_region(region, only_strict=only_strict))

@@ -39,12 +39,13 @@ class WorkerSettings(BaseSettings):
     enabled_services: str = ""
 
     # Deep crawl of one comune's site (see app.collectors.crawler).
-    crawl_max_pages: int = 20
-    crawl_max_depth: int = 5
-    crawl_time_budget_s: float = 150.0
+    # Wide on purpose: depth and breadth are free (plain HTTP); Claude only sees pages that pass the gate.
+    crawl_max_pages: int = 40
+    crawl_max_depth: int = 6
+    crawl_time_budget_s: float = 240.0
     # Hard ceiling for ONE comune (fetch + crawl + Claude + detail pages): a hung
     # browser or API call must not keep the whole scan running for hours.
-    scan_item_timeout_s: float = 420.0
+    scan_item_timeout_s: float = 600.0
     # Pause between two requests to the same host, and comuni scanned at once.
     crawl_delay_s: float = 1.0
     scan_concurrency: int = 3

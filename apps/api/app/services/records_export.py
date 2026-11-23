@@ -6,7 +6,7 @@ import io
 
 COLUMNS = [
     "regione", "categoria", "servizi", "ente", "descrizione", "data_pubblicazione",
-    "scadenza", "ancora_valido", "stato", "atto_tipo", "link", "visto_il",
+    "scadenza", "ancora_valido", "stato_verifica", "stato", "atto_tipo", "link", "visto_il",
 ]
 
 
