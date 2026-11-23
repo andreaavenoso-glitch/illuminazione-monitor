@@ -89,7 +89,7 @@ async def _run(region: str | None = None) -> dict:
             for r in deduped:
                 cat = categorize_record(r)
                 if cat is None or record_state(
-                    cat, r.scadenza, r.data_pubblicazione, r.link_bando, r.verifica_esito
+                    cat, r.scadenza, r.data_pubblicazione, r.link_bando, r.verifica_esito, cig=r.cig
                 )[0] != APERTO:
                     continue
                 items.append((r, DigestItem(

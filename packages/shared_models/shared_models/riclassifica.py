@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 
 from shared_models.categories import GARA, MANIFESTAZIONE, PRE_GARA, categorize
+from shared_models.relevance import old_cig
 
 HEAD = 900
 RANK = {PRE_GARA: 0, MANIFESTAZIONE: 1, GARA: 2}
@@ -64,6 +65,23 @@ def verdetto_da_documenti(docs: list[tuple[str, str]]) -> Verdetto:
     if closed_by is not None:
         return Verdetto(None, closed_by, True, f"l'intestazione di «{closed_by}» è un esito, un'aggiudicazione o una revoca")
     return Verdetto(None, None, False, "")
+
+
+_EXECUTION = re.compile(
+    r"liquidazion\w+\s+(?:di\s+spesa|(?:della\s+|delle\s+)?fattur\w+|(?:del\s+)?canon\w+)|\d+\s*[ªa°]?\s*mensilit|"
+    r"canone\s+(?:del\s+)?mese|stato\s+avanzamento\s+lavori|\bs\.?a\.?l\.?\s+n",
+    re.IGNORECASE,
+)
+
+
+def contratto_in_corso(page_text: str | None, cig: str | None) -> str | None:
+    """Why a notice is the card of a contract already assigned and running (None if nothing says so): an old CIG, or
+    acts of payment (liquidazione of mensilità, canoni, fatture) listed in its own page."""
+    if old_cig(cig):
+        return f"il CIG {cig} è anteriore al 2024: contratto già assegnato"
+    if page_text and _EXECUTION.search(page_text):
+        return "la pagina elenca atti di liquidazione (mensilità, canoni, fatture): contratto già in esecuzione"
+    return None
 
 
 def is_higher(new: str | None, current: str | None) -> bool:

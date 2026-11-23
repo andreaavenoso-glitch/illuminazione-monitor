@@ -261,6 +261,13 @@ def _positions(window: str) -> list[tuple[str, date]]:
 APERTO, DA_VERIFICARE, SCADUTO = "aperto", "da_verificare", "scaduto"
 
 
+def old_cig(cig: str | None) -> bool:
+    """A CIG issued before 2024: those start with a digit (or Z, small awards); since 2024 the BDNCP codes start with
+    a letter (A.., B..). A tender or call carrying an old CIG belongs to a contract assigned years ago."""
+    c = (cig or "").strip().upper()
+    return len(c) == 10 and c[0] in "0123456789Z"
+
+
 def record_state(
     category: str | None,
     scadenza: date | datetime | None,
@@ -268,6 +275,7 @@ def record_state(
     url: str | None,
     verifica_esito: str | None,
     today: date | None = None,
+    cig: str | None = None,
 ) -> tuple[str, bool]:
     """(state, data_non_verificata). ``verifica_esito``: aperto | recente | chiuso |
     non_trovata | None (never read)."""
@@ -279,7 +287,7 @@ def record_state(
         if deadline is None:
             # a tender / call whose own address carries a year two or more back is long over (deadlines are weeks away)
             uy_old = url_year(url)
-            if uy_old is not None and uy_old < today.year - 1:
+            if (uy_old is not None and uy_old < today.year - 1) or old_cig(cig):
                 return SCADUTO, False
             return DA_VERIFICARE, False
         if deadline < today:

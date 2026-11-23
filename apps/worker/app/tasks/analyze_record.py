@@ -17,7 +17,7 @@ from app.tasks.verify_records import _fetch_plain
 from shared_models import AnalisiRecord, Document, ProcurementRecord
 from shared_models.categories import categorize_record
 from shared_models.pregara import pregara_tipi
-from shared_models.riclassifica import is_higher, verdetto_da_documenti
+from shared_models.riclassifica import contratto_in_corso, is_higher, verdetto_da_documenti
 from sqlalchemy import select
 
 log = logging.getLogger(__name__)
@@ -26,13 +26,16 @@ log = logging.getLogger(__name__)
 CATEGORIA_LABEL = {"manifestazione_interesse": "manifestazione di interesse", "gara": "gara", "pre_gara": "pre-gara"}
 
 
-def applica_analisi(rec, attached: list[tuple[str, str]], fields: dict, profondita: str, today: date, now: datetime) -> list[str]:
+def applica_analisi(
+    rec, attached: list[tuple[str, str]], fields: dict, profondita: str, today: date, now: datetime, page_text: str = ""
+) -> list[str]:
     """What the analysis of the documents changes on the notice itself (pure on ``rec``, tested without a database):
 
     * the category: a heading that is a call for interest or a tender moves a pre-gara to its box (never down);
     * the deadline read in the documents: written on the notice (a deep analysis replaces the one of the listing,
       a base one only fills it in), so that the notice is confirmed (open) or expired (noise gone);
-    * an outcome / award / revocation: the notice is closed.
+    * an outcome / award / revocation, or the card of a contract already running (old CIG, acts of liquidation in its
+      page): the notice is closed, unless the documents state an open deadline.
     Returns the notes, in words, of what changed.
     """
     notes: list[str] = []
@@ -46,6 +49,13 @@ def applica_analisi(rec, attached: list[tuple[str, str]], fields: dict, profondi
         rec.verifica_nota = f"Chiuso dall'analisi dei documenti: {v.motivo}"
         return notes + [rec.verifica_nota]
     found = fields.get("scadenza")
+    in_corso = contratto_in_corso(page_text, (fields.get("cig") or {}).get("valore") or rec.cig)
+    category = rec.categoria_analisi or current
+    open_deadline = bool(found) and date.fromisoformat(str(found["valore"])[:10]) >= today
+    if in_corso and category in ("manifestazione_interesse", "gara") and not open_deadline:
+        rec.verifica_esito, rec.verified_at = "chiuso", now
+        rec.verifica_nota = f"Chiuso dall'analisi: {in_corso}"
+        return notes + [rec.verifica_nota]
     if not found:
         if notes or (current in ("manifestazione_interesse", "gara") or rec.categoria_analisi):
             rec.verifica_nota = "Scadenza non trovata nei documenti letti" + (f" ({profondita})" if profondita else "")
@@ -117,6 +127,7 @@ async def analyze(record_id: UUID, profondita: str = "base") -> dict:
         rec = await s.get(ProcurementRecord, record_id)
         changes = applica_analisi(
             rec, [(d.name, d.text) for d in readable if d.depth > 0], fields, profondita, today, datetime.now(tz=UTC),
+            page_text=next((d.text for d in readable if d.depth == 0), ""),
         ) if rec is not None and readable else []
         await s.commit()
     log.info("analyze_record ente=%s livello=%s documenti=%d letti=%d campi=%d stop=%s",

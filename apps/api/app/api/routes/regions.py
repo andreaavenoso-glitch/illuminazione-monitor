@@ -91,7 +91,7 @@ def _record_category(r: ProcurementRecord) -> str | None:
 
 
 def _state(r: ProcurementRecord, cat: str | None, today) -> tuple[str, bool]:
-    return record_state(cat, r.scadenza, r.data_pubblicazione, r.link_bando, r.verifica_esito, today)
+    return record_state(cat, r.scadenza, r.data_pubblicazione, r.link_bando, r.verifica_esito, today, r.cig)
 
 
 def _open(r: ProcurementRecord, cat: str | None, today) -> bool:

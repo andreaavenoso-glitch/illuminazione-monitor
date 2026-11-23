@@ -21,7 +21,7 @@ def rec(**kw):
     base = dict(
         descrizione="Allegati tecnici e avviso", tipologia_gara_procedura=None, stato_procedurale="Pubblicato",
         flag_pre_gara=None, atto_tipo=None, ente="Comune di Scanzano Jonico", scadenza=None, servizio="illuminazione_pubblica",
-        categoria_analisi=None, verifica_esito=None, verified_at=None, verifica_nota=None,
+        categoria_analisi=None, verifica_esito=None, verified_at=None, verifica_nota=None, cig=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -108,3 +108,58 @@ def test_the_title_block_stops_at_the_premises():
     assert "revoca" not in title_block(t).lower() and title_block(t).endswith("finanza di progetto.")
     assert "Considerato" not in title_block("Comune di X Avviso pubblico esplorativo per illuminazione pubblica Considerato che il comune ha deciso")
     assert title_block(None) == ""
+
+
+TOLVE_PAGE = (
+    "CIG: 79706368E6 BDNCP: https://dati.anticorruzione.it/superset/dashboard/dettaglio_cig/?cig=79706368E6 Atti "
+    "DETERMINAZIONE n. 253 reg. gen. n. 528 del 2026 Unità organizzativa: AREA TECNICA Appalto di concessione del servizio di "
+    "pubblica illuminazione, comprensivo della riqualificazione energetica. Liquidazione di spesa 7a-8a-9a-10a e 11a mensilità."
+)
+
+
+def test_old_cig_and_new_cig():
+    from shared_models.relevance import old_cig
+
+    for cig in ("79706368E6", "8123456789", "Z1234567AB"):
+        assert old_cig(cig), cig
+    for cig in ("B1234567AB", "A03B26CC31", "BB366E64FD", None, "", "123"):
+        assert not old_cig(cig), cig
+
+
+def test_a_gara_with_an_old_cig_and_no_deadline_is_over():
+    from shared_models.relevance import SCADUTO, record_state
+
+    assert record_state("gara", None, None, "https://c.it/x", None, TODAY, "79706368E6")[0] == SCADUTO
+    assert record_state("gara", None, None, "https://c.it/x", None, TODAY, "B1234567AB")[0] == "da_verificare"
+    # an open deadline always wins
+    assert record_state("gara", date(2026, 12, 20), None, "https://c.it/x", "aperto", TODAY, "79706368E6")[0] == "aperto"
+
+
+def test_contract_in_execution_is_recognised():
+    from shared_models.riclassifica import contratto_in_corso
+
+    assert "anteriore al 2024" in contratto_in_corso("testo", "79706368E6")
+    assert "liquidazione" in contratto_in_corso(TOLVE_PAGE, "B1234567AB")
+    assert contratto_in_corso("Avviso pubblico per proposte di finanza di progetto", "B1234567AB") is None
+    assert contratto_in_corso(None, None) is None
+
+
+def test_the_card_of_a_running_contract_is_closed_by_the_analysis():
+    r = rec(descrizione="Appalto di concessione del servizio di pubblica illuminazione", atto_tipo="bando_gara", cig="79706368E6")
+    assert categorize_record(r) == "gara"
+    applica_analisi(r, [], {"cig": {"valore": "79706368E6", "fonte": "pagina"}}, "approfondita", TODAY, NOW, page_text=TOLVE_PAGE)
+    assert r.verifica_esito == "chiuso" and "anteriore al 2024" in r.verifica_nota
+
+
+def test_an_open_deadline_in_the_documents_beats_the_old_cig():
+    r = rec(descrizione="Manifestazione di interesse illuminazione pubblica", cig="79706368E6")
+    applica_analisi(r, [], {"cig": {"valore": "79706368E6", "fonte": "x"}, "scadenza": {"valore": "2026-12-20", "fonte": "avviso.pdf"}},
+                    "approfondita", TODAY, NOW, page_text=TOLVE_PAGE)
+    assert r.verifica_esito == "aperto"
+
+
+def test_a_pre_gara_is_not_closed_for_mentioning_the_running_contract():
+    r = rec(descrizione="Delibera di Giunta: atto di indirizzo per il nuovo servizio di illuminazione pubblica", cig="79706368E6")
+    assert categorize_record(r) == "pre_gara"
+    applica_analisi(r, [], {"cig": {"valore": "79706368E6", "fonte": "x"}}, "base", TODAY, NOW, page_text=TOLVE_PAGE)
+    assert r.verifica_esito != "chiuso"
