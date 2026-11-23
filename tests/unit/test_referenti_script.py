@@ -40,7 +40,7 @@ async def no_press(_u: str) -> str:
 
 def test_link_scoring_prefers_people_pages():
     assert score_link("Organi politici", "/a")[0] >= 30
-    assert score_link("Mario Rossi", "/s/1")[1] == {"scheda"}
+    assert score_link("Mario Rossi", "/s/1", person_ok=True)[1] == {"scheda"}  # on a giunta page
     assert score_link("Sindaco Mario Rossi", "/s/1")[0] == 40
     assert score_link("Meteo", "/meteo")[0] == 0
     assert score_link("Giunta", "/giunta.pdf")[0] == 0
@@ -101,3 +101,34 @@ def test_press_signals_downgrade_the_named_person():
     assert people[0]["stato"] == "da_confermare" and "stampa del 03/11/2026" in people[0]["motivo"]
     assert people[1]["stato"] == "verificato"
     assert parse_press("non xml", TODAY) == []
+
+
+def test_two_word_menu_entries_are_not_people_unless_on_a_giunta_page():
+    from app.collectors.referenti_script import menu_links, score_link
+
+    # real case: "Animali Domestici" under "topics" ate the page budget as a "person"
+    assert score_link("Animali Domestici", "/it/topics/animale-domestico")[0] == 0
+    assert score_link("Mario Rossi", "/it/page/53648")[0] == 0
+    assert score_link("Mario Rossi", "/it/page/53648", person_ok=True)[1] == {"scheda"}
+    assert "scheda" in score_link("Sindaco Mario Rossi", "/x")[1]  # says so itself
+    assert "scheda" in score_link("Mario Rossi", "/amministratori/mario-rossi")[1]  # so does the address
+    html = '<a href="/p/1">Mario Rossi</a><a href="/p/2">Animali Domestici</a>'
+    on_giunta = {t for _, _, t, _ in menu_links(html, "https://c.it/giunta", {"giunta"})}
+    assert "Mario Rossi" in on_giunta
+    assert menu_links(html, "https://c.it/home", set()) == []
+
+
+def test_vendor_hosted_trasparenza_is_followed_but_other_hosts_are_not():
+    from app.collectors.referenti_script import menu_links
+
+    html = ('<a href="https://dgegovpa.it/Arluno/amministrazionetrasparente/Organi">Organi politici</a>'
+            '<a href="https://www.altro-sito.it/organi">Organi politici</a>')
+    urls = [u for _, u, _, _ in menu_links(html, "https://www.comune.arluno.mi.it/", set())]
+    assert urls == ["https://dgegovpa.it/Arluno/amministrazionetrasparente/Organi"]
+
+
+def test_votive_lighting_is_not_public_lighting():
+    from shared_models.categories import categorize
+
+    assert categorize(stato_procedurale=None, text="Tariffe illuminazione votiva cimitero anno 2023") is None
+    assert categorize(stato_procedurale=None, text="Avviso cittadini servizio illuminazione votiva del cimitero") is None

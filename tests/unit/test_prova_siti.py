@@ -78,3 +78,11 @@ def test_campione_unknown_sizes_do_not_drown_the_known_ones(tmp_path):
     p = tmp_path / "f.csv"
     p.write_text('"id",comune,provincia,fascia_pop_stimata\n1,Romano di Lombardia,BG,L\n2,Arluno,MI,M\n3,X,MI,??\n', encoding="utf-8")
     assert load_fasce(str(p)) == {"romano di lombardia": "L", "arluno": "M"}
+
+
+def test_unreachable_hosts_are_reported():
+    from infra.scripts.prova_siti import limitations
+
+    out = limitations([{"ente": "A", "pages": 3, "checklist": [{"passo": "x", "ok": True}]}],
+                      {("www.halleyweb.com", "reset"): 5, ("albo.apkappa.it", "timeout"): 2})
+    assert any("halleyweb.com (5)" in x and "apkappa.it (2)" in x for x in out)

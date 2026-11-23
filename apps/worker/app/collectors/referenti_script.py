@@ -39,7 +39,7 @@ MAX_DEPTH = 3
 _LINKS: tuple[tuple[re.Pattern[str], int, str], ...] = tuple(
     (re.compile(p, re.I), w, t)
     for p, w, t in (
-        (r"organi (di governo|politici|di indirizzo)|amministratori|giunta|sindaco|assessor", 30, "giunta"),
+        (r"organi (di governo|politici|di indirizzo|istituzionali)|amministratori|amministrazione comunale|giunta|sindaco|assessor|politici", 30, "giunta"),
         (r"titolari di incarichi|incarichi politici|organizzazione|organigramma|articolazione degli uffici", 25, "organizzazione"),
         (r"lavori pubblici|area tecnica|settore tecnico|ufficio tecnico|uffici|manutenzion|patrimonio|ll\.? ?pp", 25, "uffici"),
         (r"personale|dirigenti|posizioni organizzative|responsabili|incarichi dirigenziali", 15, "personale"),
@@ -78,8 +78,18 @@ class Found:
     failed: list[str] = field(default_factory=list)
 
 
-def score_link(text: str, href: str) -> tuple[int, set[str]]:
-    """How promising a link is on the way to the people, and what kind of page it leads to."""
+_ROLE_IN_TEXT = re.compile(r"\b(sindac[oa]|assessor[ei]a?|vicesindaco|responsabile|dirigente)\b", re.I)
+_PERSON_HREF = re.compile(r"sindaco|assessor|amministrator|giunta|persona|scheda|organi|politic", re.I)
+# Platforms that host the Amministrazione Trasparente / albo of many comuni: a link to them is still "the site".
+VENDOR_HOSTS = ("dgegovpa.it", "trasparenza-valutazione-merito.it", "halleyweb", "hypersicapp", "apkappa", "studiok",
+                "municipiumapp", "wlp", "paleo", "cloud.comune")
+
+
+def score_link(text: str, href: str, person_ok: bool = False) -> tuple[int, set[str]]:
+    """How promising a link is on the way to the people, and what kind of page it leads to. A link whose text
+    merely LOOKS like a name ("Animali Domestici") is a person's page only when it is listed on a giunta /
+    organi page, or says so itself (role word, "sindaco" in the address): otherwise every two-word menu entry
+    would eat the page budget."""
     t = " ".join(text.lower().split())
     if not t or len(t) > 70 or href.startswith(("#", "mailto:", "tel:", "javascript:")):
         return 0, set()
@@ -92,21 +102,25 @@ def score_link(text: str, href: str) -> tuple[int, set[str]]:
             tags.add(tag)
     # a person's own page: the link text is a name, possibly with the role in front/behind
     bare = re.sub(r"(?i)\b(sindaco|sindaca|assessore|assessora|vicesindaco|dott\.?|dr\.?|ing\.?|arch\.?|avv\.?|geom\.?)\b", "", text)
-    if looks_like_name(" ".join(bare.split())):
+    if looks_like_name(" ".join(bare.split())) and (person_ok or _ROLE_IN_TEXT.search(text) or _PERSON_HREF.search(href)):
         score, tags = max(score, 40), tags | {"scheda"}
     return score, tags
 
 
-def menu_links(raw: str, base: str) -> list[tuple[int, str, str, set[str]]]:
+def menu_links(raw: str, base: str, parent_tags: set[str] | None = None) -> list[tuple[int, str, str, set[str]]]:
     host = urlsplit(base).netloc
+    person_ok = bool(parent_tags and parent_tags & {"giunta", "organizzazione", "scheda"})
     out: dict[str, tuple[int, str, str, set[str]]] = {}
     for a in BeautifulSoup(raw, "lxml").find_all("a", href=True):
         text = " ".join(a.get_text(" ", strip=True).split())
-        sc, tags = score_link(text, a["href"].strip())
+        sc, tags = score_link(text, a["href"].strip(), person_ok)
         if sc <= 0:
             continue
         url = safe_join(base, a["href"].strip())
-        if not url or urlsplit(url).netloc != host:
+        if not url:
+            continue
+        other = urlsplit(url).netloc
+        if other != host and not (sc >= 25 and any(v in other for v in VENDOR_HOSTS)):
             continue
         url = url.split("#")[0]
         if url not in out or out[url][0] < sc:
@@ -135,7 +149,7 @@ async def crawl(starts: list[str], fetch: Fetch, *, budget: int = PAGE_BUDGET) -
         found.visited.append(url)
         found.pages.append(Page(url, text, raw, via, tags, page_date(text)))
         if raw and depth < MAX_DEPTH:
-            for sc, u, anchor, t in menu_links(raw, url):
+            for sc, u, anchor, t in menu_links(raw, url, tags):
                 if u not in seen:
                     heapq.heappush(heap, (-sc - (0 if depth else 5), n, u, anchor, depth + 1, t))
                     n += 1

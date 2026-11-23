@@ -23,7 +23,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-def limitations(sites: list[dict]) -> list[str]:
+def limitations(sites: list[dict], failures: dict | None = None) -> list[str]:
     """What the free script could not do, in words (pure, tested)."""
     out: list[str] = []
     blocked = [s["ente"] for s in sites if s.get("error") and ("403" in s["error"] or "blocc" in s["error"].lower())]
@@ -41,6 +41,13 @@ def limitations(sites: list[dict]) -> list[str]:
     if stops.get("pages") or stops.get("time"):
         out.append(f"Esplorazione fermata dal budget (pagine {stops.get('pages', 0)}, tempo {stops.get('time', 0)}): "
                    "potrebbero restare pagine utili non lette.")
+    bad_hosts: Counter = Counter()
+    for (host, _kind), n in (failures or {}).items():
+        bad_hosts[host] += n
+    if bad_hosts:
+        top = ", ".join(f"{h} ({n})" for h, n in bad_hosts.most_common(8))
+        out.append("Indirizzi non raggiungibili da questo server (piattaforme di albo/trasparenza che bloccano o "
+                   "interrompono le connessioni): " + top)
     reasons = Counter()
     for s in sites:
         for h in s.get("hunts", []):
@@ -237,7 +244,9 @@ async def run(
 
     reports: list[dict] = list(await asyncio.gather(*(guarded(*x) for x in sites)))
 
-    lim = limitations(reports)
+    from app.collectors.adaptive_fetch import FAILURES
+
+    lim = limitations(reports, FAILURES)
     riep = riepilogo(reports, gold)
     (out / "report.json").write_text(json.dumps({"riepilogo": riep, "limitazioni": lim, "siti": reports}, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
     md = [f"# Prova gratuita dei siti ({datetime.now(tz=UTC):%d/%m/%Y %H:%M}) — {len(reports)} comuni", "", "## Riepilogo", ""]

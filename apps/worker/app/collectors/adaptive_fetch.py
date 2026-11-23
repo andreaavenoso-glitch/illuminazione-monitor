@@ -9,6 +9,7 @@ around.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 import httpx
@@ -133,7 +134,7 @@ def _worth_trying_variants(error: str | None) -> bool:
     return error in _VARIANT_ERRORS
 
 
-async def adaptive_fetch_result(
+async def _adaptive_fetch_result_impl(
     url: str,
     *,
     timeout: float,
@@ -287,3 +288,17 @@ async def _fetch_with_playwright(
         return None
 
     return clean_html(html, max_html_chars)
+
+
+# Hosts that could not be read, with the reason: shows which platforms are out of reach from this server
+# (vendor albi that reset or time out connections from data centres).
+FAILURES: Counter = Counter()
+
+
+async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:
+    from urllib.parse import urlsplit
+
+    res = await _adaptive_fetch_result_impl(url, **kwargs)
+    if not res.text:
+        FAILURES[(urlsplit(url).netloc, res.error or "vuota")] += 1
+    return res
