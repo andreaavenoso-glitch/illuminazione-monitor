@@ -161,3 +161,30 @@ def test_looks_like_act_title_checks():
     assert not looks_like_act(body, "Interrogazione del gruppo consiliare")
     assert looks_like_act(body, "Determina affidamento servizio illuminazione pubblica e videosorveglianza")
     assert looks_like_act(body, "Individuazione del promotore PPP illuminazione pubblica")
+
+
+def test_page_furniture_after_a_role_is_not_a_person():
+    from app.collectors.rules_extract import extract_people_by_rules
+
+    text = (
+        "Responsabile Area Tecnica Decreto Di Nomina. Dirigente Settore Tecnico Documento Decreto. "
+        "Responsabile Settore Tecnico Incompatibilita' Dott. Rossi Mario."
+    )
+    names = {p["nome"] for p in extract_people_by_rules(text)}
+    assert not names & {"Decreto Di Nomina", "Documento Decreto", "Incompatibilita' Dott"}
+
+
+def test_a_word_glued_after_the_name_is_cut_not_a_reason_to_lose_it():
+    from app.collectors.rules_extract import extract_people_by_rules
+
+    text = "Responsabile del procedimento (RUP): Francesco Chiarella Formato: pdf Dimensione 400 KB"
+    people = extract_people_by_rules(text)
+    assert [p["nome"] for p in people] == ["Francesco Chiarella"]
+
+
+def test_names_that_end_with_a_title_are_rejected_but_real_ones_stay():
+    from app.collectors.referenti import looks_like_name
+
+    assert not looks_like_name("Incompatibilita' Dott")
+    assert not looks_like_name("Decreto Di Nomina") and not looks_like_name("Documento Decreto")
+    assert looks_like_name("Pasquale Cariello") and looks_like_name("Vincenza Angela Natale")

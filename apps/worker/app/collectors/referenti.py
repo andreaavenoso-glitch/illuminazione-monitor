@@ -65,8 +65,14 @@ NOT_NAME_TOKENS = frozenset(
     pubblicazioni normativa disposizioni generali statuti regolamenti codice disciplinare organi revisione
     rendiconti bilanci societa partecipate vigilanza prevenzione corruzione accesso civico trasparenza
     altri contenuti uffici ufficio aree area settori settore dirigenti dipendenti personale non assunto
-    commissioni commissione consigliere consiglieri capigruppo gruppi consiliari presidente vicepresidente""".split()
+    commissioni commissione consigliere consiglieri capigruppo gruppi consiliari presidente vicepresidente
+    decreto decreti nomina nomine documento documenti incompatibilita incompatibilità incompatibilita' inconferibilita
+    inconferibilità inconferibilita' formato allegato dimensione download file visualizza apri dichiarazione
+    conflitto interessi anticorruzione determina determinazione delibera deliberazione verbale ordinanza avviso bando
+    gara oggetto riferimenti normativi atto atti scheda dettaglio pagina""".split()
 )
+# a person's name never ends in a bare title ("Incompatibilita' Dott"): the title belongs to the NEXT word
+_TITLES = frozenset({"dott", "dottssa", "dott.ssa", "dr", "dr.ssa", "ing", "arch", "avv", "geom", "prof", "prof.ssa", "rag", "per", "ind"})
 
 
 def looks_like_name(nome: str) -> bool:
@@ -76,6 +82,8 @@ def looks_like_name(nome: str) -> bool:
         return False
     # a name does not repeat a word: "Incarichi Organizzazione Incarichi" is a menu, not a person
     if len({t.lower().strip(".,;:()") for t in toks}) < len(toks):
+        return False
+    if toks[-1].strip(".,;:()").lower().rstrip(".") in _TITLES:
         return False
     for t in toks:
         core = t.strip(".,;:()")

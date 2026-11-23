@@ -27,7 +27,7 @@ from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.collectors.archives import bytes_to_text
 from app.collectors.deadline_hunt import Doc, hunt_deadline
-from app.collectors.main_content import main_region
+from app.collectors.main_content import has_document_links, main_region
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from bs4 import BeautifulSoup
@@ -53,9 +53,11 @@ _CLAUDE_CUES = ("scadenz", "entro il", "entro le", "termine", "presentazione del
 
 
 def notice_page(html: str) -> tuple[str, str]:
-    """(text, html) of the NOTICE in a web page: the central part, without menu, sidebar and footer."""
+    """(text, html) of the NOTICE in a web page: the central part, without menu, sidebar and footer. The text comes from
+    the central part; the html (where the documents are looked for) is the central part too, unless it links no
+    document at all: then the whole page, because the attachments of a notice may sit where we did not expect."""
     region = main_region(html)
-    return html_to_text(region), region
+    return html_to_text(region), (region if has_document_links(region) or not has_document_links(html) else html)
 
 
 def html_to_text(html: str) -> str:

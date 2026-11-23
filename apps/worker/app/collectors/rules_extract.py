@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from datetime import date, timedelta
 from typing import Any
 
-from app.collectors.referenti import looks_like_name
+from app.collectors.referenti import NOT_NAME_TOKENS, looks_like_name
 from shared_models.categories import is_noise
 from shared_models.relevance import dates_in_text, deadline_from_text
 from shared_models.services import mentions_any_service
@@ -153,6 +153,9 @@ def _clean_name(raw: str) -> str | None:
     toks = raw.split()
     while toks and toks[0].lower().rstrip(".") in _STOP:
         toks.pop(0)
+    # a word of the page glued after the name ("Francesco Chiarella Formato: pdf") is cut off, not a reason to lose the name
+    while toks and (toks[-1].lower().strip(".,;:()") in _STOP or toks[-1].lower().strip(".,;:()") in NOT_NAME_TOKENS):
+        toks.pop()
     if len(toks) < 2 or any(t.lower() in _STOP for t in toks):
         return None
     name = " ".join(t[0].upper() + t[1:].lower() if t.isupper() else t for t in toks)

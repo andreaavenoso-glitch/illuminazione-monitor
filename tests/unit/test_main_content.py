@@ -51,3 +51,42 @@ def test_a_tender_or_call_with_no_deadline_and_an_old_address_is_over():
         assert record_state(cat, None, None, new, None, today)[0] == "da_verificare"
     # a deadline always decides, whatever the address says
     assert record_state("gara", date(2026, 12, 20), None, old, "aperto", today)[0] == "aperto"
+
+
+ALLEGATI_FUORI = f"""
+<html><body><header><a href="/x">Menu</a></header>
+<main>
+<article><h1>Avviso pubblico</h1><p>{CORPO}</p></article>
+<section id="allegati"><h2>Allegati</h2>
+  <a href="/files/allegati-tecnici.zip">Allegati tecnici</a><a href="/files/AVVISO-PUBBLICO.pdf">AVVISO PUBBLICO</a></section>
+</main>
+<footer><a href="/files/Orari-Bus.pdf">Orari bus</a></footer></body></html>
+"""
+
+
+def test_the_attachments_section_next_to_the_article_is_kept():
+    links = [u for _, u in doc_links(main_region(ALLEGATI_FUORI), "https://c.it/novita/n171.html", seen=set())]
+    assert "https://c.it/files/allegati-tecnici.zip" in links and "https://c.it/files/AVVISO-PUBBLICO.pdf" in links
+    assert not any("Orari-Bus" in u for u in links)
+
+
+def test_attachments_outside_main_are_kept_when_main_is_an_article_only():
+    page = (
+        f"<html><body><div class='contenuto'><article><p>{CORPO}</p></article></div>"
+        "<div class='it-allegati'><a href='/f/avviso.pdf'>AVVISO PUBBLICO</a></div></body></html>"
+    )
+    links = [u for _, u in doc_links(main_region(page), "https://c.it/n/1", seen=set())]
+    assert "https://c.it/f/avviso.pdf" in links
+
+
+def test_when_the_central_part_links_nothing_the_whole_page_is_used_for_the_links():
+    from app.tasks.verify_records import notice_page
+
+    page = (
+        f"<html><body><main><article><p>{CORPO}</p></article></main>"
+        "<div id='sx'><a href='/f/avviso.pdf'>AVVISO PUBBLICO</a></div></body></html>"
+    )
+    text, raw = notice_page(page)
+    assert "impianti pubblicitari" in text  # the text is still the central part's
+    links = [u for _, u in doc_links(raw, "https://c.it/n/1", seen=set())]
+    assert "https://c.it/f/avviso.pdf" in links

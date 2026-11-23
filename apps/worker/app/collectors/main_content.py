@@ -23,6 +23,8 @@ _MAIN_SELECTOR = (
     "main, [role=main], article, #main, #content, #contenuto, .entry-content, .post-content, .page-content, "
     ".contenuto, .main-content, .content-area"
 )
+# The section with the attached documents often sits OUTSIDE the <article> that holds the description: it is kept.
+_ATTACHMENTS = '[id*="allegat"], [class*="allegat"], [id*="attachment"], [class*="attachment"], [id*="download"], [class*="download"], [id*="documenti"]'
 MIN_CHARS = 400
 
 
@@ -41,9 +43,24 @@ def main_region(html: str) -> str:
             t.decompose()
     candidates = [c for c in soup.select(_MAIN_SELECTOR) if len(_text(c)) >= MIN_CHARS]
     node = max(candidates, key=lambda c: len(_text(c))) if candidates else (soup.body or soup)
-    out = str(node)
+    extra = []
+    for sec in soup.select(_ATTACHMENTS):
+        if sec is node or node in sec.parents or sec in node.parents:
+            continue  # already inside the central part (or it IS the page)
+        if any(sec in e.parents for e in extra) or any(e in sec.parents for e in extra):
+            continue
+        if sec.find("a", href=True):
+            extra.append(sec)
+    out = str(node) + "".join(str(e) for e in extra)
     # nothing left, or almost nothing compared to the page: the structure is not what we assumed
     return out if len(_text(node)) >= MIN_CHARS or whole < MIN_CHARS else html
+
+
+def has_document_links(html: str) -> bool:
+    """Does the HTML link at least one document (PDF, archive, Word, a file named like an avviso)?"""
+    from app.collectors.deadline_hunt import doc_links
+
+    return bool(doc_links(html, "https://example.invalid/", seen=set(), limit=1))
 
 
 def main_text(html: str) -> str:
