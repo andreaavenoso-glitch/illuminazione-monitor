@@ -32,8 +32,8 @@ from shared_models.referenti_logic import election_date, freshness, has_decree, 
 
 Fetch = Callable[[str], Awaitable[tuple[str, str | None]]]  # url -> (text, raw html or None)
 
-PAGE_BUDGET = 40
-MAX_DEPTH = 3
+PAGE_BUDGET = 60
+MAX_DEPTH = 4
 
 # (pattern, weight, tag): what a menu entry looks like on the way to the people
 _LINKS: tuple[tuple[re.Pattern[str], int, str], ...] = tuple(

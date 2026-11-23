@@ -20,9 +20,9 @@ from app.collectors.page_gate import safe_join
 from bs4 import BeautifulSoup
 from shared_models.relevance import deadline_from_text
 
-MAX_DOCS = 12
-MAX_DEPTH = 3
-BUDGET_S = 90.0
+MAX_DOCS = 25
+MAX_DEPTH = 4
+BUDGET_S = 240.0
 _SKIP_EXT = (".jpg", ".jpeg", ".png", ".gif", ".svg", ".zip", ".rar", ".7z", ".doc", ".docx", ".xls", ".xlsx", ".p7m", ".mp4")
 _NAMED = re.compile(r"avviso|bando|disciplinare|invito|manifestazione|lettera|capitolato|proposte?|determina|delibera|allegat|"
                     r"document|scheda|dettaglio|scarica|download|pubblicazion", re.IGNORECASE)

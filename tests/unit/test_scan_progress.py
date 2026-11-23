@@ -179,4 +179,4 @@ def test_process_steps_normalize_then_score() -> None:
 def test_item_timeout_setting_is_bounded():
     from app.config import WorkerSettings
 
-    assert 60 <= WorkerSettings().scan_item_timeout_s <= 900
+    assert 60 <= WorkerSettings().scan_item_timeout_s <= 1800

@@ -261,7 +261,7 @@ async def verify_region(
                     hunt = await asyncio.wait_for(
                         hunt_deadline(
                             r.link_bando, lambda u, d: fetch_doc(u, d, settings),
-                            max_docs=12 if deep else 2, max_depth=3 if deep else 1,
+                            max_docs=25 if deep else 2, max_depth=4 if deep else 1,
                         ),
                         timeout=240,
                     )

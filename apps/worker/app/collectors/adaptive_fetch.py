@@ -336,6 +336,7 @@ FAILURES: Counter = Counter()
 _HOST_OK: set[str] = set()
 RETRY_PAUSE = 2.0
 RETRY_ENABLED = True  # tests of a single attempt switch it off
+RETRY_ATTEMPTS = 2  # extra attempts after the first: accuracy over speed
 _PERMANENT = ("http_403", "http_404", "http_401", "http_410", "ssl", "dns")
 
 
@@ -353,10 +354,12 @@ async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:
     import asyncio
     netloc = urlsplit(url).netloc
     res = await _adaptive_fetch_result_impl(url, **kwargs)
-    if not res.text and RETRY_ENABLED and _worth_retry(netloc, res.error):
-        pause = _RETRY_AFTER.get(netloc, RETRY_PAUSE) if res.error == "http_429" else RETRY_PAUSE
+    attempt = 0
+    while not res.text and RETRY_ENABLED and attempt < RETRY_ATTEMPTS and _worth_retry(netloc, res.error):
+        attempt += 1
+        pause = _RETRY_AFTER.get(netloc, RETRY_PAUSE) if res.error == "http_429" else RETRY_PAUSE * attempt
         await asyncio.sleep(pause)
-        log.info("adaptive_fetch.retry", url=url, error=res.error, pause=pause)
+        log.info("adaptive_fetch.retry", url=url, error=res.error, pause=pause, attempt=attempt)
         res = await _adaptive_fetch_result_impl(url, **kwargs)
     if res.text:
         _HOST_OK.add(netloc)
