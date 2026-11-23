@@ -163,3 +163,59 @@ def test_a_pre_gara_is_not_closed_for_mentioning_the_running_contract():
     assert categorize_record(r) == "pre_gara"
     applica_analisi(r, [], {"cig": {"valore": "79706368E6", "fonte": "x"}}, "base", TODAY, NOW, page_text=TOLVE_PAGE)
     assert r.verifica_esito != "chiuso"
+
+
+SCANZANO_VECCHIO = (
+    "AVVISO PUBBLICO DI MANIFESTAZIONE DI INTERESSE (ai sensi dell'art. 193 del D.Lgs. 36/2023) Oggetto: Ammodernamento "
+    "tecnologico, efficientamento energetico, messa a norma e gestione dell'impianto di pubblica illuminazione. "
+    "Gli operatori possono presentare la propria proposta di project financing entro e non oltre 60 (sessanta) giorni "
+    "dalla data di pubblicazione del presente avviso, in conformità all'art. 193. Determinazione n. 29 del 12/03/2026."
+)
+
+
+def test_a_relative_deadline_is_read_from_the_document():
+    from app.collectors.doc_fields import extract_fields
+
+    f = extract_fields([("avviso.pdf", SCANZANO_VECCHIO)], TODAY)
+    assert f["termine_giorni"]["valore"] == {"giorni": 60, "lavorativi": False}
+    assert "scadenza" not in f and f["data_documento"]["valore"] == "2026-03-12"
+
+
+def test_appeals_and_clarification_terms_are_not_deadlines():
+    from app.collectors.doc_fields import extract_fields
+
+    t = ("Avviso per la presentazione delle offerte. Avverso il presente atto è ammesso ricorso al TAR entro 30 giorni dalla "
+         "pubblicazione. Le richieste di chiarimenti vanno inviate entro 10 giorni dalla pubblicazione del bando.")
+    assert "termine_giorni" not in extract_fields([("a.pdf", t)], TODAY)
+    t2 = "Le offerte devono pervenire entro 15 giorni dalla ricezione della lettera di invito."
+    assert "termine_giorni" not in extract_fields([("a.pdf", t2)], TODAY)  # counted from something else
+
+
+def test_an_old_avviso_with_a_relative_deadline_is_closed():
+    from app.collectors.doc_fields import extract_fields
+
+    r = rec(descrizione="Avviso pubblico di manifestazione di interesse art. 193 illuminazione pubblica", atto_tipo="manifestazione_interesse")
+    r.data_pubblicazione = None
+    f = extract_fields([("avviso.pdf", SCANZANO_VECCHIO)], TODAY)
+    applica_analisi(r, [("avviso.pdf", SCANZANO_VECCHIO)], f, "approfondita", TODAY, NOW)
+    assert r.scadenza.date() == date(2026, 5, 11) and r.verifica_esito == "chiuso"
+    assert "stimata 11/05/2026" in r.verifica_nota and "già passata" in r.verifica_nota
+
+
+def test_a_recent_avviso_with_a_relative_deadline_is_estimated_but_still_to_verify():
+    from shared_models.relevance import DA_VERIFICARE, record_state
+
+    r = rec(descrizione="Avviso pubblico di manifestazione di interesse illuminazione pubblica", atto_tipo="manifestazione_interesse")
+    r.data_pubblicazione = datetime(2026, 11, 10, tzinfo=UTC)
+    f = {"termine_giorni": {"valore": {"giorni": 60, "lavorativi": False}, "fonte": "a.pdf"}}
+    applica_analisi(r, [], f, "approfondita", TODAY, NOW)
+    assert r.scadenza.date() == date(2027, 1, 9) and r.verifica_esito == "stimata" and "da confermare" in r.verifica_nota
+    assert record_state("manifestazione_interesse", r.scadenza, None, "https://c.it/x", r.verifica_esito, TODAY)[0] == DA_VERIFICARE
+
+
+def test_working_days_are_not_guessed():
+    r = rec(descrizione="Manifestazione di interesse illuminazione pubblica", atto_tipo="manifestazione_interesse")
+    r.data_pubblicazione = None
+    f = {"termine_giorni": {"valore": {"giorni": 30, "lavorativi": True}, "fonte": "a.pdf"}}
+    applica_analisi(r, [], f, "base", TODAY, NOW)
+    assert r.scadenza is None and "lavorativi" in r.verifica_nota

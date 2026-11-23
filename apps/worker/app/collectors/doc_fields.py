@@ -52,6 +52,15 @@ _INCARICATO = re.compile(
     r"(?:affidat\w+|incaric\w+|conferit\w+|conferimento\s+(?:dell.)?incarico|a favore d\w+)\s+(?:a|alla|allo|al|del(?:la)?|di)\s+(?:(?:la\s+)?(?:societ[àa]|ditta|studio|r\.?t\.?p\.?)\s+)?"
     r"((?:[A-ZÀ-Ý][\w&'À-ÿ.-]*\s+){1,6}(?:S\.?\s?r\.?\s?l\.?|S\.?\s?p\.?\s?A\.?|S\.?\s?t\.?\s?p\.?|S\.?\s?c\.?\s?a\.?\s?r\.?\s?l\.?|S\.?\s?n\.?\s?c\.?))",
 )
+# A relative deadline: "entro e non oltre 60 (sessanta) giorni dalla data di pubblicazione del presente avviso".
+_TERMINE_GIORNI = re.compile(
+    r"entro\s+(?:e\s+non\s+oltre\s+)?(?:il\s+termine\s+(?:perentorio\s+)?di\s+)?(\d{1,3})\s*(?:\([a-zàèéìòù]+\)\s*)?giorni"
+    r"(?:\s+(naturali(?:\s+e\s+consecutivi)?|solari|consecutivi|di\s+calendario|lavorativi|feriali))?"
+    r"\s+(?:dalla|dal|da)\s+(?:data\s+(?:di\s+)?)?(pubblicazione|ricezione|invio|comunicazione|scadenza|notifica)",
+    re.IGNORECASE,
+)
+_PER_PRESENTARE = re.compile(r"propost|offert|domand|manifestazion|candidatur|partecipa|present|pervenir|trasmett|inviar", re.IGNORECASE)
+_NON_E_UN_TERMINE = re.compile(r"ricors|\btar\b|impugn|accesso agli atti|chiariment|quesit|richieste? di", re.IGNORECASE)
 _FONDI = re.compile(r"PNRR|FESR|FSC|fondi (europei|strutturali)|conto termico|PR\s+\w+\s+FESR", re.IGNORECASE)
 
 
@@ -116,6 +125,14 @@ def extract_fields(docs: list[tuple[str, str]], today: date) -> dict[str, dict[s
                 put("impegno_spesa_eur", v, name, flat[max(0, m.start() - 20): m.end() + 30])
         if m := _INCARICATO.search(flat):
             put("incaricato", " ".join(m.group(1).split()), name, flat[max(0, m.start() - 30): m.end() + 20])
+        for m in _TERMINE_GIORNI.finditer(flat):
+            before = flat[max(0, m.start() - 140): m.start()]
+            if m.group(3).lower() != "pubblicazione" or _NON_E_UN_TERMINE.search(before) or not _PER_PRESENTARE.search(flat[max(0, m.start() - 200): m.end() + 60]):
+                continue  # an appeal term, a request for clarifications, a term counted from something else
+            kind = (m.group(2) or "").lower()
+            put("termine_giorni", {"giorni": int(m.group(1)), "lavorativi": kind in ("lavorativi", "feriali")}, name,
+                flat[max(0, m.start() - 60): m.end() + 40])
+            break
         procs = [label for label, rx in _PROCEDURA if rx.search(flat)]
         put("procedura", procs, name)
         if m := _CRITERIO.search(flat):

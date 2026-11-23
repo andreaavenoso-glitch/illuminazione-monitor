@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from app.celery_app import celery_app
@@ -56,6 +56,8 @@ def applica_analisi(
         rec.verifica_esito, rec.verified_at = "chiuso", now
         rec.verifica_nota = f"Chiuso dall'analisi: {in_corso}"
         return notes + [rec.verifica_nota]
+    if not found and (rel := fields.get("termine_giorni")) and category in ("manifestazione_interesse", "gara"):
+        return notes + _scadenza_relativa(rec, rel, fields, today, now)
     if not found:
         if notes or (current in ("manifestazione_interesse", "gara") or rec.categoria_analisi):
             rec.verifica_nota = "Scadenza non trovata nei documenti letti" + (f" ({profondita})" if profondita else "")
@@ -77,6 +79,33 @@ def applica_analisi(
     rec.verified_at, rec.verifica_nota = now, what + ("" if effective >= today else ": già passata")
     notes.append(rec.verifica_nota)
     return notes
+
+
+def _scadenza_relativa(rec, rel: dict, fields: dict, today: date, now: datetime) -> list[str]:
+    """A deadline written as "within N days of publication", with no date. Counted from the publication date of the
+    notice, else from the date of the document. It is an ESTIMATE (the real publication may be a few days later):
+    * well past (more than 15 days) -> the notice is closed;
+    * otherwise it is written on the notice but stays "da verificare" until someone reads the real date."""
+    value = rel["valore"]
+    if value.get("lavorativi"):
+        rec.verifica_nota = f"Termine di {value['giorni']} giorni lavorativi dalla pubblicazione: scadenza da calcolare a mano"
+        return [rec.verifica_nota]
+    pub = rec.data_pubblicazione.date() if isinstance(rec.data_pubblicazione, datetime) else rec.data_pubblicazione
+    doc = fields.get("data_documento", {}).get("valore")
+    base = pub or (date.fromisoformat(str(doc)[:10]) if doc else None)
+    if base is None:
+        rec.verifica_nota = f"Termine di {value['giorni']} giorni dalla pubblicazione, ma la data di pubblicazione non è nota"
+        return [rec.verifica_nota]
+    end = base + timedelta(days=value["giorni"])
+    rec.scadenza = datetime(end.year, end.month, end.day, 23, 59, tzinfo=UTC)
+    what = f"Scadenza stimata {end:%d/%m/%Y}: {value['giorni']} giorni dalla pubblicazione ({base:%d/%m/%Y})"
+    if end + timedelta(days=15) < today:
+        rec.verifica_esito, rec.verified_at = "chiuso", now
+        rec.verifica_nota = what + ": già passata"
+    else:
+        rec.verifica_esito, rec.verified_at = "stimata", now
+        rec.verifica_nota = what + ": da confermare sul documento"
+    return [rec.verifica_nota]
 
 
 async def analyze(record_id: UUID, profondita: str = "base") -> dict:
