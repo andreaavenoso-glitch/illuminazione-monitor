@@ -477,7 +477,7 @@ def build_raw_record_kwargs(
             "ente": record.get("ente"),
             "scadenza": record.get("scadenza"),
             "atto_tipo": record.get("atto_tipo"),
-            "extracted_by": "claude-haiku-4-5-albo",
+            "extracted_by": record.get("extracted_by") or "claude-haiku-4-5-albo",
             "perimeter_prevalidated": True,
         },
         "checksum": _checksum(url, title, raw_date),

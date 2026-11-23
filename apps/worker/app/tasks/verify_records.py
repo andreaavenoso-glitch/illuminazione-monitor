@@ -22,6 +22,7 @@ from datetime import UTC, date, datetime, timedelta
 from urllib.parse import urlsplit
 
 import httpx
+from app import claude_state
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.config import WorkerSettings, get_worker_settings
@@ -220,7 +221,12 @@ async def verify_region(region: str, *, limit: int = 200) -> dict[str, int]:
                     text = await asyncio.wait_for(fetch_document_text(r.link_bando, settings), timeout=120)
                     esito, deadline, act = judge(text, today, cat)
                     if esito == "claude":
-                        deadline = await _claude_deadline(text, r.link_bando, settings)
+                        # the deadline wording was not parsed: Claude when available, else unknown
+                        deadline = (
+                            await _claude_deadline(text, r.link_bando, settings)
+                            if claude_state.use_claude(settings)
+                            else None
+                        )
                         esito = "non_trovata" if deadline is None else ("aperto" if deadline >= today else "chiuso")
                     if deadline is not None:
                         # the document is the source of truth, over what the list page said

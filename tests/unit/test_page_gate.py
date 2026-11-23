@@ -147,7 +147,7 @@ class TestScanIntegration:
             await cw._process_page(
                 SimpleNamespace(add=lambda *_: None), item, job,
                 target_url=BASE, target_html=html, label="t",
-                settings=SimpleNamespace(smart_collector_max_html_chars=80_000),
+                settings=SimpleNamespace(smart_collector_max_html_chars=80_000, extraction_mode="claude", anthropic_api_key="k"),
                 now=datetime.now(tz=UTC), seen=set(), stats=stats,
             )
 
@@ -488,7 +488,7 @@ class TestPolitenessAndDuplicates:
             await cw._process_page(
                 SimpleNamespace(add=lambda *_: None), item, job,
                 target_url=url, target_html=DESIGN_ITALIA_LIST, label="t",
-                settings=SimpleNamespace(smart_collector_max_html_chars=80_000),
+                settings=SimpleNamespace(smart_collector_max_html_chars=80_000, extraction_mode="claude", anthropic_api_key="k"),
                 now=datetime.now(tz=UTC), seen=set(), stats=stats, digests=digests,
             )
         assert len(calls) == 1 and stats["pages_duplicate_content"] == 1
@@ -660,7 +660,7 @@ class TestClaudeUnavailable:
                 SimpleNamespace(add=lambda *_: None), item,
                 SimpleNamespace(records_found=0, records_valid=0, duplicates_removed=0),
                 target_url=BASE, target_html=DESIGN_ITALIA_LIST, label="t",
-                settings=SimpleNamespace(smart_collector_max_html_chars=80_000),
+                settings=SimpleNamespace(smart_collector_max_html_chars=80_000, extraction_mode="claude", anthropic_api_key="k"),
                 now=datetime.now(tz=UTC), seen=set(), stats=stats,
             )
         assert stats["claude_errors"] == 1 and not item.content_hashes  # not remembered: retried later
@@ -682,7 +682,7 @@ class TestClaudeUnavailable:
             SimpleNamespace(add=lambda *_: None), SimpleNamespace(content_hashes=None, source_id=None, entity_id=None),
             SimpleNamespace(records_found=0, records_valid=0, duplicates_removed=0),
             target_url=BASE, target_html=DESIGN_ITALIA_LIST, label="t",
-            settings=SimpleNamespace(smart_collector_max_html_chars=80_000),
+            settings=SimpleNamespace(smart_collector_max_html_chars=80_000, extraction_mode="claude", anthropic_api_key="k"),
             now=datetime.now(tz=UTC), seen=set(), stats=stats,
         )
         assert stats["claude_errors"] == 1
@@ -725,7 +725,7 @@ class TestExpiredNoticesAreDropped:
         stats = Counter()
         await cw._process_page(
             SimpleNamespace(add=added.append), item, job, target_url=BASE, target_html=DESIGN_ITALIA_LIST, label="t",
-            settings=SimpleNamespace(smart_collector_max_html_chars=80_000), now=datetime.now(tz=UTC),
+            settings=SimpleNamespace(smart_collector_max_html_chars=80_000, extraction_mode="claude", anthropic_api_key="k"), now=datetime.now(tz=UTC),
             seen=set(), stats=stats,
         )
         assert stats["records_expired_dropped"] == 1

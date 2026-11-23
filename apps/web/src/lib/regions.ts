@@ -180,6 +180,6 @@ export interface ScanRunView {
   limit: number | null;
   error: string | null;
   cost_usd: number | null;
-  claude: { status: "unused" | "ok" | "down"; error: string | null; calls: number; call_errors: number };
+  claude: { status: "unused" | "ok" | "down" | "rules"; error: string | null; calls: number; call_errors: number };
   items: ScanItemView[];
 }

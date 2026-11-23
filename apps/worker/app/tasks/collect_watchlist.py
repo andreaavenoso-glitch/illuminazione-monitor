@@ -41,6 +41,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from app import claude_state
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import FetchResult, adaptive_fetch, adaptive_fetch_result
 from app.collectors.albo_pretorio_llm import (
@@ -62,6 +63,7 @@ from app.collectors.page_gate import (
     safe_join,
     same_site,
 )
+from app.collectors.rules_extract import extract_records_by_rules
 from app.collectors.sitemap import discover_sitemap_urls
 from app.collectors.source_health import apply_scan_outcome
 from app.config import WorkerSettings, get_worker_settings
@@ -172,9 +174,27 @@ async def _process_page(
     stats[f"pages_to_claude_{gated.action}"] += 1
 
     status = {"ok": True}
-    records = await extract_albo_records(
-        gated.html, url=target_url, settings=settings, label=label, status=status
-    )
+    by_rules = not claude_state.use_claude(settings)
+    records: list[dict] = []
+    if not by_rules:
+        records = await extract_albo_records(
+            gated.html, url=target_url, settings=settings, label=label, status=status
+        )
+        if not status["ok"] and status.get("fatal") and claude_state.can_fall_back(settings):
+            # No credit / limit reached: go on with the free rules, try Claude again later.
+            claude_state.mark_down(status.get("error", "errore sconosciuto"))
+            log.warning("collect_watchlist.claude_down_using_rules %s", status.get("error"))
+            stats["claude_down_fallback"] += 1
+            status = {"ok": True}
+            by_rules = True
+    if by_rules:
+        stats["pages_by_rules"] += 1
+        entity = await session.get(Entity, item.entity_id) if item.entity_id else None
+        records = extract_records_by_rules(
+            gated.candidates, ente=entity.name if entity else None, today=today_utc()
+        )
+        if not gated.candidates:
+            stats["pages_unparsed_by_rules"] += 1  # no list structure: needs Claude
     job.records_found += len(records)
     stats["records_found"] += len(records)
 
@@ -209,8 +229,13 @@ async def _process_page(
         if detail_url and detail_url != target_url:
             detail_html = await _fetch_page(detail_url, settings=settings, label=f"{label}:detail")
             if detail_html:
-                details = await extract_bando_detail(
-                    detail_html, url=detail_url, settings=settings, label=f"{label}:detail"
+                # Without Claude the deadline comes from the verification step (free).
+                details = (
+                    None
+                    if by_rules or not claude_state.use_claude(settings)
+                    else await extract_bando_detail(
+                        detail_html, url=detail_url, settings=settings, label=f"{label}:detail"
+                    )
                 )
                 if details:
                     record = merge_detail_into_record(record, details)
@@ -244,8 +269,9 @@ async def _process_page(
         stats["claude_errors"] += 1
         if status.get("fatal"):
             raise ClaudeUnavailable(status.get("error", "errore sconosciuto"))
-    if status["ok"]:
-        # Only after a successful analysis: a failed call must be retried.
+    if status["ok"] and (not by_rules or claude_state.mode(settings) == "rules"):
+        # Only after a successful analysis: a failed call must be retried, and a page read
+        # by the free rules in "auto" is read by Claude when it is available again.
         hashes[target_url] = gated.digest
         item.content_hashes = hashes
     return gated
@@ -277,6 +303,9 @@ async def _trasparenza_pages(
     if rank_links(cleaned, base_url=url, limit=1):
         # No section named as such, but the crawl can score the page's links.
         stats["links_from_ranking"] += 1
+        return []
+    if not claude_state.use_claude(settings):
+        stats["links_by_rules_none"] += 1
         return []
     stats["links_from_claude"] += 1
     selected = await select_relevant_links(cleaned, base_url=url, settings=settings, label=label)
@@ -601,6 +630,14 @@ async def _run_watchlist_scan(
         site_lock = asyncio.Lock()
         checkpoint = Checkpointer(CHECKPOINT_EVERY, _normalize_now)
         claude_down = asyncio.Event()
+        claude_state.reset()  # a topped-up account is tried again from the start of every run
+        rules_noted = False
+        if not claude_state.use_claude(settings):
+            rules_noted = True
+            await _set_run_claude(
+                run.id, "rules",
+                "Modalità regole (EXTRACTION_MODE=rules o chiave Claude assente): nessuna chiamata a Claude.",
+            )
         item_ids = [item.id for item in items]
 
         async def scan_one(item_id) -> None:
@@ -663,6 +700,13 @@ async def _run_watchlist_scan(
             await _update_scan_item(
                 run.id, sid, status=outcome, ended_at=datetime.now(tz=UTC), error=error, **progress
             )
+            nonlocal rules_noted
+            if not rules_noted and claude_state.is_down():
+                rules_noted = True
+                await _set_run_claude(
+                    run.id, "rules",
+                    f"Claude non disponibile, la raccolta prosegue con le regole: {claude_state.last_error() or ''}"[:500],
+                )
             if progress["claude_calls"] and not progress["claude_errors"] and not claude_down.is_set():
                 await _set_run_claude(run.id, "ok", None, only_if_unused=True)
             await checkpoint.tick()

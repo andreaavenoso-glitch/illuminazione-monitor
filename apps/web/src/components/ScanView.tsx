@@ -110,7 +110,9 @@ export function ScanView({ region }: { region: string }) {
         className={`rounded border p-3 text-sm ${
           claude.status === "down"
             ? "border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
-            : claude.status === "ok"
+            : claude.status === "rules"
+              ? "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100"
+              : claude.status === "ok"
               ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100"
               : "border-neutral-300 bg-neutral-50 text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
         }`}
@@ -118,6 +120,13 @@ export function ScanView({ region }: { region: string }) {
         {claude.status === "down" && (
           <>
             <b>Claude non disponibile.</b> La raccolta si è fermata: ogni chiamata viene rifiutata.
+            {claude.error && <div className="mt-1 text-xs">{claude.error.slice(0, 300)}</div>}
+          </>
+        )}
+        {claude.status === "rules" && (
+          <>
+            <b>Modalità regole (senza costi)</b>: gli avvisi sono estratti dagli elenchi strutturati con regole fisse. Le pagine senza
+            elenco non vengono lette finché Claude non è di nuovo disponibile; le scadenze si leggono con "Verifica ora".
             {claude.error && <div className="mt-1 text-xs">{claude.error.slice(0, 300)}</div>}
           </>
         )}

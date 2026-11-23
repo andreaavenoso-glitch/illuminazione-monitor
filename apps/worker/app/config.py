@@ -18,6 +18,8 @@ class WorkerSettings(BaseSettings):
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-4-5"
+    # auto | claude | rules: see app.claude_state (auto = Claude, free rules when it is unavailable)
+    extraction_mode: str = "auto"
     # Override of the price table (USD per million tokens) for the cost counter; 0 = use the table.
     anthropic_price_input_per_mtok: float = 0.0
     anthropic_price_output_per_mtok: float = 0.0

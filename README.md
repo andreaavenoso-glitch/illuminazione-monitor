@@ -183,3 +183,11 @@ Sprint 1-10 del piano originale (vedi `/root/.claude/plans/…`):
 fondazione tecnica, modello dati, collector ufficiali, collector fascia A,
 normalizzazione, scoring/dedup, daily report, dashboard, export/documents,
 anomaly engine + backfill. 121 unit test green, ruff clean.
+
+## Modalita' senza costi (`EXTRACTION_MODE`)
+
+`EXTRACTION_MODE` in `.env`: `auto` (default) usa Claude e, se non e' disponibile (credito finito, limite di spesa,
+chiave assente), prosegue con regole fisse gratuite invece di fermarsi (Claude viene ritentato ogni 10 minuti);
+`claude` non usa mai le regole; `rules` non chiama mai Claude. Le regole estraggono gli avvisi dagli elenchi
+strutturati e i referenti da righe tipo "Sindaco: Mario Rossi"; le scadenze si leggono dai documenti con "Verifica ora".
+Le pagine senza struttura a elenco richiedono Claude. Dopo la modifica: `bash aggiorna.sh`.

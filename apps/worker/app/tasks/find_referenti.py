@@ -8,6 +8,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
+from app import claude_state
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
 from app.collectors.referenti import (
@@ -18,6 +19,7 @@ from app.collectors.referenti import (
     site_root,
     verify_person,
 )
+from app.collectors.rules_extract import extract_people_by_rules
 from app.config import get_worker_settings
 from app.db import SessionLocal
 from app.tasks.verify_records import fetch_document_text, html_to_text
@@ -83,11 +85,23 @@ async def find_for_record(record_id: UUID) -> dict:
                 pages.append((u, text))
     found: list[tuple[dict, str]] = []
     claude_calls = 0
+    by_rules = False
+    claude_state.reset()  # a topped-up account is picked up again
     for url, text in pages:
         if not has_role_words(text):
             continue
-        claude_calls += 1
-        for person in await extract_people(text, url=url, ente=ente, settings=settings):
+        proposals: list[dict] | None = None
+        if claude_state.use_claude(settings):
+            status: dict = {"ok": True}
+            claude_calls += 1
+            proposals = await extract_people(text, url=url, ente=ente, settings=settings, status=status)
+            if not status["ok"] and status.get("fatal") and claude_state.can_fall_back(settings):
+                claude_state.mark_down(status.get("error", "errore"))
+                proposals = None
+        if proposals is None:
+            by_rules = True
+            proposals = extract_people_by_rules(text)
+        for person in proposals:
             checked = verify_person(person, text)
             if checked:
                 found.append((checked, url))
@@ -111,7 +125,7 @@ async def find_for_record(record_id: UUID) -> dict:
                 existing.verified_at = now
         await session.commit()
     log.info("find_referenti ente=%s pages=%d claude_calls=%d people=%d", ente, len(pages), claude_calls, len(people))
-    return {"ente": ente, "pagine": len(pages), "trovati": len(people)}
+    return {"ente": ente, "pagine": len(pages), "trovati": len(people), "metodo": "regole" if by_rules else "claude"}
 
 
 @celery_app.task(name="app.tasks.find_referenti.find_referenti", soft_time_limit=600, time_limit=660)

@@ -161,7 +161,11 @@ SCHEMA: dict[str, Any] = {
 }
 
 
-async def extract_people(text: str, *, url: str, ente: str, settings: WorkerSettings) -> list[dict[str, Any]]:
+async def extract_people(
+    text: str, *, url: str, ente: str, settings: WorkerSettings, status: dict | None = None
+) -> list[dict[str, Any]]:
+    """``status["ok"]`` False (and ``fatal`` when no call can succeed) lets the caller
+    fall back to the free rules instead of reporting "nobody found"."""
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     try:
         response = await client.messages.create(
@@ -173,6 +177,12 @@ async def extract_people(text: str, *, url: str, ente: str, settings: WorkerSett
         )
     except anthropic.APIError as exc:
         log.warning("referenti.claude_error", url=url, error=str(exc))
+        if status is not None:
+            from app.collectors.albo_pretorio_llm import is_fatal_api_error
+
+            status["ok"] = False
+            status["error"] = str(exc)
+            status["fatal"] = is_fatal_api_error(exc)
         return []
     await record_usage(response.usage, model=settings.anthropic_model, purpose="referenti", label=ente[:60])
     raw = next((b.text for b in response.content if b.type == "text"), "")
