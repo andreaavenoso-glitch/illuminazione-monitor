@@ -4,6 +4,9 @@ For each site: crawl + page gate, avvisi extracted by rules, the hunt for the de
 PDF), and the referenti script with its 12-step checklist. Writes report.md / report.json with a section
 "Limitazioni rilevate": what the script could not do and why, so it can be improved where it matters.
 
+Large test over a sample (see campione.py), with the documentation analysis and the reference of known referenti:
+    docker compose exec -T worker python -m infra.scripts.prova_siti --campione /workspace/infra/prove/campione.csv --analisi \
+        --oro /workspace/infra/scripts/data/oro_referenti_lombardia.csv --concorrenza 3 --out /workspace/infra/prove/grande
 By watchlist (needs the database):
     docker compose exec -T worker python -m infra.scripts.prova_siti --region Basilicata --comune Scanzano --out /workspace/infra/prove/scanzano
 Direct, no database (name=url, repeatable):
@@ -17,6 +20,7 @@ import json
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def limitations(sites: list[dict]) -> list[str]:
@@ -53,7 +57,69 @@ def limitations(sites: list[dict]) -> list[str]:
     return out or ["Nessuna limitazione rilevata su questi siti."]
 
 
-async def run(sites: list[tuple[str, str]], out: Path, max_hunt: int) -> None:
+def riepilogo(sites: list[dict], gold: list[dict] | None = None) -> dict:
+    """Aggregate numbers over the sites, in total and per size class: the measure of how well each of the four
+    parts works (detection, deadline hunt, referenti, documentation analysis). Pure, tested."""
+    from collections import defaultdict
+
+    def pct(a: int, b: int) -> float:
+        return round(100 * a / b, 1) if b else 0.0
+
+    def block(group: list[dict]) -> dict:
+        ok = [x for x in group if not x.get("error")]
+        recs = [r for x in ok for r in x.get("records", [])]
+        hunts = [h for x in ok for h in x.get("hunts", [])]
+        ana = [a for x in ok for a in x.get("analisi", [])]
+        ref_sites = [x for x in ok if "referenti" in x]
+        roles = lambda x, r: any(p["ruolo"] == r for p in x["referenti"])  # noqa: E731
+        fields: dict[str, int] = defaultdict(int)
+        for a in ana:
+            for k in a.get("campi", []):
+                fields[k] += 1
+        return {
+            "siti": len(group), "letti": len(ok), "letti_pct": pct(len(ok), len(group)),
+            "bloccati": sum(1 for x in group if x.get("error") and "403" in x["error"]),
+            "pagine_medie": round(sum(x.get("pages", 0) for x in ok) / max(len(ok), 1), 1),
+            "siti_con_avvisi_pct": pct(sum(1 for x in ok if x.get("records")), len(ok)),
+            "avvisi": len(recs),
+            "avvisi_per_categoria": dict(Counter(r["categoria"] for r in recs)),
+            "scadenza": {"cercate": len(hunts), "trovate": sum(1 for h in hunts if h["deadline"]),
+                         "trovate_pct": pct(sum(1 for h in hunts if h["deadline"]), len(hunts))},
+            "referenti": {
+                "siti": len(ref_sites),
+                "con_sindaco_pct": pct(sum(1 for x in ref_sites if roles(x, "sindaco")), len(ref_sites)),
+                "con_assessore_pct": pct(sum(1 for x in ref_sites if roles(x, "assessore")), len(ref_sites)),
+                "con_tecnico_pct": pct(sum(1 for x in ref_sites if roles(x, "responsabile_tecnico")), len(ref_sites)),
+                "checklist_media": round(sum(sum(1 for c in x["checklist"] if c["ok"]) for x in ref_sites) / max(len(ref_sites), 1), 1),
+            },
+            "analisi": {"documenti_analizzati": len(ana), "campi_trovati_pct": {k: pct(v, len(ana)) for k, v in sorted(fields.items())}},
+        }
+
+    by_f: dict[str, list[dict]] = defaultdict(list)
+    for x in sites:
+        by_f[x.get("fascia") or "n/d"].append(x)
+    out = {"totale": block(sites), "per_fascia": {f: block(g) for f, g in sorted(by_f.items())}}
+    if gold:
+        found = hits = 0
+        per_ente = []
+        for g_ente in sorted({g["ente"] for g in gold}):
+            site = next((x for x in sites if g_ente.lower() in x["ente"].lower() or x["ente"].lower() in g_ente.lower()), None)
+            if not site or "referenti" not in site:
+                continue
+            names = " ".join(p["nome"].lower() for p in site["referenti"])
+            want = [g for g in gold if g["ente"] == g_ente]
+            ok_n = sum(1 for g in want if g["cognome"].lower() in names)
+            found += len(want)
+            hits += ok_n
+            per_ente.append({"ente": g_ente, "attesi": len(want), "trovati": ok_n})
+        out["riferimento_referenti"] = {"attesi": found, "trovati": hits, "recall_pct": pct(hits, found), "per_ente": per_ente}
+    return out
+
+
+async def run(
+    sites: list[tuple[str, str, str]], out: Path, max_hunt: int, concurrency: int = 3, analisi: bool = False,
+    gold: list[dict] | None = None,
+) -> None:
     from app.collectors.adaptive_fetch import adaptive_fetch_result
     from app.collectors.crawler import crawl
     from app.collectors.deadline_hunt import hunt_deadline
@@ -72,11 +138,12 @@ async def run(sites: list[tuple[str, str]], out: Path, max_hunt: int) -> None:
     configure_services(parse_enabled(settings.enabled_services))
     out.mkdir(parents=True, exist_ok=True)
     today = today_utc()
-    reports: list[dict] = []
+    from app.collectors.doc_fields import extract_fields
 
-    for ente, start in sites:
+    async def one(ente: str, start: str, fascia: str) -> dict:
         print(f"== {ente}  {start}", flush=True)
-        rep: dict = {"ente": ente, "start": start, "pages": 0, "pages_full": 0, "records": [], "hunts": []}
+        rep: dict = {"ente": ente, "start": start, "fascia": fascia, "pages": 0, "pages_full": 0, "records": [],
+                     "hunts": [], "analisi": []}
         first = await adaptive_fetch_result(
             start, timeout=60, try_variants=True, max_html_chars=settings.crawl_max_html_chars,
             playwright_min_chars=settings.smart_collector_playwright_min_chars,
@@ -84,8 +151,7 @@ async def run(sites: list[tuple[str, str]], out: Path, max_hunt: int) -> None:
         )
         if not first.text:
             rep["error"] = first.error or "pagina vuota"
-            reports.append(rep)
-            continue
+            return rep
         url = first.url or start
         cands: list = []
         gates = Counter()
@@ -131,12 +197,17 @@ async def run(sites: list[tuple[str, str]], out: Path, max_hunt: int) -> None:
                              has_deadline=bool(r["scadenza"]))
             rep["records"].append({"titolo": r["title"][:140], "tipo": r["atto_tipo"], "categoria": cat,
                                    "scadenza_in_riga": r["scadenza"], "url": r["url"]})
-        todo = [r for r in rep["records"] if r["categoria"] in STRICT_CATEGORIES and not r["scadenza_in_riga"]][:max_hunt]
+        todo = [r for r in rep["records"] if r["categoria"] in STRICT_CATEGORIES][:max_hunt]
         for r in todo:
             h = await hunt_deadline(r["url"], lambda u, d: fetch_doc(u, d, settings))
-            rep["hunts"].append({"url": r["url"], "deadline": str(h.deadline) if h.deadline else None,
+            row_dl = r["scadenza_in_riga"]
+            rep["hunts"].append({"url": r["url"], "deadline": str(h.deadline) if h.deadline else row_dl,
                                  "docs": len(h.docs), "reason": h.reason, "notes": [d.note for d in h.docs if d.note],
-                                 "trail": h.trail()})
+                                 "trail": h.trail(), "in_riga": bool(row_dl)})
+            if analisi:  # documentation analysis on the same documents the hunt read
+                fields = extract_fields([(urlsplit(d.url).path.rsplit("/", 1)[-1] or d.url, d.text) for d in h.docs if d.text], today)
+                rep["analisi"].append({"url": r["url"], "documenti": len(h.docs), "campi": sorted(fields),
+                                       "valori": {k: v["valore"] for k, v in fields.items()}})
         async def sfetch(u: str):
             return await _script_fetch(u, settings)
         try:
@@ -152,11 +223,42 @@ async def run(sites: list[tuple[str, str]], out: Path, max_hunt: int) -> None:
             rep["stampa"] = ref["stampa"]
         except Exception as exc:  # noqa: BLE001
             rep["referenti_errore"] = f"{type(exc).__name__}: {exc}"
-        reports.append(rep)
+        return rep
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def guarded(ente: str, start: str, fascia: str) -> dict:
+        async with sem:
+            try:
+                return await one(ente, start, fascia)
+            except Exception as exc:  # noqa: BLE001 - one bad site must not stop the whole test
+                return {"ente": ente, "start": start, "fascia": fascia, "error": f"crash: {type(exc).__name__}: {exc}",
+                        "records": [], "hunts": [], "analisi": []}
+
+    reports: list[dict] = list(await asyncio.gather(*(guarded(*x) for x in sites)))
 
     lim = limitations(reports)
-    (out / "report.json").write_text(json.dumps({"limitazioni": lim, "siti": reports}, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
-    md = [f"# Prova gratuita dei siti ({datetime.now(tz=UTC):%d/%m/%Y %H:%M})", "", "## Limitazioni rilevate", ""]
+    riep = riepilogo(reports, gold)
+    (out / "report.json").write_text(json.dumps({"riepilogo": riep, "limitazioni": lim, "siti": reports}, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    md = [f"# Prova gratuita dei siti ({datetime.now(tz=UTC):%d/%m/%Y %H:%M}) — {len(reports)} comuni", "", "## Riepilogo", ""]
+    t = riep["totale"]
+    md += [
+        f"- 1) Rilevamento: siti letti {t['letti']}/{t['siti']} ({t['letti_pct']}%), bloccati 403: {t['bloccati']}, "
+        f"con avvisi: {t['siti_con_avvisi_pct']}%, avvisi totali {t['avvisi']} {t['avvisi_per_categoria']}",
+        f"- 2) Scadenza (gare/manifestazioni): trovata in {t['scadenza']['trovate']}/{t['scadenza']['cercate']} ({t['scadenza']['trovate_pct']}%)",
+        f"- 3) Referenti: sindaco {t['referenti']['con_sindaco_pct']}%, assessore {t['referenti']['con_assessore_pct']}%, "
+        f"tecnico {t['referenti']['con_tecnico_pct']}%, checklist media {t['referenti']['checklist_media']}/12",
+    ]
+    if analisi:
+        md.append(f"- 4) Analisi documentazione: {t['analisi']['documenti_analizzati']} avvisi; campi trovati (%): {t['analisi']['campi_trovati_pct']}")
+    if "riferimento_referenti" in riep:
+        rr = riep["riferimento_referenti"]
+        md.append(f"- Confronto col riferimento (cognomi noti): {rr['trovati']}/{rr['attesi']} ({rr['recall_pct']}%)")
+    md += ["", "| fascia | siti | letti % | avvisi/sito | scadenza % | sindaco % | assessore % | tecnico % |", "|---|---|---|---|---|---|---|---|"]
+    for f, b in riep["per_fascia"].items():
+        md.append(f"| {f} | {b['siti']} | {b['letti_pct']} | {round(b['avvisi'] / max(b['letti'], 1), 1)} | {b['scadenza']['trovate_pct']} | "
+                  f"{b['referenti']['con_sindaco_pct']} | {b['referenti']['con_assessore_pct']} | {b['referenti']['con_tecnico_pct']} |")
+    md += ["", "## Limitazioni rilevate", ""]
     md += [f"- {x}" for x in lim] + [""]
     for s in reports:
         md.append(f"## {s['ente']}  ({s['start']})")
@@ -194,8 +296,27 @@ async def main() -> None:
     ap.add_argument("--comune")
     ap.add_argument("--sito", action="append", default=[], help="Nome=url (senza database)")
     ap.add_argument("--max-hunt", type=int, default=15, help="avvisi per cui cercare la scadenza")
+    ap.add_argument("--campione", help="CSV prodotto da campione.py (nome;url;regione;provincia;fascia)")
+    ap.add_argument("--concorrenza", type=int, default=3, help="siti provati in parallelo")
+    ap.add_argument("--analisi", action="store_true", help="analizza anche la documentazione degli avvisi trovati")
+    ap.add_argument("--oro", help="CSV di riferimento dei referenti (ente;cognome;ruolo)")
     a = ap.parse_args()
-    sites: list[tuple[str, str]] = [tuple(x.split("=", 1)) for x in a.sito]  # type: ignore[misc]
+    sites: list[tuple[str, str, str]] = []
+    for x in a.sito:
+        n, u = x.split("=", 1)
+        sites.append((n, u, "n/d"))
+    if a.campione:
+        import csv
+
+        with open(a.campione, encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f, delimiter=";"):
+                sites.append((r["nome"], r["url"], r.get("fascia") or "n/d"))
+    gold = None
+    if a.oro:
+        import csv
+
+        with open(a.oro, encoding="utf-8-sig", newline="") as f:
+            gold = list(csv.DictReader(f, delimiter=";"))
     if a.region:
         from app.db import SessionLocal
         from shared_models import Entity, WatchlistItem
@@ -209,11 +330,11 @@ async def main() -> None:
             if normalize_region(ent.region) == normalize_region(a.region) and (not a.comune or a.comune.lower() in ent.name.lower()):
                 u = item.url_trasparenza or item.url_albo
                 if u:
-                    sites.append((ent.name, u))
+                    sites.append((ent.name, u, "n/d"))
     if not sites:
         print("Nessun sito: usa --region/--comune oppure --sito Nome=url")
         return
-    await run(sites, Path(a.out), a.max_hunt)
+    await run(sites, Path(a.out), a.max_hunt, a.concorrenza, a.analisi, gold)
 
 
 if __name__ == "__main__":
