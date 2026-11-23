@@ -99,10 +99,28 @@ export interface RicercaReferenti {
 }
 
 export interface AnalisiDocumenti {
-  documenti: { url: string; nome: string; caratteri: number; letto: boolean }[];
+  documenti: { url: string; nome: string; caratteri: number; letto: boolean; livello?: number }[];
+  profondita?: "base" | "approfondita";
   campi: Record<string, { valore: string | number | string[]; fonte: string; contesto: string }>;
   eseguita_il: string;
 }
+
+export interface LavorazioneRecord {
+  stato: "selezionata" | "scartata";
+  note: string | null;
+  decisa_il: string;
+  email_il: string | null;
+  sintesi_il: string | null;
+}
+
+/** The signals a pre-gara can carry (what the e-mail says it is about). */
+export const PREGARA_LABEL: Record<string, string> = {
+  delibera: "Delibera",
+  impegno_spesa: "Impegno di spesa",
+  mandato_verificatore: "Mandato al verificatore",
+  consulenza: "Società di consulenza",
+  manutenzione: "Manutenzione impianti",
+};
 
 export interface RegionRecord {
   id: string;
@@ -124,6 +142,8 @@ export interface RegionRecord {
   referenti_sintesi?: ReferentiSintesi;
   ricerca?: RicercaReferenti | null;
   analisi?: AnalisiDocumenti | null;
+  lavorazione?: LavorazioneRecord | null;
+  pregara_tipi?: string[];
 }
 
 export const SERVIZIO_LABEL: Record<string, string> = {

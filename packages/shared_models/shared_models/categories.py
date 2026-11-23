@@ -103,7 +103,7 @@ def mentions_lighting(text: str | None) -> bool:
 _EXCLUDE = re.compile(
     # paying or managing a contract in progress
     r"liquidazion|pagamento (delle )?fattur|\bfattur[ae]\b|canone (del )?mese|canone mensile|extracanone|"
-    r"impegno di spesa|saldo (incarico|competenze)|rendicontazion|"
+    r"saldo (incarico|competenze)|rendicontazion|"
     r"comunicazione contributo|contributi per investimenti|"
     # already awarded / closed / cancelled
     r"illuminazione votiva|lampade votive|luci votive|aggiudicazion|aggiudicat[oaie]\b|enel energia|post-?informazione|\besito\b|affidamento diretto|affidamento e impegno|presa d.atto|\brevoca\b|"
@@ -113,6 +113,14 @@ _EXCLUDE = re.compile(
     # not a procurement notice
     r"segnalazione guasti|\bordinanza\b|avviso ai cittadini|protocollo d.intesa|protocollo d\u2019intesa|"
     r"assicurativ|polizza|batterie",
+    re.IGNORECASE,
+)
+# "Impegno di spesa" alone is the payment of a contract in progress (noise); together with a process signal it
+# is a pre-gara: the money set aside for the verifier of the proposal, for the advisor, for the maintenance.
+_IMPEGNO_SPESA = re.compile(r"impegno di spesa|impegno (della )?spesa|impegna\w* la spesa|impegno contabile", re.IGNORECASE)
+_IMPEGNO_CONTESTO = re.compile(
+    r"verificator|verifica (del |della |dei )?(pfte|proposta|progetto)|advisor|consulen|supporto (tecnico|specialistico|al rup)|"
+    r"manutenzion|finanza di progetto|project financing|\bpfte\b|\bppp\b|partenariato|proposta",
     re.IGNORECASE,
 )
 # A body that is not a stazione appaltante: its decisions are commentary, not tenders.
@@ -178,6 +186,8 @@ def is_noise(text: str | None, ente: str | None = None) -> bool:
         return True
     low = " ".join((text or "").lower().split())
     if low in _GENERIC_TITLES:
+        return True
+    if _IMPEGNO_SPESA.search(low) and not _IMPEGNO_CONTESTO.search(low):
         return True
     return bool(_EXCLUDE.search(low)) or is_cer_membership(low)
 

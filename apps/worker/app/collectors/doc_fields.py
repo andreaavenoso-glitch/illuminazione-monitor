@@ -42,6 +42,16 @@ _SPESA_ANNUA = re.compile(
     re.IGNORECASE,
 )
 _PEC_ADDR = re.compile(r"[\w.+-]+@pec\.[\w.-]+|[\w.+-]+@[\w-]+\.legalmail\.it|[\w.+-]+@postecert\.it", re.IGNORECASE)
+_ATTO = re.compile(
+    r"(deliberazione|delibera|determina(?:zione)?)\s*(?:n\.?\s*\d+\s*)?(?:di\s+(giunta|consiglio)(?:\s+comunale)?|dirigenziale)?"
+    r"[^.\n]{0,25}?\bn\.?\s*(\d{1,5})(?:\s*/\s*(\d{2,4}))?[^.\n]{0,20}?\bdel\s+(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4})",
+    re.IGNORECASE,
+)
+_IMPEGNO = re.compile(r"impegn\w*[^.€]{0,80}?(?:€|euro)\s*(\d[\d.]*(?:,\d{1,2})?)|(?:€|euro)\s*(\d[\d.]*(?:,\d{1,2})?)[^.]{0,40}?impegn", re.IGNORECASE)
+_INCARICATO = re.compile(
+    r"(?:affidat\w+|incaric\w+|conferit\w+|conferimento\s+(?:dell.)?incarico|a favore d\w+)\s+(?:a|alla|allo|al|del(?:la)?|di)\s+(?:(?:la\s+)?(?:societ[àa]|ditta|studio|r\.?t\.?p\.?)\s+)?"
+    r"((?:[A-ZÀ-Ý][\w&'À-ÿ.-]*\s+){1,6}(?:S\.?\s?r\.?\s?l\.?|S\.?\s?p\.?\s?A\.?|S\.?\s?t\.?\s?p\.?|S\.?\s?c\.?\s?a\.?\s?r\.?\s?l\.?|S\.?\s?n\.?\s?c\.?))",
+)
 _FONDI = re.compile(r"PNRR|FESR|FSC|fondi (europei|strutturali)|conto termico|PR\s+\w+\s+FESR", re.IGNORECASE)
 
 
@@ -95,6 +105,17 @@ def extract_fields(docs: list[tuple[str, str]], today: date) -> dict[str, dict[s
                 put("spesa_annua_eur", v, name, flat[max(0, m.start() - 20): m.end() + 20])
         if m := _PEC_ADDR.search(flat):
             put("pec_invio", m.group(0).lower().rstrip(".-_"), name)
+        if m := _ATTO.search(flat):
+            kind = {"deliberazione": "Delibera", "delibera": "Delibera"}.get(m.group(1).lower(), "Determina")
+            organ = {"giunta": " di Giunta", "consiglio": " di Consiglio"}.get((m.group(2) or "").lower(), "")
+            anno = f"/{m.group(4)}" if m.group(4) else ""
+            put("atto_estremi", f"{kind}{organ} n. {m.group(3)}{anno} del {m.group(5)}", name, flat[max(0, m.start() - 20): m.end() + 30])
+        if m := _IMPEGNO.search(flat):
+            v = _money_to_float(m.group(1) or m.group(2))
+            if v and v >= 500:
+                put("impegno_spesa_eur", v, name, flat[max(0, m.start() - 20): m.end() + 30])
+        if m := _INCARICATO.search(flat):
+            put("incaricato", " ".join(m.group(1).split()), name, flat[max(0, m.start() - 30): m.end() + 20])
         procs = [label for label, rx in _PROCEDURA if rx.search(flat)]
         put("procedura", procs, name)
         if m := _CRITERIO.search(flat):

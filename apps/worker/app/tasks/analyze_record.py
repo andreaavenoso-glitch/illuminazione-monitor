@@ -7,46 +7,43 @@ import asyncio
 import hashlib
 import logging
 from datetime import UTC, datetime
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from app.celery_app import celery_app
+from app.collectors.doc_collect import LIVELLI, collect_docs
 from app.collectors.doc_fields import extract_fields
 from app.db import SessionLocal
-from app.tasks.verify_records import _fetch_plain, attachment_links
+from app.tasks.verify_records import _fetch_plain
 from shared_models import AnalisiRecord, Document, ProcurementRecord
+from shared_models.pregara import pregara_tipi
 from sqlalchemy import select
 
 log = logging.getLogger(__name__)
-MAX_ATTACHMENTS = 8
 
 
-def _name(url: str) -> str:
-    return urlsplit(url).path.rsplit("/", 1)[-1] or urlsplit(url).netloc
-
-
-async def analyze(record_id: UUID) -> dict:
+async def analyze(record_id: UUID, profondita: str = "base") -> dict:
+    livello = LIVELLI.get(profondita, LIVELLI["base"])
+    profondita = profondita if profondita in LIVELLI else "base"
     async with SessionLocal() as s:
         rec = await s.get(ProcurementRecord, record_id)
         if rec is None:
             return {"error": "record non trovato"}
-        link, ente = rec.link_bando, rec.ente
-    text, raw = await _fetch_plain(link)
-    docs: list[tuple[str, str, str]] = []  # (url, name, text)
-    if text:
-        docs.append((link, "pagina dell'avviso", text))
-    if raw:
-        for u in attachment_links(raw, base_url=link, limit=MAX_ATTACHMENTS):
-            t, _ = await _fetch_plain(u)
-            docs.append((u, _name(u), t))
-    readable = [d for d in docs if d[2]]
-    fields = extract_fields([(n, t) for _, n, t in readable], datetime.now(tz=UTC).date())
+        link, ente, descrizione = rec.link_bando, rec.ente, rec.descrizione or ""
+    collected, why = await collect_docs(link, _fetch_plain, livello)
+    readable = [d for d in collected if d.text]
+    today = datetime.now(tz=UTC).date()
+    fields = extract_fields([(d.name, d.text) for d in readable], today)
+    # the kind of pre-gara signal, from the title and from what the documents say
+    tipi = pregara_tipi(descrizione + " " + " ".join(d.text[:4000] for d in readable))
+    if tipi:
+        fields["pregara_tipi"] = {"valore": tipi, "fonte": "titolo e documenti", "contesto": ""}
     documenti = [
-        {"url": u, "nome": n, "caratteri": len(t), "letto": bool(t)} for u, n, t in docs
+        {"url": d.url, "nome": d.name, "caratteri": len(d.text), "letto": bool(d.text), "livello": d.depth}
+        for d in collected
     ]
     async with SessionLocal() as s:
-        for u, n, t in readable:
-            checksum = hashlib.sha256(t.encode("utf-8")).hexdigest()
+        for d in readable:
+            checksum = hashlib.sha256(d.text.encode("utf-8")).hexdigest()
             exists = (
                 await s.execute(
                     select(Document).where(Document.procurement_record_id == record_id, Document.checksum == checksum)
@@ -54,8 +51,9 @@ async def analyze(record_id: UUID) -> dict:
             ).scalar_one_or_none()
             if exists is None:
                 s.add(Document(
-                    procurement_record_id=record_id, filename=n, storage_url=u, text_content=t, checksum=checksum,
-                    mime_type="application/pdf" if u.lower().split("?")[0].endswith(".pdf") else "text/html",
+                    procurement_record_id=record_id, filename=d.name, storage_url=d.url, text_content=d.text,
+                    checksum=checksum,
+                    mime_type="application/pdf" if d.url.lower().split("?")[0].endswith(".pdf") else "text/html",
                 ))
         row = (
             await s.execute(select(AnalisiRecord).where(AnalisiRecord.procurement_record_id == record_id))
@@ -63,12 +61,17 @@ async def analyze(record_id: UUID) -> dict:
         if row is None:
             row = AnalisiRecord(procurement_record_id=record_id)
             s.add(row)
-        row.documenti, row.campi, row.metodo, row.eseguita_il = documenti, fields, "regole", datetime.now(tz=UTC)
+        # a deep analysis is never replaced by a later base one
+        if not (row.profondita == "approfondita" and profondita == "base"):
+            row.documenti, row.campi, row.profondita = documenti, fields, profondita
+            row.metodo, row.eseguita_il = "regole", datetime.now(tz=UTC)
         await s.commit()
-    log.info("analyze_record ente=%s documenti=%d campi=%d", ente, len(readable), len(fields))
-    return {"ente": ente, "documenti": len(docs), "letti": len(readable), "campi": len(fields)}
+    log.info("analyze_record ente=%s livello=%s documenti=%d letti=%d campi=%d stop=%s",
+             ente, profondita, len(collected), len(readable), len(fields), why)
+    return {"ente": ente, "profondita": profondita, "documenti": len(collected), "letti": len(readable),
+            "campi": len(fields), "stop": why}
 
 
-@celery_app.task(name="app.tasks.analyze_record.analyze_record", soft_time_limit=600, time_limit=660)
-def analyze_record(record_id: str) -> dict:
-    return asyncio.run(analyze(UUID(record_id)))
+@celery_app.task(name="app.tasks.analyze_record.analyze_record", soft_time_limit=900, time_limit=960)
+def analyze_record(record_id: str, profondita: str = "base") -> dict:
+    return asyncio.run(analyze(UUID(record_id), profondita))

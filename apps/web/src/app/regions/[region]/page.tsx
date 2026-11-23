@@ -8,6 +8,8 @@ import { api } from "@/lib/api";
 import { ClaudeStatusBanner } from "@/components/ClaudeStatusBanner";
 import { Countdown, Icon, KpiTile, StackedBar, TONE, type Tone } from "@/components/ui";
 import { MenuItem, RegionTabs, type TabDef } from "@/components/RegionTabs";
+import { EmailDraftBox } from "@/components/EmailDraftBox";
+import { LavorazioneView } from "@/components/LavorazioneView";
 import { ReferentiTable } from "@/components/ReferentiTable";
 import { TargetedScan } from "@/components/TargetedScan";
 import { ScanHistory } from "@/components/ScanHistory";
@@ -25,7 +27,7 @@ import {
   type ReferentiRiga,
 } from "@/lib/regions";
 
-type Tab = Categoria | "siti" | "scan" | "verifica" | "referenti" | "storico";
+type Tab = Categoria | "siti" | "scan" | "verifica" | "referenti" | "storico" | "lavorazione";
 
 const CAT_TONE: Record<Categoria, Tone> = { pre_gara: "sky", manifestazione_interesse: "violet", gara: "emerald" };
 
@@ -218,9 +220,34 @@ export default function RegionPage() {
     },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
+  const decide = useMutation({
+    mutationFn: (v: { id: string; stato: "selezionata" | "scartata" | "nessuna" }) =>
+      api.post(`/regions/${encodeURIComponent(region)}/records/${v.id}/lavorazione`, { stato: v.stato }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["region", region] }),
+    onError: (e: Error) => setMessage(`Errore: ${e.message}`),
+  });
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const pacchetto = useMutation({
+    mutationFn: (v: { id: string; profondita?: "base" | "approfondita" }) =>
+      api.post<{ task_id: string; ente: string; profondita: string }>(
+        `/regions/${encodeURIComponent(region)}/records/${v.id}/pacchetto${v.profondita ? `?profondita=${v.profondita}` : ""}`,
+      ),
+    onMutate: (v) => setBusyId(v.id),
+    onSuccess: async (d, v) => {
+      setMessage(`Pacchetto di ${d.ente}: leggo i documenti (${d.profondita}) e cerco i referenti…`);
+      await trackTask(d.task_id, `Pacchetto di ${d.ente}`);
+      setBusyId((cur) => (cur === v.id ? null : cur));
+    },
+    onError: (e: Error, v) => {
+      setBusyId((cur) => (cur === v.id ? null : cur));
+      setMessage(`Errore: ${e.message}`);
+    },
+  });
   const analizza = useMutation({
-    mutationFn: (recordId: string) =>
-      api.post<{ task_id: string; ente: string }>(`/regions/${encodeURIComponent(region)}/records/${recordId}/analizza`),
+    mutationFn: (v: { id: string; profondita?: "base" | "approfondita" }) =>
+      api.post<{ task_id: string; ente: string }>(
+        `/regions/${encodeURIComponent(region)}/records/${v.id}/analizza?profondita=${v.profondita ?? "base"}`,
+      ),
     onSuccess: async (d) => {
       setMessage(`Analisi della documentazione di ${d.ente} avviata: leggo la pagina e gli allegati…`);
       for (let i = 0; i < 80; i++) {
@@ -301,6 +328,7 @@ export default function RegionPage() {
     { key: "pre_gara", label: CATEGORIA_LABEL.pre_gara, n: allIn("pre_gara"), group: "opportunita", tone: "sky" },
     { key: "manifestazione_interesse", label: CATEGORIA_LABEL.manifestazione_interesse, n: allIn("manifestazione_interesse"), group: "opportunita", tone: "violet" },
     { key: "gara", label: CATEGORIA_LABEL.gara, n: allIn("gara"), group: "opportunita", tone: "emerald" },
+    { key: "lavorazione", label: "Lavorazione", n: data.records.filter((r) => r.lavorazione?.stato === "selezionata").length, group: "lavoro", tone: "emerald" },
     { key: "referenti", label: "Referenti", n: (data.referenti_comuni ?? []).filter((r) => r.cercato).length, group: "lavoro", tone: "violet" },
     { key: "verifica", label: "Da verificare", n: data.da_verificare?.length ?? 0, group: "lavoro", tone: "amber" },
     { key: "siti", label: "Siti", n: data.comuni.length + data.siti_regionali.length, group: "lavoro", tone: "neutral" },
@@ -445,6 +473,22 @@ export default function RegionPage() {
         <ScanView region={region} />
       ) : tab === "storico" ? (
         <ScanHistory region={region} />
+      ) : tab === "lavorazione" ? (
+        <LavorazioneView
+          records={data.records}
+          admin={admin}
+          busy={busyId}
+          onDecide={(id, stato) => decide.mutate({ id, stato })}
+          onPacchetto={(id, profondita) => pacchetto.mutate({ id, profondita })}
+          onEmail={(id) => prepareEmail.mutate(id)}
+          onSlide={(id, ente) => download(`records/${id}/slide.pptx`, `scheda_${ente}.pptx`)}
+          renderDraft={(id) =>
+            draft?.id === id ? (
+              <EmailDraftBox draft={draft} onChange={setDraft} copied={copied} onCopied={() => setCopied(true)}
+                onCopyError={() => setMessage("Copia non riuscita: seleziona il testo e copialo a mano.")} onClose={() => setDraft(null)} />
+            ) : null
+          }
+        />
       ) : tab === "referenti" ? (
         <ReferentiTable
           rows={(data.referenti_comuni ?? []).filter((r) => r.cercato)}
@@ -612,41 +656,8 @@ export default function RegionPage() {
                   </button>
                 </div>
                 {draft?.id === r.id && (
-                  <div className="mt-2 space-y-2 rounded-lg border bg-white p-3 dark:border-neutral-700 dark:bg-neutral-900">
-                    <input
-                      className="w-full rounded border px-2 py-1 text-sm font-medium dark:border-neutral-700 dark:bg-neutral-950"
-                      value={draft.oggetto}
-                      onChange={(e) => setDraft({ ...draft, oggetto: e.target.value })}
-                    />
-                    <textarea
-                      className="h-72 w-full rounded border p-2 font-mono text-xs leading-relaxed dark:border-neutral-700 dark:bg-neutral-950"
-                      value={draft.corpo}
-                      onChange={(e) => setDraft({ ...draft, corpo: e.target.value })}
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <button type="button"
-                        className="rounded-lg bg-neutral-900 px-3 py-1 text-xs text-white dark:bg-neutral-100 dark:text-neutral-900"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(`${draft.oggetto}\n\n${draft.corpo}`);
-                            setCopied(true);
-                          } catch {
-                            setMessage("Copia non riuscita: seleziona il testo e copialo a mano.");
-                          }
-                        }}>
-                        {copied ? "Copiato ✔" : "Copia oggetto e testo"}
-                      </button>
-                      <a className="rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                        href={`mailto:?subject=${encodeURIComponent(draft.oggetto)}&body=${encodeURIComponent(draft.corpo)}`}>
-                        Apri nel programma di posta
-                      </a>
-                      <button type="button" className="px-2 py-1 text-xs underline" onClick={() => setDraft(null)}>chiudi</button>
-                    </div>
-                    <p className="text-[11px] text-neutral-500">
-                      Il testo è generato dai dati che l&apos;app conosce (nulla è inventato): controllalo e modificalo prima di inviarlo.
-                      Se il programma di posta non si apre con tutto il testo, usa "Copia".
-                    </p>
-                  </div>
+                  <EmailDraftBox draft={draft} onChange={setDraft} copied={copied} onCopied={() => setCopied(true)}
+                    onCopyError={() => setMessage("Copia non riuscita: seleziona il testo e copialo a mano.")} onClose={() => setDraft(null)} />
                 )}
                 {admin && (
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -658,8 +669,14 @@ export default function RegionPage() {
                     <button type="button" disabled={analizza.isPending}
                       className="rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
                       title="Legge la pagina dell'avviso e i suoi allegati ed estrae i dati (CIG, importo, durata, punti luce, scadenza, RUP…)"
-                      onClick={() => analizza.mutate(r.id)}>
+                      onClick={() => analizza.mutate({ id: r.id })}>
                       {r.analisi ? "Aggiorna analisi documentazione" : "Analizza documentazione"}
+                    </button>
+                    <button type="button" disabled={analizza.isPending}
+                      className="rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800"
+                      title="Legge anche i documenti citati dai documenti (delibere, relazioni): più a fondo, più lento"
+                      onClick={() => analizza.mutate({ id: r.id, profondita: "approfondita" })}>
+                      Approfondisci documentazione
                     </button>
                     <button type="button"
                       className="rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"

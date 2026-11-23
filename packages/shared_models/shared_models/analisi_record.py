@@ -22,4 +22,6 @@ class AnalisiRecord(Base):
     documenti: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # [{url, nome, caratteri, tipo}]
     campi: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # {campo: {valore, fonte, contesto}}
     metodo: Mapped[str] = mapped_column(String, nullable=False, default="regole")
+    # "base" (the page and its documents) or "approfondita" (the documents of the documents, more levels)
+    profondita: Mapped[str] = mapped_column(String, nullable=False, default="base", server_default="base")
     eseguita_il: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

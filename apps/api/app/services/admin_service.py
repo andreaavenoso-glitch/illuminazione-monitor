@@ -137,9 +137,28 @@ def dispatch_find_referenti(record_id: UUID) -> str:
     return str(result.id)
 
 
-def dispatch_analyze_record(record_id: UUID) -> str:
+def dispatch_analyze_record(record_id: UUID, profondita: str = "base") -> str:
     app = _celery_app()
-    return str(app.send_task("app.tasks.analyze_record.analyze_record", kwargs={"record_id": str(record_id)}).id)
+    return str(app.send_task(
+        "app.tasks.analyze_record.analyze_record", kwargs={"record_id": str(record_id), "profondita": profondita}
+    ).id)
+
+
+def pacchetto_steps(record_id: UUID, profondita: str) -> list[tuple[str, dict]]:
+    """What "prepare the package" runs for one notice, in order: read the documents at the given depth, then
+    look for the referenti of the comune. The e-mail and the summary sheet are built on demand from the result."""
+    return [
+        ("app.tasks.analyze_record.analyze_record", {"record_id": str(record_id), "profondita": profondita}),
+        ("app.tasks.find_referenti.find_referenti", {"record_id": str(record_id)}),
+    ]
+
+
+def dispatch_pacchetto(record_id: UUID, profondita: str) -> dict[str, str]:
+    from celery import chain
+
+    app = _celery_app()
+    result = chain(*[app.signature(n, kwargs=k, immutable=True) for n, k in pacchetto_steps(record_id, profondita)]).apply_async()
+    return {"task_id": str(result.id)}
 
 
 def dispatch_find_referenti_ente(ente: str, region: str | None) -> str:

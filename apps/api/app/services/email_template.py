@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from shared_models.pregara import pregara_label, pregara_tipi
+
 TIPO = {"pre_gara": "Pre-gara", "manifestazione_interesse": "Manifestazione di interesse", "gara": "Gara"}
 PROSSIMO_PASSO = {
     "pre_gara": "Valutare un primo contatto con l'amministrazione per posizionarci prima della pubblicazione dell'avviso.",
@@ -26,6 +28,14 @@ CAMPO_LABEL = [
     ("procedura", "Procedura"), ("criterio_aggiudicazione", "Criterio di aggiudicazione"),
     ("finanziamento", "Finanziamento"), ("rup", "RUP"),
 ]
+# A pre-gara e-mail carries the main information of the act (which signal, which act, how much, who was appointed);
+# a manifestazione di interesse / gara adds what the deep reading of the documents found.
+CAMPI_PREGARA = [
+    ("atto_estremi", "Atto"), ("impegno_spesa_eur", "Impegno di spesa"), ("incaricato", "Incaricato"),
+    ("importo_massimo_eur", "Importo"), ("durata", "Durata"),
+]
+CAMPI_EXTRA = [("sopralluogo", "Sopralluogo"), ("pec_invio", "PEC per l'invio dell'offerta"), ("consumi_mwh", "Consumi (MWh/anno)"),
+               ("spesa_annua_eur", "Spesa annua")]
 RUOLO_LABEL = [("sindaco", "Sindaco"), ("assessore", "Assessore ai Lavori pubblici"), ("responsabile_tecnico", "Referente tecnico"), ("rup", "RUP")]
 
 
@@ -45,7 +55,7 @@ def _eur(v: float) -> str:
 
 
 def _campo(key: str, v: Any) -> str:
-    if key == "importo_massimo_eur":
+    if key.endswith("_eur"):
         return _eur(float(v))
     return ", ".join(v) if isinstance(v, list) else str(v)
 
@@ -102,9 +112,18 @@ def build_email(
         righe.append(f"Individuato il: {visto:%d/%m/%Y}")
     righe.append(f"Documento: {link}")
 
-    dati = [(lab, _campo(k, campi[k]["valore"])) for k, lab in CAMPO_LABEL if campi and k in campi]
+    if categoria == "pre_gara":
+        keys = (campi or {}).get("pregara_tipi", {}).get("valore") or pregara_tipi(titolo)
+        if keys:
+            righe.insert(righe.index(f"Oggetto: {titolo or 'non indicato'}") + 1, f"Di cosa si tratta: {pregara_label(keys)}")
+        lista = CAMPI_PREGARA
+    else:
+        lista = CAMPO_LABEL + CAMPI_EXTRA
+    dati = [(lab, _campo(k, campi[k]["valore"])) for k, lab in lista if campi and k in campi]
     if dati:
-        righe += ["", "Dati dalla documentazione:"] + [f"- {lab}: {val}" for lab, val in dati]
+        righe += ["", "Dati dalla documentazione:" if categoria != "pre_gara" else "Dati dell'atto:"] + [f"- {lab}: {val}" for lab, val in dati]
+    if categoria != "pre_gara":
+        righe += ["", "In allegato la scheda di sintesi (Gate 1) con i dati della documentazione analizzata."]
 
     contatti = []
     for ruolo, lab in RUOLO_LABEL:

@@ -13,6 +13,7 @@ from shared_models import (
     ApiUsage,
     Entity,
     JobRun,
+    Lavorazione,
     ProcurementRecord,
     RawRecord,
     Referente,
@@ -25,6 +26,7 @@ from shared_models import (
     WatchlistItem,
 )
 from shared_models.categories import CATEGORIES, categorize_record
+from shared_models.pregara import pregara_tipi
 from shared_models.referenti_logic import affidabilita, azione, press_search_url
 from shared_models.regions import REGIONS, normalize_region
 from shared_models.relevance import (
@@ -328,8 +330,18 @@ async def region_detail(
         for e in (await session.execute(select(Entity).where(Entity.region == region, Entity.pec.is_not(None)))).scalars().all()
     }
     analisi = {
-        a.procurement_record_id: {"documenti": a.documenti or [], "campi": a.campi or {}, "eseguita_il": a.eseguita_il}
+        a.procurement_record_id: {
+            "documenti": a.documenti or [], "campi": a.campi or {}, "eseguita_il": a.eseguita_il,
+            "profondita": a.profondita,
+        }
         for a in (await session.execute(select(AnalisiRecord))).scalars().all()
+    }
+    lavorazioni = {
+        lv.procurement_record_id: {
+            "stato": lv.stato, "note": lv.note, "decisa_il": lv.decisa_il, "email_il": lv.email_il,
+            "sintesi_il": lv.sintesi_il,
+        }
+        for lv in (await session.execute(select(Lavorazione))).scalars().all()
     }
     records = []
     da_verificare: list[dict] = []
@@ -371,6 +383,8 @@ async def region_detail(
             "referenti_sintesi": _sintesi(rec.ente, ref_by_ente.get(rec.ente, [])),
             "ricerca": ricerche.get(rec.ente),
             "analisi": analisi.get(rec.id),
+            "lavorazione": lavorazioni.get(rec.id),
+            "pregara_tipi": pregara_tipi(rec.descrizione) if cat == "pre_gara" else [],
         })
     # Deadlines first (the soonest to expire on top), then the rest, newest first
     # (the sort is stable, so the order of arrival is kept inside each group).
@@ -712,6 +726,7 @@ async def record_email(
         ],
         pec=pec, today=today_utc(),
     )
+    await _stamp(session, rec.id, "email_il")
     return draft
 
 
@@ -767,6 +782,7 @@ async def record_slides(
     else:
         data = build_deck(payload, template=template)
         filename = deck_filename(rec.ente, today)
+    await _stamp(session, rec.id, "sintesi_il")
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -774,21 +790,103 @@ async def record_slides(
     )
 
 
+async def _stamp(session: AsyncSession, record_id: UUID, column: str) -> None:
+    """Note on the notice's work row that the e-mail / the summary sheet was produced (only if it is being worked)."""
+    row = (
+        await session.execute(select(Lavorazione).where(Lavorazione.procurement_record_id == record_id))
+    ).scalar_one_or_none()
+    if row is not None:
+        setattr(row, column, datetime.now(UTC))
+        await session.commit()
+
+
+async def _record_in_region(session: AsyncSession, region: str, record_id: UUID) -> ProcurementRecord:
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    return rec
+
+
 @router.post("/{region}/records/{record_id}/analizza")
 async def analyze_record_endpoint(
     region: str,
     record_id: UUID,
+    profondita: str = Query("base", pattern="^(base|approfondita)$"),
     _: User = Depends(require_role("admin")),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Read the documentation of this notice (page + attachments) and extract the fields."""
+    """Read the documentation of this notice and extract the fields: ``base`` = the page and the documents it
+    links; ``approfondita`` = also the documents those link (delibere, reports), more levels and time."""
     from app.services.admin_service import dispatch_analyze_record
 
     region = _canonical(region)
-    rec = await session.get(ProcurementRecord, record_id)
-    if rec is None or normalize_region(rec.regione) != region:
-        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
-    return {"status": "dispatched", "ente": rec.ente, "task_id": dispatch_analyze_record(record_id)}
+    rec = await _record_in_region(session, region, record_id)
+    return {"status": "dispatched", "ente": rec.ente, "profondita": profondita,
+            "task_id": dispatch_analyze_record(record_id, profondita)}
+
+
+@router.post("/{region}/records/{record_id}/pacchetto")
+async def prepare_package(
+    region: str,
+    record_id: UUID,
+    profondita: str | None = Query(None, pattern="^(base|approfondita)$"),
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Prepare what the e-mail and the summary sheet need: the documents (deep for a manifestazione di interesse
+    and a gara, a first look for a pre-gara unless asked) and the referenti of the comune. The notice is
+    selected for the work if nobody decided yet."""
+    from app.services.admin_service import dispatch_pacchetto
+
+    region = _canonical(region)
+    rec = await _record_in_region(session, region, record_id)
+    cat = _record_category(rec) or "gara"
+    level = profondita or ("base" if cat == "pre_gara" else "approfondita")
+    if (await session.execute(select(Lavorazione).where(Lavorazione.procurement_record_id == rec.id))).scalar_one_or_none() is None:
+        session.add(Lavorazione(procurement_record_id=rec.id, stato="selezionata"))
+        await session.commit()
+    return {"status": "dispatched", "ente": rec.ente, "profondita": level, **dispatch_pacchetto(record_id, level)}
+
+
+class LavorazioneIn(BaseModel):
+    stato: str  # selezionata | scartata | nessuna (back to "not looked at yet")
+    note: str | None = None
+
+
+@router.post("/{region}/records/{record_id}/lavorazione")
+async def set_lavorazione(
+    region: str,
+    record_id: UUID,
+    body: LavorazioneIn,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Select a notice for the work, leave it, or put it back among the ones not looked at yet."""
+    from shared_models.lavorazione import STATI
+
+    region = _canonical(region)
+    rec = await _record_in_region(session, region, record_id)
+    if body.stato not in (*STATI, "nessuna"):
+        raise HTTPException(status_code=422, detail="stato non valido")
+    row = (
+        await session.execute(select(Lavorazione).where(Lavorazione.procurement_record_id == rec.id))
+    ).scalar_one_or_none()
+    if body.stato == "nessuna":
+        if row is not None:
+            await session.delete(row)
+        await session.commit()
+        return {"stato": None}
+    if row is None:
+        row = Lavorazione(procurement_record_id=rec.id, stato=body.stato)
+        session.add(row)
+    else:
+        if row.stato != body.stato:
+            row.decisa_il = datetime.now(UTC)
+        row.stato = body.stato
+    if body.note is not None:
+        row.note = body.note.strip() or None
+    await session.commit()
+    return {"stato": row.stato, "note": row.note}
 
 
 @router.post("/{region}/referenti/ente")

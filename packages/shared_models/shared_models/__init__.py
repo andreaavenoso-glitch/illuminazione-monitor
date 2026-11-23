@@ -14,6 +14,7 @@ from shared_models.enums import (
     ValidationLevel,
 )
 from shared_models.job_run import JobRun
+from shared_models.lavorazione import Lavorazione
 from shared_models.procurement_record import ProcurementRecord
 from shared_models.raw_record import RawRecord
 from shared_models.record_event import RecordEvent
@@ -35,6 +36,7 @@ __all__ = [
     "Document",
     "Entity",
     "JobRun",
+    "Lavorazione",
     "PreGaraForza",
     "ProcurementRecord",
     "RawRecord",

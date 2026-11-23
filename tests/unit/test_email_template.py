@@ -57,3 +57,37 @@ def test_documentation_data_and_referenti_are_listed():
 def test_each_category_has_its_next_step():
     assert "prima della pubblicazione" in _mail(categoria="pre_gara")["corpo"]
     assert "requisiti" in _mail(categoria="gara")["corpo"]
+
+
+def _mail_by_category(cat, descr, campi=None):
+    from datetime import date
+
+    from app.services.email_template import build_email
+
+    return build_email(
+        categoria=cat, ente="Comune di Prova", descrizione=descr, link="https://c.it/a", scadenza=None,
+        visto_il=None, servizi=["illuminazione_pubblica"], provincia="Matera", campi=campi, referenti=[],
+        pec=None, today=date(2026, 11, 23),
+    )["corpo"]
+
+
+def test_pre_gara_email_says_which_signal_and_the_main_data_of_the_act():
+    campi = {
+        "atto_estremi": {"valore": "Delibera di Giunta n. 115 del 02/09/2026"},
+        "impegno_spesa_eur": {"valore": 24400.0},
+        "incaricato": {"valore": "Verifica Tecnica S.r.l."},
+        "cig": {"valore": "B1234567AB"},
+    }
+    body = _mail_by_category("pre_gara", "Delibera di Giunta con impegno di spesa per la manutenzione degli impianti", campi)
+    assert "Di cosa si tratta: Delibera, Impegno di spesa, Manutenzione degli impianti" in body
+    assert "Atto: Delibera di Giunta n. 115 del 02/09/2026" in body and "Impegno di spesa: € 24.400,00" in body
+    assert "Incaricato: Verifica Tecnica S.r.l." in body
+    assert "CIG" not in body and "scheda di sintesi" not in body  # short: the main information only
+
+
+def test_manifestazione_and_gara_email_have_the_full_data_and_mention_the_summary_sheet():
+    campi = {"cig": {"valore": "B1234567AB"}, "sopralluogo": {"valore": "Obbligatorio, da concordare"}}
+    for cat in ("manifestazione_interesse", "gara"):
+        body = _mail_by_category(cat, "Avviso per illuminazione pubblica", campi)
+        assert "CIG: B1234567AB" in body and "Sopralluogo: Obbligatorio, da concordare" in body
+        assert "In allegato la scheda di sintesi" in body and "Di cosa si tratta" not in body
