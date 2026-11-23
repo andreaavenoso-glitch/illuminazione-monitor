@@ -105,11 +105,37 @@ export default function RegionPage() {
   });
   const referenti = useMutation({
     mutationFn: (recordId: string) =>
-      api.post(`/regions/${encodeURIComponent(region)}/records/${recordId}/referenti`),
-    onSuccess: () => {
-      setMessage(
-        "Ricerca referenti avviata (circa 1-2 minuti): leggo le pagine di giunta, uffici tecnici e il documento stesso. Compaiono nella scheda quando ha finito.",
-      );
+      api.post<{ task_id: string; ente: string }>(`/regions/${encodeURIComponent(region)}/records/${recordId}/referenti`),
+    onSuccess: async (d) => {
+      setMessage(`Ricerca referenti di ${d.ente} avviata: leggo il documento e le pagine di giunta e uffici tecnici (1-2 minuti)…`);
+      // Wait for the real outcome instead of leaving the user guessing.
+      for (let i = 0; i < 80; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        try {
+          const st = await api.get<{ status: string; result?: { trovati?: number; pagine?: number; metodo?: string; error?: string }; error?: string }>(
+            `/admin/task-status/${d.task_id}`,
+          );
+          if (st.status === "SUCCESS") {
+            const r = st.result ?? {};
+            setMessage(
+              r.error
+                ? `Referenti: ${r.error}`
+                : r.trovati
+                  ? `Referenti di ${d.ente}: trovati ${r.trovati} (metodo: ${r.metodo ?? "?"}, pagine lette: ${r.pagine ?? "?"}).`
+                  : `Referenti di ${d.ente}: nessun nome trovato (pagine lette: ${r.pagine ?? 0}, metodo: ${r.metodo ?? "?"}). I siti senza una pagina di giunta leggibile vanno guardati a mano.`,
+            );
+            qc.invalidateQueries({ queryKey: ["region", region] });
+            return;
+          }
+          if (st.status === "FAILURE") {
+            setMessage(`Ricerca referenti fallita: ${(st.error ?? "errore sconosciuto").slice(0, 300)}`);
+            return;
+          }
+        } catch {
+          /* keep waiting */
+        }
+      }
+      setMessage("La ricerca referenti sta richiedendo più del previsto: controlla i log del worker (docker compose logs worker).");
     },
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
