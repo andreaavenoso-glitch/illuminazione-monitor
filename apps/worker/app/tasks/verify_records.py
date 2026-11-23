@@ -25,6 +25,7 @@ import httpx
 from app import claude_state
 from app.celery_app import celery_app
 from app.collectors.adaptive_fetch import adaptive_fetch_result
+from app.collectors.deadline_hunt import Doc, hunt_deadline
 from app.config import WorkerSettings, get_worker_settings
 from app.db import SessionLocal
 from bs4 import BeautifulSoup
@@ -122,6 +123,41 @@ async def _fetch_plain(url: str) -> tuple[str, str | None]:
     return "", None
 
 
+async def fetch_doc(url: str, depth: int, settings: WorkerSettings) -> Doc:
+    """One document for the deadline hunt, with a note on why it could not be read (scan, blocked, ...)."""
+    low = url.lower().split("?")[0]
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=_UA) as c:
+            r = await c.get(url)
+    except Exception as exc:  # noqa: BLE001
+        return await _browser_doc(url, depth, settings, f"connessione non riuscita ({type(exc).__name__})")
+    if r.status_code >= 400:
+        return await _browser_doc(url, depth, settings, f"errore {r.status_code}")
+    ctype = r.headers.get("content-type", "").lower()
+    if "pdf" in ctype or low.endswith(".pdf") or r.content[:4] == b"%PDF":
+        try:
+            import pypdf  # noqa: F401
+        except ImportError:
+            return Doc(url, "pdf", "", None, depth, "lettore PDF mancante: ricostruire il worker")
+        text = pdf_to_text(r.content)[:MAX_TEXT_CHARS]
+        return Doc(url, "pdf", text, None, depth, "" if text else "PDF senza testo (scansione) o protetto")
+    text = html_to_text(r.text)[:MAX_TEXT_CHARS]
+    if len(text) < 200:  # almost empty: probably built by JavaScript
+        return await _browser_doc(url, depth, settings, "pagina quasi vuota")
+    return Doc(url, "html", text, r.text, depth)
+
+
+async def _browser_doc(url: str, depth: int, settings: WorkerSettings, why: str) -> Doc:
+    res = await adaptive_fetch_result(
+        url, timeout=30, max_html_chars=settings.crawl_max_html_chars,
+        playwright_min_chars=settings.smart_collector_playwright_min_chars,
+        playwright_wait_ms=settings.smart_collector_playwright_wait_ms, label="verify", try_variants=False,
+    )
+    if res.text:
+        return Doc(url, "html", html_to_text(res.text)[:MAX_TEXT_CHARS], res.text, depth, f"letta col browser ({why})")
+    return Doc(url, "html", "", None, depth, f"non apribile: {why}")
+
+
 async def fetch_document_text(url: str, settings: WorkerSettings, *, attachments: bool = True) -> str:
     """Text of the document behind ``url`` ('' when it cannot be read). For a web page,
     the text of its own attached documents (up to 3 PDFs) is appended: the deadline is
@@ -184,7 +220,9 @@ async def _claude_deadline(text: str, url: str, settings: WorkerSettings) -> dat
         return None
 
 
-async def verify_region(region: str, *, limit: int = 200, only_strict: bool = False) -> dict[str, int]:
+async def verify_region(
+    region: str, *, limit: int = 200, only_strict: bool = False, force: bool = False
+) -> dict[str, int]:
     settings = get_worker_settings()
     today = today_utc()
     now = datetime.now(tz=UTC)
@@ -209,17 +247,30 @@ async def verify_region(region: str, *, limit: int = 200, only_strict: bool = Fa
             if cat not in STRICT_CATEGORIES and (r.scadenza is not None or only_strict):
                 continue  # pre-gara with a deadline is already dated; on the automatic run pre-gare are left to "Verifica ora"
             if r.verified_at is not None and (
-                r.verifica_esito != "non_trovata" or r.verified_at > now - timedelta(days=RECHECK_AFTER_DAYS)
+                r.verifica_esito != "non_trovata"
+                or (not force and r.verified_at > now - timedelta(days=RECHECK_AFTER_DAYS))
             ):
-                continue
+                continue  # settled; a "not found" is tried again after a week, or at once on "Verifica ora"
             todo.append((r, cat))
         sem = asyncio.Semaphore(3)
 
         async def one(r: ProcurementRecord, cat: str) -> None:
             async with sem:
                 try:
-                    text = await asyncio.wait_for(fetch_document_text(r.link_bando, settings), timeout=120)
-                    esito, deadline, act = judge(text, today, cat)
+                    deep = cat in STRICT_CATEGORIES  # a pre-gara only needs the date of its own page
+                    hunt = await asyncio.wait_for(
+                        hunt_deadline(
+                            r.link_bando, lambda u, d: fetch_doc(u, d, settings),
+                            max_docs=12 if deep else 2, max_depth=3 if deep else 1,
+                        ),
+                        timeout=240,
+                    )
+                    text = hunt.text
+                    r.verifica_nota = hunt.trail()[:900]
+                    if hunt.deadline is not None:
+                        esito, deadline, act = ("aperto" if hunt.deadline >= today else "chiuso"), hunt.deadline, None
+                    else:
+                        esito, deadline, act = judge(text, today, cat)
                     if esito == "claude":
                         # the deadline wording was not parsed: Claude when available, else unknown
                         deadline = (
@@ -248,9 +299,11 @@ async def verify_region(region: str, *, limit: int = 200, only_strict: bool = Fa
 
 
 @celery_app.task(name="app.tasks.verify_records.verify_region_records", soft_time_limit=3600, time_limit=3700)
-def verify_region_records(region: str, respect_stop: bool = False, only_strict: bool = False) -> dict[str, int]:
+def verify_region_records(
+    region: str, respect_stop: bool = False, only_strict: bool = False, force: bool = False
+) -> dict[str, int]:
     from app.stop import region_stopped
 
     if respect_stop and asyncio.run(region_stopped(region)):  # chained after a collection the user stopped
         return {"checked": 0, "stopped": 1}
-    return asyncio.run(verify_region(region, only_strict=only_strict))
+    return asyncio.run(verify_region(region, only_strict=only_strict, force=force))

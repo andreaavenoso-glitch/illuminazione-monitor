@@ -347,6 +347,7 @@ async def region_detail(
                 "id": str(rec.id), "categoria": cat, "ente": rec.ente, "descrizione": rec.descrizione,
                 "link": rec.link_bando, "first_seen_at": rec.first_seen_at,
                 "verificato": rec.verifica_esito == "non_trovata",
+                "nota": rec.verifica_nota,
                 "scadenza": rec.scadenza,
                 "servizi": [k for k in (rec.servizio or "").split(",") if k],
             })
@@ -357,6 +358,7 @@ async def region_detail(
                 continue
         records.append({
             "confermato": state == APERTO,
+            "verifica_nota": rec.verifica_nota,
             "scaduto": not valid,
             "data_non_verificata": no_date,
             "id": str(rec.id), "categoria": cat, "ente": rec.ente,

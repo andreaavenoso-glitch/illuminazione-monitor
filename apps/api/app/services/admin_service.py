@@ -127,7 +127,7 @@ def region_scan_steps(
 
 def dispatch_verify(region: str) -> str:
     app = _celery_app()
-    result = app.send_task("app.tasks.verify_records.verify_region_records", kwargs={"region": region})
+    result = app.send_task("app.tasks.verify_records.verify_region_records", kwargs={"region": region, "force": True})
     return str(result.id)
 
 

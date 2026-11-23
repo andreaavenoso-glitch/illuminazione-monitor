@@ -474,6 +474,7 @@ export default function RegionPage() {
                 </span>
               </div>
               <p className="mt-1">{r.descrizione}</p>
+              {r.nota && <p className="mt-1 rounded bg-neutral-50 p-2 text-[11px] text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">Provato: {r.nota}</p>}
               <a href={r.link} target="_blank" rel="noreferrer" className="text-xs text-sky-700 underline">apri il documento</a>
             </li>
           ))}

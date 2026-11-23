@@ -117,6 +117,7 @@ export interface RegionRecord {
   score: number | null;
   scaduto: boolean;
   confermato?: boolean;
+  verifica_nota?: string | null;
   data_non_verificata?: boolean;
   servizi: string[];
   referenti: Referente[];
@@ -147,6 +148,7 @@ export interface RecordDaVerificare {
   link: string;
   first_seen_at: string | null;
   verificato: boolean;
+  nota?: string | null;
   scadenza?: string | null;
   servizi: string[];
 }

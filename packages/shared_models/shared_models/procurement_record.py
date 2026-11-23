@@ -68,6 +68,8 @@ class ProcurementRecord(Base):
     # old dates), "non_trovata" (no deadline in the document: stays "da verificare").
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verifica_esito: Mapped[str | None] = mapped_column(String, nullable=True)
+    # What the check tried (pages, PDFs, depth) and why nothing was found: shown in "Da verificare".
+    verifica_nota: Mapped[str | None] = mapped_column(Text, nullable=True)
     # When this record was included in a regional email digest (None = not yet).
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
