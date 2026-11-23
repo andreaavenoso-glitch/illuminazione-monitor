@@ -24,11 +24,27 @@ from app.config import get_worker_settings
 from app.db import SessionLocal
 from app.tasks.verify_records import fetch_document_text, html_to_text
 from shared_models import Entity, ProcurementRecord, Referente, WatchlistItem
+from shared_models.referenti_logic import election_date, freshness, has_decree, page_date
 from sqlalchemy import select
 
 log = logging.getLogger(__name__)
 
 MAX_PAGES = 6
+
+
+def _apply_freshness(person: dict, text: str, elezione, today) -> dict:
+    """Downgrade a verified name whose page is too old for its role (see referenti_logic)."""
+    pos = text.lower().find(person["nome"].lower().split()[-1])
+    window = text[max(0, pos - 300): pos + 300] if pos >= 0 else ""
+    data_fonte = page_date(text, today)
+    ok, motivo = freshness(person["ruolo"], data_fonte, elezione, has_decree(window), today)
+    out = {**person, "data_fonte": data_fonte, "elezione_data": elezione, "motivo": None}
+    if person["stato"] != "verificato":
+        out["motivo"] = "ruolo non scritto accanto al nome"
+    elif not ok:
+        out["stato"] = "da_confermare"
+        out["motivo"] = motivo
+    return out
 
 
 async def _site_urls(session, ente: str, regione: str | None, record_link: str) -> list[str]:
@@ -83,6 +99,9 @@ async def find_for_record(record_id: UUID) -> dict:
             text = await fetch_document_text(u, settings)
             if text:
                 pages.append((u, text))
+    today = datetime.now(tz=UTC).date()
+    # last election written on any page of the ente
+    elezione = max((e for _, t in pages if (e := election_date(t, today))), default=None)
     found: list[tuple[dict, str]] = []
     claude_calls = 0
     by_rules = False
@@ -104,7 +123,7 @@ async def find_for_record(record_id: UUID) -> dict:
         for person in proposals:
             checked = verify_person(person, text)
             if checked:
-                found.append((checked, url))
+                found.append((_apply_freshness(checked, text, elezione, today), url))
     people = merge_people(found)
     now = datetime.now(tz=UTC)
     async with SessionLocal() as session:

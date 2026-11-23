@@ -122,10 +122,10 @@ export default function RegionPage() {
     onError: (e: Error) => setMessage(`Errore: ${e.message}`),
   });
 
-  const downloadCsv = async () => {
+  const download = async (path: string, filename: string) => {
     const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     const token = getToken();
-    const res = await fetch(`${base}/regions/${encodeURIComponent(region)}/records.csv`, {
+    const res = await fetch(`${base}/regions/${encodeURIComponent(region)}/${path}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) {
@@ -135,10 +135,11 @@ export default function RegionPage() {
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
     a.href = url;
-    a.download = `record_${region}.csv`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   };
+  const downloadCsv = () => download("records.csv", `record_${region}.csv`);
 
   const daysLeft = (d: string | null): number | null =>
     d ? Math.ceil((Date.parse(d) - Date.now()) / 86_400_000) : null;
@@ -206,6 +207,16 @@ export default function RegionPage() {
                 title="Scarica tutti i record della regione in un file CSV (anche quelli scaduti, segnati)"
                 onClick={downloadCsv}>
                 Scarica CSV
+              </button>
+              <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                title="Referenti dei comuni: indice e un foglio per provincia, da condividere con i colleghi"
+                onClick={() => download("referenti.xlsx", `referenti_${region}.xlsx`)}>
+                Referenti (xlsx)
+              </button>
+              <button type="button" className="rounded border px-3 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                title="Come sopra, con affidabilità, azione, fonti e motivi (uso interno)"
+                onClick={() => download("referenti.xlsx?interno=true", `referenti_${region}_interno.xlsx`)}>
+                Referenti interno
               </button>
             </div>
           )}
@@ -331,6 +342,16 @@ export default function RegionPage() {
                 {r.link}
               </a>
               <div className="mt-2 border-t pt-2 text-xs dark:border-neutral-800">
+                {r.referenti_sintesi && (r.referenti ?? []).length > 0 && (
+                  <p className="mb-1 text-neutral-600 dark:text-neutral-400">
+                    Affidabilità <b>{r.referenti_sintesi.etichetta}</b> ({r.referenti_sintesi.affidabilita_pct}%) · {r.referenti_sintesi.azione}
+                    {" · "}
+                    <a className="underline" href={r.referenti_sintesi.stampa_url} target="_blank" rel="noreferrer"
+                      title="Cerca sulla stampa degli ultimi 6 mesi rimpasti o cambi di assessore">
+                      controlla la stampa
+                    </a>
+                  </p>
+                )}
                 {(r.referenti ?? []).length > 0 ? (
                   <ul className="space-y-1">
                     {r.referenti.map((p) => (
@@ -339,7 +360,11 @@ export default function RegionPage() {
                         {p.qualifica && <span className="text-neutral-500"> ({p.qualifica})</span>}
                         {p.email && <> · <a className="text-sky-700 underline" href={`mailto:${p.email}`}>{p.email}</a></>}
                         {p.telefono && <> · {p.telefono}</>}
-                        {p.stato === "da_confermare" && <span className="ml-1 rounded bg-amber-100 px-1 text-amber-900">da confermare</span>}
+                        {p.stato === "da_confermare" && (
+                          <span className="ml-1 rounded bg-amber-100 px-1 text-amber-900" title={p.motivo ?? undefined}>
+                            da confermare{p.motivo ? `: ${p.motivo}` : ""}
+                          </span>
+                        )}
                         {" "}<a className="text-neutral-500 underline" href={p.fonte_url} target="_blank" rel="noreferrer" title={p.citazione ?? "fonte"}>fonte</a>
                       </li>
                     ))}

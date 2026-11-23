@@ -57,6 +57,16 @@ export interface Referente {
   citazione: string | null;
   stato: "verificato" | "da_confermare";
   verified_at: string;
+  data_fonte?: string | null;
+  elezione_data?: string | null;
+  motivo?: string | null;
+}
+
+export interface ReferentiSintesi {
+  affidabilita_pct: number;
+  etichetta: "certo" | "probabile" | "ipotetico";
+  azione: string;
+  stampa_url: string;
 }
 
 export const RUOLO_LABEL: Record<Referente["ruolo"], string> = {
@@ -81,6 +91,7 @@ export interface RegionRecord {
   data_non_verificata?: boolean;
   servizi: string[];
   referenti: Referente[];
+  referenti_sintesi?: ReferentiSintesi;
 }
 
 export const SERVIZIO_LABEL: Record<string, string> = {

@@ -23,6 +23,7 @@ from shared_models import (
     WatchlistItem,
 )
 from shared_models.categories import CATEGORIES, categorize_record
+from shared_models.referenti_logic import affidabilita, azione, press_search_url
 from shared_models.regions import REGIONS, normalize_region
 from shared_models.relevance import (
     APERTO,
@@ -90,6 +91,11 @@ def _state(r: ProcurementRecord, cat: str | None, today) -> tuple[str, bool]:
 
 def _open(r: ProcurementRecord, cat: str | None, today) -> bool:
     return _state(r, cat, today)[0] == APERTO
+
+
+def _sintesi(ente: str, people: list[dict]) -> dict:
+    pct, label = affidabilita(people)
+    return {"affidabilita_pct": pct, "etichetta": label, "azione": azione(people), "stampa_url": press_search_url(ente)}
 
 
 def _dedupe(records: list) -> list:
@@ -264,6 +270,7 @@ async def region_detail(
             "nome": p.nome, "ruolo": p.ruolo, "qualifica": p.qualifica, "email": p.email,
             "telefono": p.telefono, "fonte_url": p.fonte_url, "citazione": p.citazione,
             "stato": p.stato, "verified_at": p.verified_at,
+            "data_fonte": p.data_fonte, "elezione_data": p.elezione_data, "motivo": p.motivo,
         })
     records = []
     da_verificare: list[dict] = []
@@ -298,6 +305,7 @@ async def region_detail(
             "score": rec.score_commerciale,
             "servizi": [k for k in (rec.servizio or "").split(",") if k],
             "referenti": ref_by_ente.get(rec.ente, []),
+            "referenti_sintesi": _sintesi(rec.ente, ref_by_ente.get(rec.ente, [])),
         })
     # Deadlines first (the soonest to expire on top), then the rest, newest first
     # (the sort is stable, so the order of arrival is kept inside each group).
@@ -325,6 +333,37 @@ async def region_detail(
         "records": records[:300],
         "categorie": list(CATEGORIES),
     }
+
+
+@router.get("/{region}/referenti.xlsx")
+async def region_referenti_xlsx(
+    region: str,
+    interno: bool = Query(False, description="Add the working columns (reliability, action, sources)"),
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Referenti of the region's enti in a workbook: an index and one sheet per province,
+    ready to share. ``interno=true`` adds the working columns."""
+    from app.services.referenti_export import referenti_workbook
+
+    region = _canonical(region)
+    rows = (await session.execute(select(Referente).where(Referente.regione == region))).scalars().all()
+    provs = {
+        e.name: e.province
+        for e in (await session.execute(select(Entity).where(Entity.region == region))).scalars().all()
+    }
+    by_ente: dict[str, list[dict]] = {}
+    for p in rows:
+        by_ente.setdefault(p.ente, []).append({
+            "ruolo": p.ruolo, "nome": p.nome, "stato": p.stato, "email": p.email, "telefono": p.telefono,
+            "fonte_url": p.fonte_url, "motivo": p.motivo, "verified_at": p.verified_at,
+        })
+    entries = [{"ente": e, "provincia": provs.get(e), "people": ppl} for e, ppl in by_ente.items()]
+    return Response(
+        content=referenti_workbook(entries, interno=interno),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="referenti_{region}.xlsx"'},
+    )
 
 
 @router.get("/{region}/records.csv")

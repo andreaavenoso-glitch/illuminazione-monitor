@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +30,11 @@ class Referente(Base):
     # verificato: name and role read together on the cited page; da_confermare: name found
     # on the page but the role is not next to it.
     stato: Mapped[str] = mapped_column(String, nullable=False, default="da_confermare")
+    # Date of the cited page ("aggiornato al ..."), the last election found on the ente's pages,
+    # and why a name is only "da_confermare" (see shared_models.referenti_logic).
+    data_fonte: Mapped[date | None] = mapped_column(Date, nullable=True)
+    elezione_data: Mapped[date | None] = mapped_column(Date, nullable=True)
+    motivo: Mapped[str | None] = mapped_column(String, nullable=True)
     verified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

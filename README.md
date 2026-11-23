@@ -191,3 +191,14 @@ chiave assente), prosegue con regole fisse gratuite invece di fermarsi (Claude v
 `claude` non usa mai le regole; `rules` non chiama mai Claude. Le regole estraggono gli avvisi dagli elenchi
 strutturati e i referenti da righe tipo "Sindaco: Mario Rossi"; le scadenze si leggono dai documenti con "Verifica ora".
 Le pagine senza struttura a elenco richiedono Claude. Dopo la modifica: `bash aggiorna.sh`.
+
+## Referenti (sindaco, assessore ai LL.PP., responsabile tecnico, RUP)
+
+"Trova referenti" su ogni avviso legge i documenti e le pagine del comune. Un nome e' **verificato** solo se il ruolo e'
+scritto accanto al nome e la pagina e' abbastanza recente: politici = pagina successiva all'ultima elezione (se la data
+delle elezioni non si trova: aggiornata negli ultimi 12 mesi); tecnici = pagina degli ultimi 12 mesi o decreto di incarico.
+Altrimenti "da confermare" con il motivo. Il controllo della stampa degli ultimi 6 mesi (rimpasti) resta manuale: link
+"controlla la stampa". Per comune: affidabilita' (certo 100%, probabile 70-99%, ipotetico sotto) e azione (Invia /
+Invia - verifica nomi / Invia con cautela). Senza il nome del tecnico: PEC "alla c.a. del Sindaco, dell'Assessore ai LL.PP.
+e del Responsabile dell'Area Tecnica". Export: "Referenti (xlsx)" = indice + un foglio per provincia (da condividere);
+"Referenti interno" aggiunge affidabilita', azione, fonti e motivi.
