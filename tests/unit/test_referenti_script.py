@@ -171,3 +171,10 @@ def test_person_page_gives_name_from_title_and_role_from_the_first_lines():
     raw2 = "<h1>Anna Verdi</h1><p>Consigliere comunale</p>"
     assert person_from_page("https://c.it/it/persone/verdi-anna", "Anna Verdi Consigliere comunale", raw2) is None
     assert person_from_page("https://c.it/it/news/x", text, raw) is None
+
+
+def test_unknown_role_person_is_after_giunta_and_uffici():
+    from app.collectors.referenti_script import score_link
+
+    assert score_link("Mario Rossi", "/it/persone/rossi-mario", person_ok=True)[0] < score_link("Uffici", "/uffici")[0]
+    assert score_link("Giunta Comunale", "/it/unita_organizzative/giunta-comunale")[0] >= 30

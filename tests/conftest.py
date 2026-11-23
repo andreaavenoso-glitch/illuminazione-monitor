@@ -34,3 +34,7 @@ def _no_fetch_retry(monkeypatch):
     except Exception:  # noqa: BLE001 -- tests that do not need the worker
         return
     monkeypatch.setattr(adaptive_fetch, "RETRY_ENABLED", False)
+    monkeypatch.setattr(adaptive_fetch, "HOST_MIN_INTERVAL", 0.0)
+    adaptive_fetch._HOST_NEXT.clear()
+    adaptive_fetch._HOST_INTERVAL.clear()
+    adaptive_fetch._RETRY_AFTER.clear()

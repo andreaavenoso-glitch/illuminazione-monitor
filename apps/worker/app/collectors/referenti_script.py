@@ -205,7 +205,8 @@ def score_link(text: str, href: str, person_ok: bool = False) -> tuple[int, set[
     # a person's own page: the link text is a name, possibly with the role in front/behind
     bare = re.sub(r"(?i)\b(sindaco|sindaca|assessore|assessora|vicesindaco|dott\.?|dr\.?|ing\.?|arch\.?|avv\.?|geom\.?)\b", "", text)
     if looks_like_name(" ".join(bare.split())) and _title_case(bare) and (person_ok or _ROLE_IN_TEXT.search(text) or _PERSON_HREF.search(href)):
-        score, tags = max(score, 40), tags | {"scheda"}
+        evidence = bool(_ROLE_IN_TEXT.search(text) or _PERSON_HREF.search(href))
+        score, tags = max(score, 40 if evidence else 20), tags | {"scheda"}  # no role seen: after giunta / uffici
     return score, tags
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
@@ -169,6 +170,39 @@ async def _adaptive_fetch_result_impl(
     return first
 
 
+# Politeness: at most one request per HOST_MIN_INTERVAL to the same site (many municipal sites answer 429 to
+# a crawler that asks faster); after a 429 the site is asked more slowly for the rest of the run.
+HOST_MIN_INTERVAL = 1.5
+SLOW_INTERVAL = 4.0
+_HOST_NEXT: dict[str, float] = {}
+_HOST_INTERVAL: dict[str, float] = {}
+_RETRY_AFTER: dict[str, float] = {}
+
+
+async def _wait_turn(netloc: str) -> None:
+    """Reserve the next slot for this host (no await between reading and writing: safe without a lock)."""
+    import asyncio
+    import time
+
+    interval = _HOST_INTERVAL.get(netloc, HOST_MIN_INTERVAL)
+    if interval <= 0:
+        return
+    now = time.monotonic()
+    slot = max(now, _HOST_NEXT.get(netloc, 0.0))
+    _HOST_NEXT[netloc] = slot + interval
+    if slot > now:
+        await asyncio.sleep(slot - now)
+
+
+def _note_429(netloc: str, exc: BaseException) -> None:
+    resp = getattr(exc, "response", None)
+    raw = resp.headers.get("Retry-After", "") if resp is not None else ""
+    wait = float(raw) if raw.strip().isdigit() else 10.0
+    _RETRY_AFTER[netloc] = min(max(wait, 3.0), 30.0)
+    if HOST_MIN_INTERVAL > 0:
+        _HOST_INTERVAL[netloc] = max(_HOST_INTERVAL.get(netloc, 0.0), SLOW_INTERVAL)
+
+
 async def _fetch_single(
     url: str,
     *,
@@ -193,11 +227,14 @@ async def _fetch_single(
         },
     ) as http:
         try:
+            await _wait_turn(urlsplit(url).netloc)
             resp = await http.get(url)
             resp.raise_for_status()
             html = resp.text
         except (httpx.HTTPError, httpx.TimeoutException) as exc:
             http_error = classify_fetch_error(exc)
+            if http_error == "http_429":
+                _note_429(urlsplit(url).netloc, exc)
             # str(exc) is empty for timeouts: log the kind and type instead.
             log.warning(
                 "adaptive_fetch.fetch_failed", label=label, url=url,
@@ -211,7 +248,7 @@ async def _fetch_single(
     browser_errors: list[str] = []
     # A host that does not even answer the TCP connection in time will not
     # answer a browser either (one dead albo cost 140 s of timeouts + browser).
-    host_dead = http_error == "timeout" and not cleaned
+    host_dead = http_error in ("timeout", "http_429") and not cleaned  # a throttled site: the browser only adds load
     if len(cleaned) < playwright_min_chars and (cleaned or browser_if_http_failed) and not host_dead:
         rendered = await _fetch_with_playwright(
             url,
@@ -314,13 +351,12 @@ def _worth_retry(netloc: str, error: str | None) -> bool:
 
 async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:
     import asyncio
-    from urllib.parse import urlsplit
-
     netloc = urlsplit(url).netloc
     res = await _adaptive_fetch_result_impl(url, **kwargs)
     if not res.text and RETRY_ENABLED and _worth_retry(netloc, res.error):
-        await asyncio.sleep(RETRY_PAUSE)
-        log.info("adaptive_fetch.retry", url=url, error=res.error)
+        pause = _RETRY_AFTER.get(netloc, RETRY_PAUSE) if res.error == "http_429" else RETRY_PAUSE
+        await asyncio.sleep(pause)
+        log.info("adaptive_fetch.retry", url=url, error=res.error, pause=pause)
         res = await _adaptive_fetch_result_impl(url, **kwargs)
     if res.text:
         _HOST_OK.add(netloc)
