@@ -476,6 +476,8 @@ export default function RegionPage() {
       ) : tab === "lavorazione" ? (
         <LavorazioneView
           records={data.records}
+          ultimaRaccolta={data.ultimo_scan?.at ?? null}
+          onVaiRaccolta={() => setTab("scan")}
           admin={admin}
           busy={busyId}
           onDecide={(id, stato) => decide.mutate({ id, stato })}

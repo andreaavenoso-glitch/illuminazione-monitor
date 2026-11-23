@@ -45,6 +45,8 @@ function Passo({ ok, label, dettaglio }: { ok: boolean; label: string; dettaglio
 
 export interface LavorazioneViewProps {
   records: RegionRecord[];
+  ultimaRaccolta: string | null;
+  onVaiRaccolta: () => void;
   admin: boolean;
   busy: string | null;
   onDecide: (id: string, stato: Decisione) => void;
@@ -90,14 +92,42 @@ const btn =
   "rounded-lg border px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800";
 const btnPrimary = "rounded-lg bg-brand-600 px-3 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50";
 
+function Fase({ n, titolo, stato, sub, azione, attiva }: { n: number; titolo: string; stato: string; sub?: string; azione?: ReactNode; attiva: boolean }) {
+  return (
+    <li className={`rounded-xl border p-3 ${attiva ? "border-brand-300 bg-brand-50 dark:border-brand-700 dark:bg-brand-950" : "dark:border-neutral-800"}`}>
+      <div className="flex items-center gap-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">{n}</span>
+        <b className="text-sm">{titolo}</b>
+      </div>
+      <p className="mt-1 text-sm">{stato}</p>
+      {sub && <p className="text-xs text-neutral-500">{sub}</p>}
+      {azione && <div className="mt-1">{azione}</div>}
+    </li>
+  );
+}
+
 export function LavorazioneView(p: LavorazioneViewProps) {
   const cats: Categoria[] = ["pre_gara", "manifestazione_interesse", "gara"];
+  const aperti = p.records.filter((r) => !r.scaduto);
+  const selezionati = p.records.filter((r) => r.lavorazione?.stato === "selezionata");
+  const candidatiTot = aperti.filter((r) => !r.lavorazione && (r.categoria === "pre_gara" || r.confermato === true)).length;
+  const conEmail = selezionati.filter((r) => r.lavorazione?.email_il).length;
+  const conSintesi = selezionati.filter((r) => r.lavorazione?.sintesi_il).length;
   return (
     <div className="space-y-6">
+      <ol className="grid gap-3 sm:grid-cols-3">
+        <Fase n={1} titolo="Raccolta" attiva={aperti.length === 0}
+          stato={aperti.length > 0 ? `${aperti.length} avvisi raccolti` : "non ancora eseguita"}
+          sub={p.ultimaRaccolta ? `ultima: ${fmt(p.ultimaRaccolta)}` : undefined}
+          azione={<button type="button" className="text-xs underline" onClick={p.onVaiRaccolta}>vai alla raccolta</button>} />
+        <Fase n={2} titolo="Selezione" attiva={aperti.length > 0 && selezionati.length === 0}
+          stato={`${selezionati.length} selezionati`} sub={`${candidatiTot} candidati in attesa di decisione`} />
+        <Fase n={3} titolo="Produzione" attiva={selezionati.length > 0}
+          stato={`${conEmail} e-mail · ${conSintesi} sintesi`} sub="per ogni avviso selezionato: prepara pacchetto, poi e-mail e PPT" />
+      </ol>
       <p className="text-xs text-neutral-500">
-        Qui si decide cosa lavorare e si prepara il materiale. <b>Seleziona</b> un avviso, poi <b>Prepara pacchetto</b>: legge i documenti
-        (in profondità per manifestazioni e gare) e cerca i referenti del comune. Quando è pronto, l&apos;e-mail e il documento di sintesi si
-        generano dai dati raccolti. Nulla viene inviato dall&apos;app.
+        <b>Seleziona</b> un avviso, poi <b>Prepara pacchetto</b>: legge i documenti (in profondità per manifestazioni e gare) e cerca i
+        referenti del comune. Quando è pronto, l&apos;e-mail e il documento di sintesi si generano dai dati raccolti. Nulla viene inviato dall&apos;app.
       </p>
       {cats.map((c) => {
         const tutti = p.records.filter((r) => r.categoria === c && !r.scaduto);
