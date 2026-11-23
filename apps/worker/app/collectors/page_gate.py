@@ -30,9 +30,10 @@ from shared_models.services import gate_keywords
 def safe_join(base: str, href: str) -> str | None:
     """urljoin that returns None for hrefs Python cannot parse (for instance
     "http://[broken", which raises "Invalid IPv6 URL") instead of crashing a
-    whole comune's scan on one bad link."""
+    whole comune's scan on one bad link. HTML entities in the href are decoded first: a menu link written
+    "organi/&num;sezione" (seen on a real comune site) is "organi/#sezione", not a page called "&num;sezione"."""
     try:
-        url = urljoin(base, href)
+        url = urljoin(base, htmllib.unescape(href))
         urlsplit(url)
     except ValueError:
         return None

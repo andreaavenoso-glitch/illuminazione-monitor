@@ -56,7 +56,16 @@ NOT_NAME_TOKENS = frozenset(
     comune comunale citta città provincia regione repubblica italiana italia via piazza tel fax orari apertura urp
     segreteria protocollo partita iva codice fiscale sindaco sindaca assessore assessora vicesindaco giunta consiglio
     responsabile area settore servizio tecnica tecnico lavori pubblici illuminazione pubblica delega deleghe organi
-    governo dirigente segretario generale biografia curriculum vitae mandato elezioni eletto eletta""".split()
+    governo dirigente segretario generale biografia curriculum vitae mandato elezioni eletto eletta
+    incarichi incarico organizzazione articolazione titolari titolare consulenti collaboratori dotazione organico
+    posta elettronica assenza assenze bandi concorsi performance dati controlli enti pagamenti provvedimenti atti
+    politici politico indirizzo componenti curricula compensi dichiarazioni patrimoniali reddituali rimborsi spese
+    viaggio missioni sovvenzioni contributi sussidi vantaggi economici beni immobili canoni locazione affitto
+    attestazioni oiv nucleo valutazione revisori conti carta servizi class action costi contabilizzati liste attesa
+    pubblicazioni normativa disposizioni generali statuti regolamenti codice disciplinare organi revisione
+    rendiconti bilanci societa partecipate vigilanza prevenzione corruzione accesso civico trasparenza
+    altri contenuti uffici ufficio aree area settori settore dirigenti dipendenti personale non assunto
+    commissioni commissione consigliere consiglieri capigruppo gruppi consiliari presidente vicepresidente""".split()
 )
 
 
@@ -64,6 +73,9 @@ def looks_like_name(nome: str) -> bool:
     """Two or three alphabetic words, none of them page furniture or a role word."""
     toks = nome.replace("’", "'").split()
     if not 2 <= len(toks) <= 4:
+        return False
+    # a name does not repeat a word: "Incarichi Organizzazione Incarichi" is a menu, not a person
+    if len({t.lower().strip(".,;:()") for t in toks}) < len(toks):
         return False
     for t in toks:
         core = t.strip(".,;:()")

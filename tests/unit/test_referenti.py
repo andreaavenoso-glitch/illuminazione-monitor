@@ -241,3 +241,23 @@ def test_referenti_table_groups_people_by_role_and_adds_pec():
     assert [x["nome"] for x in a["tecnico"]] == ["Paolo Neri", "Anna Gialli"] and a["passi_ok"] == 9 and a["cercato"]
     assert by["Comune di C"]["pec"] == "c@pec.it" and by["Comune di C"]["azione"] == "Da cercare" and not by["Comune di C"]["cercato"]
     assert by["Comune di B"]["pec"] == "b@pec.it"
+
+
+def test_menu_words_and_repeated_words_are_not_names():
+    from app.collectors.referenti import looks_like_name
+    from app.collectors.rules_extract import extract_people_by_rules
+
+    # real false positive from a comune's menu: "Sindaco ... Incarichi Organizzazione Incarichi"
+    assert not looks_like_name("Incarichi Organizzazione Incarichi")
+    assert not looks_like_name("Titolari Incarichi")
+    assert extract_people_by_rules("Sindaco Incarichi Organizzazione Incarichi politici Giunta") == []
+    assert looks_like_name("Maria Rosaria De Luca")
+
+
+def test_html_entities_in_links_are_decoded():
+    from app.collectors.page_gate import safe_join
+
+    assert safe_join("https://c.it/", "amministrazione/organi_di_governo/&num;organizzazione") == (
+        "https://c.it/amministrazione/organi_di_governo/#organizzazione"
+    )
+    assert safe_join("https://c.it/a/", "b?x=1&amp;y=2") == "https://c.it/a/b?x=1&y=2"

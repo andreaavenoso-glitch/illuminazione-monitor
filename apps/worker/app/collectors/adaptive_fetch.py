@@ -185,7 +185,11 @@ async def _fetch_single(
     async with httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=True,
-        headers={"User-Agent": _USER_AGENT_HTTP},
+        headers={
+            "User-Agent": _USER_AGENT_HTTP,
+            "Accept": "text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8",
+            "Accept-Language": "it-IT,it;q=0.9,en;q=0.7",
+        },
     ) as http:
         try:
             resp = await http.get(url)

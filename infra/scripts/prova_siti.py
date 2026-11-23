@@ -22,9 +22,13 @@ from pathlib import Path
 def limitations(sites: list[dict]) -> list[str]:
     """What the free script could not do, in words (pure, tested)."""
     out: list[str] = []
-    unreachable = [s["ente"] for s in sites if s.get("error")]
+    blocked = [s["ente"] for s in sites if s.get("error") and ("403" in s["error"] or "blocc" in s["error"].lower())]
+    if blocked:
+        out.append("Il sito blocca l'accesso automatico (403) — " + ", ".join(blocked)
+                   + ": da qui non si legge. Alternative: piattaforme regionali/nazionali o verifica manuale.")
+    unreachable = [s["ente"] for s in sites if s.get("error") and s["ente"] not in blocked]
     if unreachable:
-        out.append(f"Siti non leggibili ({len(unreachable)}): " + ", ".join(unreachable[:8]) + " — blocco o errore di rete.")
+        out.append(f"Siti non leggibili ({len(unreachable)}): " + ", ".join(unreachable[:8]) + " — errore di rete o pagina vuota.")
     full = sum(s.get("pages_full", 0) for s in sites)
     if full:
         out.append(f"{full} pagine nominano i servizi ma non hanno un elenco riconoscibile: le regole non le leggono "
@@ -101,8 +105,20 @@ async def run(sites: list[tuple[str, str]], out: Path, max_hunt: int) -> None:
                 playwright_wait_ms=settings.smart_collector_playwright_wait_ms, label="prova",
             )
 
+        # the same starting points as the real scan: sitemap, else the "Bandi di gara" link and the section names
+        from app.collectors.albo_pretorio_llm import find_bandi_link
+        from app.collectors.page_gate import pick_section_links
+        from app.collectors.sitemap import discover_sitemap_urls
+
+        seeds = await discover_sitemap_urls(url)
+        if seeds:
+            seeds = seeds[:8]
+        else:
+            seeds = [u for u in dict.fromkeys([find_bandi_link(first.text, base_url=url),
+                                               *pick_section_links(first.text, base_url=url, limit=8)]) if u and u != url]
+        rep["seeds"] = seeds
         res = await crawl(
-            start_url=url, start_html=first.text, seeds=[], fetch=fetch_page, on_page=on_page,
+            start_url=url, start_html=first.text, seeds=seeds, fetch=fetch_page, on_page=on_page,
             max_pages=settings.crawl_max_pages, max_depth=settings.crawl_max_depth,
             time_budget_s=settings.crawl_time_budget_s, delay_s=settings.crawl_delay_s,
         )
@@ -128,6 +144,10 @@ async def run(sites: list[tuple[str, str]], out: Path, max_hunt: int) -> None:
             rep["referenti"] = [{"ruolo": p["ruolo"], "nome": p["nome"], "stato": p["stato"], "motivo": p.get("motivo"),
                                  "email": p.get("email"), "fonte": p["fonte_url"]} for p in ref["people"]]
             rep["checklist"] = ref["checklist"]
+            rep["referenti_pagine"] = ref["urls"]
+            from app.collectors.referenti_script import menu_links
+
+            rep["menu_visti"] = [(sc, t, u) for sc, u, t, _ in sorted(menu_links(first.raw if hasattr(first, "raw") and first.raw else first.text, url), reverse=True)[:15]]
             rep["elezione"] = str(ref["elezione"] or "")
             rep["stampa"] = ref["stampa"]
         except Exception as exc:  # noqa: BLE001
@@ -149,7 +169,15 @@ async def run(sites: list[tuple[str, str]], out: Path, max_hunt: int) -> None:
             md.append(f"    - [{r['categoria']}] {r['titolo']} (scadenza in riga: {r['scadenza_in_riga'] or '—'})")
         for h in s["hunts"]:
             md.append(f"- scadenza {h['url'][:70]}: {h['deadline'] or 'NON TROVATA'} — {h['trail'][:200]}")
+        if s.get("seeds") is not None:
+            md.append(f"- punti di partenza dell'esplorazione: {len(s['seeds'])} " + (", ".join(x[-50:] for x in s["seeds"][:4])))
         if "referenti" in s:
+            md.append(f"- pagine lette per i referenti: {len(s.get('referenti_pagine', []))}")
+            for u in s.get("referenti_pagine", [])[:12]:
+                md.append(f"    - {u}")
+            md.append("- voci di menu viste dallo script (punteggio, testo):")
+            for sc, t, u in s.get("menu_visti", []):
+                md.append(f"    - {sc} {t[:40]} -> {u[:80]}")
             md.append(f"- referenti: {len(s['referenti'])} (checklist {sum(1 for c in s['checklist'] if c['ok'])}/12; elezioni {s['elezione'] or 'n/d'})")
             for p in s["referenti"]:
                 md.append(f"    - {p['ruolo']}: {p['nome']} [{p['stato']}] {p.get('motivo') or ''}")
