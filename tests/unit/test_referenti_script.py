@@ -178,3 +178,18 @@ def test_unknown_role_person_is_after_giunta_and_uffici():
 
     assert score_link("Mario Rossi", "/it/persone/rossi-mario", person_ok=True)[0] < score_link("Uffici", "/uffici")[0]
     assert score_link("Giunta Comunale", "/it/unita_organizzative/giunta-comunale")[0] >= 30
+
+
+def test_the_menu_of_the_site_does_not_make_everybody_the_mayor():
+    from app.collectors.referenti_script import person_from_page
+
+    corpo = "Biografia e deleghe dell'amministratore. " * 15
+    menu = "<header><nav><a href='/s'>Sindaco</a><a href='/g'>Giunta</a><a href='/c'>Consiglio</a></nav></header>"
+    assessora = f"<html><body>{menu}<main><h1>Vincenza Angela Natale</h1><p>Assessore, Consigliere di maggioranza</p><p>{corpo}</p></main></body></html>"
+    p = person_from_page("https://c.it/it/persone/natale-vincenza-angela", "Sindaco Giunta Vincenza Angela Natale Assessore", assessora)
+    assert p and p["ruolo"] == "assessore"
+    sindaco = f"<html><body>{menu}<main><h1>Pasquale Cariello</h1><p>Sindaco</p><p>{corpo}</p></main></body></html>"
+    p = person_from_page("https://c.it/it/persone/cariello-pasquale", "x", sindaco)
+    assert p and p["ruolo"] == "sindaco"
+    consigliere = f"<html><body>{menu}<main><h1>Luca Verdi</h1><p>Consigliere comunale</p><p>{corpo}</p></main></body></html>"
+    assert person_from_page("https://c.it/it/persone/verdi-luca", "Sindaco", consigliere) is None

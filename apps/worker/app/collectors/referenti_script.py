@@ -24,6 +24,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import quote_plus, urlsplit
 
+from app.collectors.main_content import main_text
 from app.collectors.page_gate import safe_join
 from app.collectors.referenti import looks_like_name, merge_people, verify_person
 from app.collectors.rules_extract import extract_people_by_rules
@@ -180,7 +181,11 @@ def person_from_page(pg_url: str, text: str, raw: str | None) -> dict[str, Any] 
     bare = " ".join(re.sub(r"(?i)\b(sindaco|sindaca|assessore|assessora|vicesindaco|dott\.?|dr\.?|ing\.?|arch\.?|avv\.?|geom\.?)\b", "", name).split())
     if not bare or not looks_like_name(bare) or not _title_case(bare):
         return None
-    head = " ".join(text.split())[:900]
+    # the role is written in the CENTRAL part of the page, right after the name: the menu of the site ("Organi di
+    # governo: Sindaco, Giunta, Consiglio") would give "Sindaco" to everybody
+    central = main_text(raw) or " ".join(text.split())
+    idx = central.find(bare)
+    head = central[idx: idx + 500] if idx >= 0 else central[:500]
     ruolo = _card_role(head)
     if ruolo not in ("sindaco", "assessore"):
         return None
