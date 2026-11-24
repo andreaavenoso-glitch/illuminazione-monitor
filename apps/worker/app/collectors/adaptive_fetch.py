@@ -358,9 +358,20 @@ def _worth_retry(netloc: str, error: str | None) -> bool:
 PREFETCHED: dict[str, str] = {}
 
 
+def _host(url: str) -> str:
+    h = urlsplit(url).netloc.lower().split(":")[0]
+    return h[4:] if h.startswith("www.") else h
+
+
 def _prefetched(url: str, max_chars: int) -> FetchResult | None:
+    """The page as the browser read it. A page of a host the browser already served that is not among them (a PDF the
+    browser did not download) is NOT requested: that host refuses the server, and each attempt would cost a timeout."""
     html = PREFETCHED.get(url.split("#")[0])
-    return FetchResult(text=clean_html(html, max_chars), url=url) if html else None
+    if html:
+        return FetchResult(text=clean_html(html, max_chars), url=url)
+    if _host(url) in {_host(u) for u in PREFETCHED}:
+        return FetchResult(text="", error="skipped_import", url=url)
+    return None
 
 
 async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:

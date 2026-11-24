@@ -104,6 +104,14 @@ log = logging.getLogger(__name__)
 MAX_EXTRA_PAGES = 8
 
 
+def _same_page(a: str, b: str) -> bool:
+    """Same page apart from the fragment and the page marker of the browser import: its "detail" is the list itself, and
+    reading the list as the detail of each of its entries would take the dates of the whole page for every entry."""
+    from app.collectors.dgegov import clean_url
+
+    return clean_url(a) == clean_url(b)
+
+
 async def _fetch_page(url: str, *, settings: WorkerSettings, label: str) -> str:
     return await adaptive_fetch(
         url,
@@ -234,7 +242,7 @@ async def _process_page(
         if is_expired_record(record):
             stats["records_expired_dropped"] += 1
             continue
-        if detail_url and detail_url != target_url:
+        if detail_url and not _same_page(detail_url, target_url):
             detail_html = await _fetch_page(detail_url, settings=settings, label=f"{label}:detail")
             if detail_html:
                 # Without Claude the deadline comes from the verification step (free).
@@ -844,7 +852,11 @@ async def _run_import_pagine(item_id: str, pagine: list[dict]) -> dict:
         af.PREFETCHED.clear()
         af.PREFETCHED.update({p["url"]: p["html"] for p in pagine})
         try:
+            from app.collectors.dgegov import is_detail_page
+
             for p in pagine:
+                if is_detail_page(p["url"]):
+                    continue  # read as the detail of its entry in the list, not as a page of its own
                 await _process_page(
                     session, item, job, target_url=p["url"], target_html=clean_html(p["html"], settings.crawl_max_html_chars),
                     label=f"import:{item.id}:{p['url']}", settings=settings, now=now, seen=seen, stats=stats, digests=digests,

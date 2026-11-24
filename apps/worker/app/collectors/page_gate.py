@@ -220,6 +220,24 @@ def extract_block_candidates(soup: BeautifulSoup, base_url: str) -> list[Candida
     return out
 
 
+def portal_candidates(soup: BeautifulSoup, base_url: str) -> list[Candidate] | None:
+    """Entries of a dgegovpa.it albo / bandi page (None when the page is not one of that portal): only the ones that
+    mention a service, one per act or procedure, with the PDF or the CIG address as link."""
+    from app.collectors import dgegov
+
+    if not dgegov.is_portal_page(soup):
+        return None
+    out: list[Candidate] = []
+    for e in dgegov.albo_entries(soup, base_url):
+        if _has_gate_keyword(e["text"].lower()):
+            href = safe_join(dgegov.clean_url(base_url), e["href"]) if e["href"] else dgegov.clean_url(base_url)
+            out.append(Candidate(title=e["title"][:150], href=href or base_url, snippet=e["text"][:_MAX_SNIPPET], date=e["date"]))
+    for e in dgegov.bandi_entries(soup, base_url):
+        if _has_gate_keyword(e["text"].lower()):
+            out.append(Candidate(title=e["title"][:150], href=dgegov.cig_url(base_url, e["cig"]), snippet=e["text"][:_MAX_SNIPPET], date=e["date"]))
+    return out[:MAX_CANDIDATES]
+
+
 def gate_page(html: str, *, base_url: str, full_limit: int = 80_000) -> GateResult:
     """Decide what, if anything, goes to Claude for this page.
 
@@ -230,6 +248,9 @@ def gate_page(html: str, *, base_url: str, full_limit: int = 80_000) -> GateResu
     80 000 characters."""
     template = detect_template(html)
     soup = BeautifulSoup(html, "lxml")
+    portal = portal_candidates(soup, base_url)
+    if portal is not None:  # a page of a known portal: its own entries, or nothing (never the whole page)
+        return GateResult("compact", _compact_html(portal), "dgegov", portal) if portal else GateResult("skip", "", "dgegov")
     _drop_menu_entries(soup)
     text = _norm(soup.get_text(" ", strip=True)).lower()
     if not _has_gate_keyword(text):

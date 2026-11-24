@@ -75,23 +75,34 @@ export function ImportaPagine({ region }: { region: string }) {
       {open && (
         <div className="mt-3 space-y-3 text-neutral-700">
           <p>
-            Alcuni portali (dgegovpa.it, halleyweb.com) rifiutano le connessioni del server. Il tuo browser invece li apre:
-            lo script legge le pagine con la tua connessione e l'app le analizza come una raccolta normale.
+            Alcuni portali (dgegovpa.it, halleyweb.com) rifiutano le connessioni del server. Il tuo computer invece li apre: un
+            piccolo script lo esegui sul PC, legge <b>tutte</b> le pagine degli atti (anche «successiva», «Pag. 1 su 34») e
+            i dettagli dei bandi sull&apos;illuminazione, e crea i file da caricare qui. L&apos;app li analizza come una raccolta normale.
           </p>
           <ol className="list-decimal space-y-1 pl-5">
             <li>
+              Sul PC crea una cartella e salva in <code>scarica_portali.py</code> lo script del progetto
+              (<code>infra/scripts/scarica_portali.py</code>: in VS Code, tasto destro sul file → Download).
+            </li>
+            <li>
+              Apri il Prompt dei comandi nella cartella e lancia, con l&apos;indirizzo del portale del comune:
+              <pre className="mt-1 overflow-x-auto rounded bg-neutral-100 p-2 text-xs dark:bg-neutral-800">python scarica_portali.py https://dgegovpa.it/Arluno/Albo/Albo</pre>
+              Trova da solo le sezioni (Albo, Trasparenza, Bandi, Atti…) e crea la cartella <code>monitor_pagine</code> con i file <code>monitor_pagine_01di05.json</code>…
+            </li>
+            <li>Carica qui <b>tutti</b> i file insieme, con il nome del comune:</li>
+          </ol>
+          <details className="text-xs text-neutral-600">
+            <summary className="cursor-pointer">Alternativa senza Python: script da incollare nella Console di Chrome (legge meno pagine)</summary>
+            <div className="mt-2 space-y-1">
               <button onClick={copy} disabled={!script.data} className="rounded-lg border border-neutral-300 px-2 py-0.5 hover:bg-neutral-50 disabled:opacity-50">
                 {copied ? "Copiato ✓" : "Copia lo script"}
               </button>
-            </li>
-            <li>Apri in Chrome la pagina del portale con l'elenco (es. Albo Pretorio o Atti del comune).</li>
-            <li>
-              Premi <b>F12</b>, scheda <b>Console</b>. Se Chrome lo chiede, scrivi <code>allow pasting</code> e Invio. Incolla lo
-              script e premi Invio: segue da solo le pagine dell'elenco (1, 2, 3…) e i dettagli, fino a 300 pagine, e scarica uno o più file <code>monitor_pagine_01di03.json</code>… Se Chrome chiede di consentire download multipli, accetta.
-            </li>
-            <li>Ripeti per le altre sezioni utili (ogni tipologia dell'Albo, Atti amministrativi, Amministrazione trasparente).</li>
-            <li>Carica qui tutti i file insieme (selezionali tutti), con il nome del comune:</li>
-          </ol>
+              <p>
+                Apri una pagina del portale in Chrome, premi <b>F12</b> → <b>Console</b>, scrivi <code>allow pasting</code> + Invio, incolla
+                lo script + Invio. Non sfoglia i pulsanti «successiva» dei portali ASP.NET: per quelli usa lo script Python.
+              </p>
+            </div>
+          </details>
           <div className="flex flex-wrap items-center gap-2">
             <input value={comune} onChange={(e) => setComune(e.target.value)} placeholder="Comune (es. Arluno)" className="rounded-lg border border-neutral-300 px-2 py-1" />
             <input type="file" multiple accept=".json,application/json" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />

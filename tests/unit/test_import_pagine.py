@@ -50,3 +50,25 @@ def test_pick_comune_exact_unique_or_ambiguous():
     item, others = pick_comune(c, "ar")
     assert item is None and "Comune di Arcore" in others  # ambiguous: the names are returned
     assert pick_comune(c, "xyz") == (None, [])
+
+
+def test_a_host_served_by_the_browser_is_never_requested_for_what_it_did_not_send():
+    import asyncio
+
+    from app.collectors import adaptive_fetch as af
+
+    af.PREFETCHED.clear()
+    af.PREFETCHED["https://dgegovpa.it/Arluno/albo/albo.aspx"] = "<html><body>" + "x" * 300 + "</body></html>"
+    try:
+        res = asyncio.run(af.adaptive_fetch_result("https://www.dgegovpa.it/Arluno/albo/dati/1.PDF", max_html_chars=1000, timeout=1,
+                                                   playwright_min_chars=0, playwright_wait_ms=0, label="t"))
+    finally:
+        af.PREFETCHED.clear()
+    assert res.text == "" and res.error == "skipped_import"  # no network request: it returned at once
+
+
+def test_detail_pages_of_the_import_are_recognised():
+    from app.collectors.dgegov import is_detail_page
+
+    assert is_detail_page("https://x.it/b.aspx?cig=BD8029248D")
+    assert not is_detail_page("https://x.it/b.aspx?_mpag=2")
