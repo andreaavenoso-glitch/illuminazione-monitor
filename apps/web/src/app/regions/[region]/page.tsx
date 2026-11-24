@@ -31,6 +31,10 @@ type Tab = Categoria | "siti" | "scan" | "verifica" | "referenti" | "storico" | 
 
 const CAT_TONE: Record<Categoria, Tone> = { pre_gara: "sky", manifestazione_interesse: "violet", gara: "emerald" };
 
+/** Portals of software vendors that refuse the server's address (checked on a real run): their pages can only be read by the user's browser. */
+const BLOCKING_PORTALS = ["dgegovpa.it", "halleyweb.com"];
+const isBlockingPortal = (urls: { url: string }[]) => urls.some((s) => BLOCKING_PORTALS.some((h) => s.url.includes(h)));
+
 const ERROR_LABELS: Record<string, string> = {
   http_404: "pagina non trovata (404)",
   http_403: "accesso bloccato (403)",
@@ -805,6 +809,11 @@ export default function RegionPage() {
                     <td>
                       <span className={`rounded-full px-2 py-0.5 text-xs ${STATO_CLASS[c.stato]}`}>{STATO_LABEL[c.stato]}</span>
                       {c.stato === "failing" && <div className="mt-0.5 text-xs text-red-700 dark:text-red-300">{c.last_error ? (ERROR_LABELS[c.last_error] ?? c.last_error) : "errore"} · {c.consecutive_failures}× di fila</div>}
+                      {c.stato === "failing" && isBlockingPortal(c.siti) && (
+                        <div className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+                          Portale che rifiuta il server: leggilo con il tuo browser (scheda Raccolta → «Leggilo con il tuo browser»).
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
