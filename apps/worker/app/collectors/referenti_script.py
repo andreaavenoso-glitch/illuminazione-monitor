@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import quote_plus, urlsplit
 
 from app.collectors.main_content import main_text
-from app.collectors.page_gate import safe_join
+from app.collectors.page_gate import safe_join, same_site
 from app.collectors.referenti import looks_like_name, merge_people, verify_person
 from app.collectors.rules_extract import extract_people_by_rules
 from bs4 import BeautifulSoup
@@ -216,7 +216,6 @@ def score_link(text: str, href: str, person_ok: bool = False) -> tuple[int, set[
 
 
 def menu_links(raw: str, base: str, parent_tags: set[str] | None = None) -> list[tuple[int, str, str, set[str]]]:
-    host = urlsplit(base).netloc
     person_ok = bool(parent_tags and parent_tags & {"giunta", "organizzazione", "scheda"})
     out: dict[str, tuple[int, str, str, set[str]]] = {}
     for a in BeautifulSoup(raw, "lxml").find_all("a", href=True):
@@ -233,7 +232,8 @@ def menu_links(raw: str, base: str, parent_tags: set[str] | None = None) -> list
         if not url:
             continue
         other = urlsplit(url).netloc
-        if other != host and not (sc >= 25 and any(v in other for v in VENDOR_HOSTS)):
+        # same site: "www.comune.x.it" and "comune.x.it" (or a subdomain) are the same comune
+        if not same_site(url, base) and not (sc >= 25 and any(v in other for v in VENDOR_HOSTS)):
             continue
         url = url.split("#")[0]
         if url not in out or out[url][0] < sc:

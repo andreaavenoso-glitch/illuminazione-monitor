@@ -193,3 +193,18 @@ def test_the_menu_of_the_site_does_not_make_everybody_the_mayor():
     assert p and p["ruolo"] == "sindaco"
     consigliere = f"<html><body>{menu}<main><h1>Luca Verdi</h1><p>Consigliere comunale</p><p>{corpo}</p></main></body></html>"
     assert person_from_page("https://c.it/it/persone/verdi-luca", "Sindaco", consigliere) is None
+
+
+def test_menu_links_follow_the_site_with_and_without_www():
+    """Arluno: the home is www.comune.arluno.mi.it but the whole menu points to comune.arluno.mi.it (no www). Those
+    links are the same site, not "another site": before, only /login survived and no person page was ever read."""
+    from app.collectors.referenti_script import menu_links
+
+    raw = (
+        '<a href="https://comune.arluno.mi.it/amministrazione">Amministrazione</a>'
+        '<a href="https://comune.arluno.mi.it/aree-amministrative">Aree amministrative</a>'
+        '<a href="https://www.altrocomune.it/giunta">Giunta</a>'
+    )
+    urls = {u for _, u, _, _ in menu_links(raw, "https://www.comune.arluno.mi.it")}
+    assert "https://comune.arluno.mi.it/amministrazione" in urls
+    assert "https://www.altrocomune.it/giunta" not in urls
