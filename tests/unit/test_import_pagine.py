@@ -72,3 +72,12 @@ def test_detail_pages_of_the_import_are_recognised():
 
     assert is_detail_page("https://x.it/b.aspx?cig=BD8029248D")
     assert not is_detail_page("https://x.it/b.aspx?_mpag=2")
+
+
+def test_pick_comune_prefers_the_ipa_name_over_a_plain_leftover():
+    from app.services.browser_import import pick_comune
+
+    c = [(1, "Arluno"), (2, "Comune di Arluno"), (3, "Comune di Arcore")]
+    assert pick_comune(c, "Arluno")[0] == 2            # both match exactly: the "Comune di" one is the real one
+    assert pick_comune(c, "Comune di Arluno")[0] == 2
+    assert pick_comune([(1, "Arluno"), (4, "Comune di Arluno Nuovo")], "Arluno")[0] == 1

@@ -88,6 +88,10 @@ def pick_comune(candidates: list[tuple[object, str]], wanted: str) -> tuple[obje
     if not w:
         return None, []
     exact = [c for c in candidates if _fold(c[1]) in (w, "comune di " + w)]
+    if len(exact) > 1:  # "Arluno" (a leftover of the early tests) and "Comune di Arluno" (the IPA name): the IPA one is the real comune
+        official = [c for c in exact if _fold(c[1]).startswith("comune di ")]
+        if len(official) == 1:
+            return official[0][0], []
     if len(exact) == 1:
         return exact[0][0], []
     part = exact or [c for c in candidates if w in _fold(c[1])]
