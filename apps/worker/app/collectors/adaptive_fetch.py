@@ -353,10 +353,22 @@ def _worth_retry(netloc: str, error: str | None) -> bool:
     return sum(n for (h, _), n in FAILURES.items() if h == netloc) < 2
 
 
+# Pages the user's own browser already read (portals that refuse the server's address): url -> raw html.
+# Filled for the duration of an import, consulted before any network request.
+PREFETCHED: dict[str, str] = {}
+
+
+def _prefetched(url: str, max_chars: int) -> FetchResult | None:
+    html = PREFETCHED.get(url.split("#")[0])
+    return FetchResult(text=clean_html(html, max_chars), url=url) if html else None
+
+
 async def adaptive_fetch_result(url: str, **kwargs) -> FetchResult:
     import asyncio
     import time
 
+    if PREFETCHED and (hit := _prefetched(url, kwargs.get("max_html_chars", 400_000))):
+        return hit
     netloc = urlsplit(url).netloc
     if _COOLDOWN_UNTIL.get(netloc, 0.0) > time.monotonic():
         return FetchResult(text="", error="http_429")  # still cooling down: no request is sent

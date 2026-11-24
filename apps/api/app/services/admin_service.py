@@ -131,6 +131,12 @@ def dispatch_verify(region: str) -> str:
     return str(result.id)
 
 
+def dispatch_import_pagine(item_id: str, pagine: list[dict]) -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.collect_watchlist.import_pagine", kwargs={"item_id": item_id, "pagine": pagine})
+    return str(result.id)
+
+
 def dispatch_find_referenti(record_id: UUID) -> str:
     app = _celery_app()
     result = app.send_task("app.tasks.find_referenti.find_referenti", kwargs={"record_id": str(record_id)})

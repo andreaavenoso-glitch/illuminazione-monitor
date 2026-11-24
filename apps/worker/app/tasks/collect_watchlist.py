@@ -43,7 +43,7 @@ from decimal import Decimal
 
 from app import claude_state
 from app.celery_app import celery_app
-from app.collectors.adaptive_fetch import FetchResult, adaptive_fetch, adaptive_fetch_result
+from app.collectors.adaptive_fetch import FetchResult, adaptive_fetch, adaptive_fetch_result, clean_html
 from app.collectors.albo_pretorio_llm import (
     ClaudeUnavailable,
     build_raw_record_kwargs,
@@ -802,3 +802,76 @@ def collect_watchlist_albo(
     number of comuni (trial run); ``skip_scanned_hours`` skips the ones read more
     recently than that (resume an interrupted run)."""
     return asyncio.run(_run_watchlist_scan(region, limit, skip_scanned_hours, item_ids))
+
+
+async def _run_import_pagine(item_id: str, pagine: list[dict]) -> dict:
+    """Analyse pages the user's own browser read (portals that refuse the server's address) exactly like a scan of
+    the comune: same gate, same rules / Claude, same noise and deadline filters. The pages (and the detail pages
+    among them) are served from memory, so the blocked portal is never contacted."""
+    import uuid as _uuid
+
+    from app.collectors import adaptive_fetch as af
+
+    settings = get_worker_settings()
+    configure_services(parse_enabled(settings.enabled_services))
+    stats: Counter = Counter()
+    claude_state.reset()
+    async with SessionLocal() as session:
+        item = await session.get(WatchlistItem, _uuid.UUID(str(item_id)))
+        if item is None:
+            return {"error": "comune non trovato"}
+        entity = await session.get(Entity, item.entity_id) if item.entity_id else None
+        job = JobRun(job_name="import_pagine", status="running")
+        session.add(job)
+        await session.flush()
+        run = ScanRun(
+            region=normalize_region(entity.region) if entity and entity.region else None, total=1, status="running",
+            heartbeat_at=datetime.now(tz=UTC), config={"import_browser": True, "pagine": len(pagine)},
+        )
+        session.add(run)
+        await session.flush()
+        si = ScanItem(run_id=run.id, item_id=item.id, ente=entity.name if entity else "comune")
+        session.add(si)
+        await session.flush()
+        await session.commit()
+        current_run_id.set(run.id)
+        current_scan_item_id.set(si.id)
+        await _update_scan_item(run.id, si.id, status="running", started_at=datetime.now(tz=UTC))
+        now = datetime.now(tz=UTC)
+        seen: set[str] = set()
+        digests: set[str] = set()
+        error = None
+        af.PREFETCHED.clear()
+        af.PREFETCHED.update({p["url"]: p["html"] for p in pagine})
+        try:
+            for p in pagine:
+                await _process_page(
+                    session, item, job, target_url=p["url"], target_html=clean_html(p["html"], settings.crawl_max_html_chars),
+                    label=f"import:{item.id}:{p['url']}", settings=settings, now=now, seen=seen, stats=stats, digests=digests,
+                )
+                await session.commit()
+        except ClaudeUnavailable as exc:
+            error = f"Claude non disponibile: {exc}"
+            await session.rollback()
+        except Exception as exc:  # noqa: BLE001
+            error = f"{type(exc).__name__}: {exc}"[:500]
+            log.exception("import_pagine.crashed")
+            await session.rollback()
+        finally:
+            af.PREFETCHED.clear()
+        job.ended_at = datetime.now(tz=UTC)
+        job.status = "failed" if error else ("partial" if job.records_valid == 0 else "success")
+        job.error_message = error
+        await session.commit()
+        await _update_scan_item(
+            run.id, si.id, status="error" if error else "done", ended_at=datetime.now(tz=UTC), error=error, **item_progress(stats)
+        )
+        await _finish_run(run.id, error)
+    await _normalize_now()
+    log.info("import_pagine.stats %s", dict(sorted(stats.items())))
+    return {"pagine": len(pagine), "records_found": stats["records_found"], "error": error, **dict(stats)}
+
+
+@celery_app.task(name="app.tasks.collect_watchlist.import_pagine", soft_time_limit=1800, time_limit=1900)
+def import_pagine(item_id: str, pagine: list[dict]) -> dict:
+    return asyncio.run(_run_import_pagine(item_id, pagine))

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { ScanItemView, ScanRunView } from "@/lib/regions";
 import { usd } from "@/lib/usage";
+import { ImportaPagine } from "@/components/ImportaPagine";
 
 const BAR: Record<ScanItemView["status"], string> = {
   done: "bg-emerald-500",
@@ -56,10 +57,13 @@ export function ScanView({ region }: { region: string }) {
   if (isLoading) return <p className="text-sm text-neutral-500">Caricamento…</p>;
   if (!data) {
     return (
-      <p className="text-sm text-neutral-500">
-        Nessuna raccolta registrata per questa regione. Premi &quot;Prova con 10 comuni&quot; o &quot;Raccogli ora&quot;.
-        Se l&apos;hai appena premuto, aspetta qualche secondo: questa pagina si aggiorna da sola appena il worker comincia.
-      </p>
+      <div className="space-y-4">
+        <p className="text-sm text-neutral-500">
+          Nessuna raccolta registrata per questa regione. Premi &quot;Prova con 10 comuni&quot; o &quot;Raccogli ora&quot;.
+          Se l&apos;hai appena premuto, aspetta qualche secondo: questa pagina si aggiorna da sola appena il worker comincia.
+        </p>
+        <ImportaPagine region={region} />
+      </div>
     );
   }
 
@@ -192,6 +196,7 @@ export function ScanView({ region }: { region: string }) {
           })}
         </ul>
       </section>
+      <ImportaPagine region={region} />
     </div>
   );
 }

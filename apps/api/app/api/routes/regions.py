@@ -6,7 +6,7 @@ from app.auth import current_user, require_role
 from app.core.database import get_session
 from app.services.records_export import records_csv
 from app.services.scan_view import scan_summary
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel
 from shared_models import (
     AnalisiRecord,
@@ -662,6 +662,48 @@ async def collect_region(
         "status": "dispatched", "region": region, "limit": limit, "resume": resume,
         **dispatch_region_scan(region, limit, hours),
     }
+
+
+@router.get("/{region}/import-pagine/script")
+async def import_pagine_script(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    """The script to paste in the browser console on a portal the server cannot reach."""
+    from app.services.browser_import import SCRIPT
+
+    _canonical(region)
+    return {"script": SCRIPT}
+
+
+@router.post("/{region}/import-pagine")
+async def import_pagine(
+    region: str,
+    comune: str = Form(...),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_role("admin")),
+) -> dict:
+    """Pages read by the user's browser (monitor_pagine.json) for one comune: analysed like a scan of that comune."""
+    import json
+
+    from app.services.admin_service import dispatch_import_pagine
+    from app.services.browser_import import pick_comune
+    from shared_models.import_pagine import MAX_TOTALE, ImportError_, valida_pagine
+
+    region = _canonical(region)
+    rows = (await session.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id))).all()
+    item, others = pick_comune([(i, e.name) for i, e in rows if normalize_region(e.region) == region], comune)
+    if item is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"Più comuni corrispondono a «{comune}»: {', '.join(others)}. Scrivi il nome completo." if others
+                    else f"Comune «{comune}» non trovato in {region}."),
+        )
+    raw = await file.read(MAX_TOTALE + 1_000_000)
+    try:
+        pagine = valida_pagine(json.loads(raw))
+    except (ValueError, UnicodeDecodeError) as exc:  # ImportError_ is a ValueError; so is bad JSON
+        msg = str(exc) if isinstance(exc, ImportError_) else "Il file non è un JSON valido."
+        raise HTTPException(status_code=400, detail=msg) from exc
+    return {"status": "dispatched", "pagine": len(pagine), "task_id": dispatch_import_pagine(str(item.id), pagine)}
 
 
 @router.post("/{region}/verify")
