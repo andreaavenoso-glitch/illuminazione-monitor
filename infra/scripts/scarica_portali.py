@@ -123,8 +123,9 @@ def leggi_html(html: str) -> Pagina:
 
 # --- rete -----------------------------------------------------------------------------------------------------------
 class Browser:
-    def __init__(self, pausa: float) -> None:
+    def __init__(self, pausa: float, timeout: float = 30.0) -> None:
         self.pausa = pausa
+        self.timeout = timeout
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         self.op.addheaders = [("User-Agent", UA), ("Accept-Language", "it-IT,it;q=0.9")]
         self.richieste = 0
@@ -134,7 +135,7 @@ class Browser:
         time.sleep(self.pausa)
         self.richieste += 1
         try:
-            with self.op.open(req, timeout=60) as r:
+            with self.op.open(req, timeout=self.timeout) as r:
                 raw = r.read()
                 enc = r.headers.get_content_charset() or "utf-8"
                 return raw.decode(enc, errors="replace"), r.geturl()
@@ -144,11 +145,20 @@ class Browser:
             return None
 
     def get(self, url: str) -> tuple[str, str] | None:
-        return self._vai(urllib.request.Request(url))
+        r = self._vai(urllib.request.Request(url))
+        if r is None and url.startswith("http://"):  # i browser aprono «http://» come «https://»: lo si prova anche qui
+            r = self._vai(urllib.request.Request("https://" + url[len("http://"):]))
+            if r is not None and self.errori:
+                self.errori.pop()  # il primo tentativo (http) non è un errore se https risponde
+        return r
 
     def post(self, url: str, dati: list[tuple[str, str]]) -> tuple[str, str] | None:
         body = urllib.parse.urlencode(dati).encode()
         return self._vai(urllib.request.Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"}))
+
+
+def _host(url: str) -> str:
+    return urllib.parse.urlsplit(url).netloc.lower().removeprefix("www.")
 
 
 def assoluto(base: str, href: str) -> str | None:
@@ -522,14 +532,18 @@ def lavora_elenco(app: App, regione: str, cartella: Path, *, tutti: bool, ripart
         lista = lista[:limite]
     print(f"Comuni da leggere dal PC: {len(lista)}" + (f" (già fatti e saltati: {len(fatti)})" if fatti else ""))
     esiti = {"ok": 0, "non_riconosciuto": 0, "errore": 0}
+    host_giu: set[str] = set()
     for i, c in enumerate(lista, 1):
         print(f"[{i}/{len(lista)}] {c['ente']} — {c.get('motivo', '')}")
         pagine_c: dict[str, dict] = {}
         rapporti: list[dict] = []
         for url in c["siti"][:3]:
+            if _host(url) in host_giu:  # lo stesso sito non risponde già: inutile aspettare altri timeout
+                continue
             try:
                 pg, rap = scarica_con_rapporto(url, massimo, pausa, dettagli, max_sezioni, max_pagine_lista, parole, silenzioso=True)
             except PortaleNonRaggiungibile as exc:
+                host_giu.add(_host(url))
                 rapporti.append({"stato": "errore", "pagine": 0, "sezioni": 0, "ricerche": [], "errori": [str(exc)[:200]],
                                  "note": "la pagina di partenza non si apre nemmeno dal PC"})
                 continue
@@ -562,7 +576,7 @@ def main() -> None:
     ap.add_argument("--riparti", action="store_true", help="con --bloccati: salta i comuni già fatti in una esecuzione interrotta")
     ap.add_argument("--limite", type=int, help="con --bloccati: solo i primi N comuni (per una prova)")
     ap.add_argument("--out", default="monitor_pagine", help="cartella dei file da caricare nell'app")
-    ap.add_argument("--max", type=int, default=400, help="massimo di pagine in tutto")
+    ap.add_argument("--max", type=int, default=None, help="massimo di pagine per comune (di default 400 per un comune, 150 con --bloccati)")
     ap.add_argument("--pausa", type=float, default=0.5, help="secondi tra una richiesta e l'altra")
     ap.add_argument("--max-pagine-lista", type=int, default=60, help="massimo di pagine per ogni elenco")
     ap.add_argument("--max-sezioni", type=int, default=30)
@@ -594,14 +608,14 @@ def main() -> None:
     parole = [x.strip() for x in a.cerca.split(",") if x.strip()] if a.cerca else None
     if a.bloccati:
         assert app is not None
-        esiti = lavora_elenco(app, a.regione, Path(a.out), tutti=a.tutti, riparti=a.riparti, limite=a.limite, massimo=a.max, pausa=a.pausa,
+        esiti = lavora_elenco(app, a.regione, Path(a.out), tutti=a.tutti, riparti=a.riparti, limite=a.limite, massimo=a.max or 150, pausa=a.pausa,
                               dettagli=not a.senza_dettagli, max_sezioni=a.max_sezioni, max_pagine_lista=a.max_pagine_lista,
                               per_file=a.per_file, parole=parole)
         print(f"\nFinito: {esiti['ok']} letti, {esiti['non_riconosciuto']} con portale non riconosciuto, {esiti['errore']} non raggiungibili."
               "\nL'analisi continua nell'app (scheda Raccolta); l'esito di ogni comune è nella scheda Siti.")
         return
     try:
-        pagine = scarica(a.url, a.max, a.pausa, not a.senza_dettagli, a.max_sezioni, a.max_pagine_lista, parole)
+        pagine = scarica(a.url, a.max or 400, a.pausa, not a.senza_dettagli, a.max_sezioni, a.max_pagine_lista, parole)
     except PortaleNonRaggiungibile as exc:
         sys.exit(f"Non riesco ad aprire la pagina di partenza ({exc}): controlla l'indirizzo e la connessione.")
     files = scrivi(pagine, a.url, Path(a.out), a.per_file)

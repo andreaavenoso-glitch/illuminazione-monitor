@@ -228,3 +228,39 @@ def test_serial_mode_reads_every_blocked_comune_sends_pages_and_reports_each_one
     # the pages were sent knowing the exact comune (no name to guess)
     assert any(b'name="item_id"\r\n\r\nid-ok' in v["body"] for v in _FakeApp.visti)
     assert not any(b"id-giu" in v["body"] for v in _FakeApp.visti)  # nothing to send for an unreachable comune
+
+
+def test_http_address_is_retried_as_https_like_a_browser_does(monkeypatch):
+    b = sp.Browser(0)
+    visti = []
+
+    def finto(req):
+        visti.append(req.full_url)
+        if req.full_url.startswith("http://"):
+            b.errori.append("timeout")
+            return None
+        return ("<html>ok</html>", req.full_url)
+
+    monkeypatch.setattr(b, "_vai", finto)
+    assert b.get("http://halleyweb.com/c1/x") == ("<html>ok</html>", "https://halleyweb.com/c1/x")
+    assert visti == ["http://halleyweb.com/c1/x", "https://halleyweb.com/c1/x"]
+    assert b.errori == []  # the first attempt is not an error when https answers
+
+
+def test_a_site_that_does_not_answer_is_tried_once_per_comune_not_once_per_address(tmp_path, monkeypatch):
+    import time as _t
+
+    monkeypatch.setattr(_t, "sleep", lambda s: None)
+    fake = HTTPServer(("127.0.0.1", 0), _FakeApp)
+    threading.Thread(target=fake.serve_forever, daemon=True).start()
+    _FakeApp.rapporti.clear()
+    _FakeApp.comuni = [{"id": "id-giu", "ente": "Comune Giù", "siti": ["http://127.0.0.1:1/a", "http://127.0.0.1:1/b", "http://127.0.0.1:1/c"], "motivo": "x"}]
+    try:
+        app = sp.App(f"http://127.0.0.1:{fake.server_port}")
+        app.login("a@b.it", "giusta123")
+        sp.lavora_elenco(app, "Lombardia", tmp_path, tutti=False, riparti=False, limite=None, massimo=50, pausa=0, dettagli=True,
+                         max_sezioni=5, max_pagine_lista=5, per_file=60, parole=None)
+    finally:
+        fake.shutdown()
+    r = _FakeApp.rapporti[-1]
+    assert r["stato"] == "errore" and len(r["errori"]) == 1  # not three timeouts: the host is known to be down after the first
