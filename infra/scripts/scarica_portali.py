@@ -13,6 +13,15 @@ Cosa fa, da solo:
   4. scrive i file monitor_pagine_01diNN.json nella cartella indicata (--out, di default «monitor_pagine»).
 Poi li carica nell'app, oppure li lasci tu nel riquadro «Portale che blocca il server» della scheda Raccolta.
 
+TUTTI I COMUNI CHE IL SERVER NON LEGGE (anche di più regioni, una alla volta), con rapporto per ciascuno:
+
+    python scarica_portali.py --bloccati --regione Lombardia --app https://NOME-3000.app.github.dev
+    python scarica_portali.py --bloccati --regione Lombardia --app ... --riparti      # dopo un'interruzione
+    python scarica_portali.py --bloccati --regione Lombardia --app ... --limite 5     # solo una prova
+
+Legge dall'app l'elenco dei comuni da leggere dal PC, li scorre uno per uno, invia le pagine e segna nell'app l'esito di
+ognuno (letto / portale non riconosciuto / non raggiungibile): lo vedi nella scheda Siti della regione.
+
 COLLEGAMENTO DIRETTO ALL'APP (niente file da caricare a mano): indica dove sta l'app e il comune, e lo script fa il login come
 faresti tu dalla pagina e invia le pagine all'analisi:
 
@@ -48,6 +57,14 @@ NO = re.compile(r"\.(pdf|jpe?g|png|gif|zip|docx?|xlsx?|p7m|csv|xml)(\?|$)|login|
 PAGINA = re.compile(r"Pag\.\s*(\d+)\s*su\s*(\d+)", re.I)
 POSTBACK = re.compile(r"__doPostBack\(\s*'([^']+)'")
 MAX_FILE = 6_000_000  # byte per file: il server ne accetta 12 MB e 80 pagine
+
+
+class PortaleNonRaggiungibile(Exception):
+    """La pagina di partenza del portale non si apre (rete, blocco, indirizzo errato)."""
+
+
+# Segni che la pagina è un elenco del portale che lo script sa leggere (ASP.NET: «Pag. 1 su 4», «Trovati 52…», tabelle e voci d'albo)
+RICONOSCIUTO = re.compile(r"Pag\.\s*\d+\s*su\s*\d+|Trovat[ie]\s+\d+|id=\"tblbandi\"|RptAlbo|RepBandi", re.I)
 
 
 # --- lettura dell'HTML con la sola libreria standard ---------------------------------------------------------------
@@ -111,6 +128,7 @@ class Browser:
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         self.op.addheaders = [("User-Agent", UA), ("Accept-Language", "it-IT,it;q=0.9")]
         self.richieste = 0
+        self.errori: list[str] = []
 
     def _vai(self, req: urllib.request.Request) -> tuple[str, str] | None:
         time.sleep(self.pausa)
@@ -122,6 +140,7 @@ class Browser:
                 return raw.decode(enc, errors="replace"), r.geturl()
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             print(f"   ! non riuscito: {req.full_url[:90]} ({exc})", file=sys.stderr)
+            self.errori.append(f"{req.full_url[:120]}: {exc}")
             return None
 
     def get(self, url: str) -> tuple[str, str] | None:
@@ -232,21 +251,35 @@ def righe_bandi(html: str) -> list[dict]:
 # --- il lavoro --------------------------------------------------------------------------------------------------------
 def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: int, max_pagine_lista: int,
             parole: list[str] | None = None) -> list[dict]:
+    return scarica_con_rapporto(inizio, massimo, pausa, dettagli, max_liste, max_pagine_lista, parole)[0]
+
+
+def scarica_con_rapporto(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: int, max_pagine_lista: int,
+                         parole: list[str] | None = None, silenzioso: bool = False) -> tuple[list[dict], dict]:
+    """Le pagine del portale e il RAPPORTO della lettura (stato ok / non_riconosciuto, sezioni, ricerche, errori, note)."""
     b = Browser(pausa)
+    ricerche: list[dict] = []
+    segni = [0]  # pagine che sembrano un elenco del portale
     parole = PAROLE if parole is None else parole
     pagine: dict[str, str] = {}
+
+    def dire(*a: object) -> None:
+        if not silenzioso:
+            print(*a)
 
     def aggiungi(url: str, html: str) -> bool:
         if url in pagine:
             return False
+        if RICONOSCIUTO.search(html):
+            segni[0] += 1
         pagine[url] = alleggerisci(html)
         if len(pagine) % 10 == 0:
-            print(f"   {len(pagine)} pagine…")
+            dire(f"   {len(pagine)} pagine…")
         return True
 
     primo = b.get(inizio)
     if not primo:
-        sys.exit("Non riesco ad aprire la pagina di partenza: controlla l'indirizzo e la connessione.")
+        raise PortaleNonRaggiungibile(b.errori[-1] if b.errori else "la pagina di partenza non si apre")
     html0, url0 = primo
     origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(url0))
     p0 = leggi_html(html0)
@@ -258,9 +291,9 @@ def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: 
         if stesso_sito(u) and SEZ.search(u) and percorso(u) != percorso(url0) and u not in liste:
             liste.append(u)
     liste = liste[: max_liste]
-    print(f"Sezioni da leggere: {len(liste)}")
+    dire(f"Sezioni da leggere: {len(liste)}")
     for u in liste:
-        print("  -", u)
+        dire("  -", u)
 
     dettagli_url: list[str] = []
 
@@ -304,13 +337,15 @@ def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: 
         # le pagine di ricerca (es. «Atti Amministrativi»: delibere, decreti…) si aprono vuote: si cerca per parole chiave
         ric = campo_ricerca(leggi_html(html))
         if ric and senza_risultati(html):
-            print(f"  ricerca in {url}")
+            dire(f"  ricerca in {url}")
             for parola in parole:
                 if len(pagine) >= massimo:
                     break
                 res = invia_form(b, url, html, bottone=(ric[1], "Cerca"), modifiche={ric[0]: parola})
-                if res and not senza_risultati(res[0]):
-                    print(f"    «{parola}»: " + (PAGINA.search(res[0]).group(0) if PAGINA.search(res[0]) else "risultati trovati"))
+                trovati = bool(res and not senza_risultati(res[0]))
+                ricerche.append({"parola": parola, "trovati": trovati})
+                if res and trovati:
+                    dire(f"    «{parola}»: " + (PAGINA.search(res[0]).group(0) if PAGINA.search(res[0]) else "risultati trovati"))
                     percorri(con_ricerca(url, parola), url, res[0])
 
     for u in dettagli_url:  # collegamenti ai dettagli (non ASP.NET), un livello
@@ -321,8 +356,16 @@ def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: 
             if r:
                 aggiungi(u, r[0])
 
-    print(f"Fatto: {len(pagine)} pagine, {b.richieste} richieste.")
-    return [{"url": u, "html": h} for u, h in pagine.items()]
+    dire(f"Fatto: {len(pagine)} pagine, {b.richieste} richieste.")
+    riconosciuto = segni[0] > 0 or any(r["trovati"] for r in ricerche)
+    if riconosciuto and len(pagine) > 1:
+        stato, note = "ok", f"{len(pagine)} pagine, {len(liste)} sezioni, ricerche con risultati: {sum(r['trovati'] for r in ricerche)}/{len(ricerche)}"
+    else:
+        stato = "non_riconosciuto"
+        note = ("nessun elenco riconoscibile (né «Pag. N su M», né tabelle di bandi, né voci d'albo): portale diverso da quelli noti, "
+                "serve un lettore dedicato" if not riconosciuto else "una sola pagina letta")
+    rapporto = {"stato": stato, "pagine": len(pagine), "sezioni": len(liste), "ricerche": ricerche, "errori": b.errori[:10], "note": note}
+    return [{"url": u, "html": h} for u, h in pagine.items()], rapporto
 
 
 def scrivi(pagine: list[dict], origine: str, cartella: Path, per_file: int) -> list[Path]:
@@ -408,8 +451,21 @@ class App:
                      "oppure rendila pubblica dalla scheda «Porte» di VS Code.")
         self.token = body["access_token"]
 
-    def invia(self, regione: str, comune: str, file: Path) -> dict:
-        corpo, tipo = multipart({"comune": comune}, file.name, file.read_bytes())
+    def comuni_da_pc(self, regione: str, tutti: bool = False) -> list[dict]:
+        code, body = self._chiama("GET", f"/regions/{urllib.parse.quote(regione)}/comuni-da-pc" + ("?tutti=true" if tutti else ""))
+        if code != 200:
+            sys.exit(f"Non riesco a leggere dall'app l'elenco dei comuni (codice {code}): {body.get('detail') or ''}")
+        return list(body.get("comuni") or [])
+
+    def rapporto(self, regione: str, comuni: list[dict]) -> None:
+        corpo = json.dumps({"comuni": comuni}, ensure_ascii=False).encode()
+        code, _ = self._chiama("POST", f"/regions/{urllib.parse.quote(regione)}/rapporto-pc", corpo, "application/json")
+        if code != 200:
+            print(f"  ! il rapporto non è stato salvato (codice {code})", file=sys.stderr)
+
+    def invia(self, regione: str, comune: str, file: Path, item_id: str | None = None) -> dict:
+        campi = {"comune": comune, **({"item_id": item_id} if item_id else {})}
+        corpo, tipo = multipart(campi, file.name, file.read_bytes())
         code, body = self._chiama("POST", f"/regions/{urllib.parse.quote(regione)}/import-pagine", corpo, tipo)
         if code != 200:
             raise RuntimeError(str(body.get("detail") or f"errore {code}"))
@@ -443,9 +499,68 @@ def invia_all_app(files: list[Path], app: App, regione: str, comune: str, attesa
     return inviate
 
 
+def unisci_rapporti(rapporti: list[dict]) -> dict:
+    """Un solo rapporto per il comune, dai rapporti dei suoi indirizzi: ok se almeno uno è ok."""
+    if not rapporti:
+        return {"stato": "errore", "pagine": 0, "sezioni": 0, "ricerche": [], "errori": [], "note": "nessun indirizzo da leggere"}
+    stati = {r["stato"] for r in rapporti}
+    stato = "ok" if "ok" in stati else ("non_riconosciuto" if "non_riconosciuto" in stati else "errore")
+    return {"stato": stato, "pagine": sum(r.get("pagine", 0) for r in rapporti), "sezioni": sum(r.get("sezioni", 0) for r in rapporti),
+            "ricerche": [x for r in rapporti for x in r.get("ricerche", [])], "errori": [e for r in rapporti for e in r.get("errori", [])][:10],
+            "note": " | ".join(r["note"] for r in rapporti if r.get("note"))[:300]}
+
+
+def lavora_elenco(app: App, regione: str, cartella: Path, *, tutti: bool, riparti: bool, limite: int | None, massimo: int, pausa: float,
+                  dettagli: bool, max_sezioni: int, max_pagine_lista: int, per_file: int, parole: list[str] | None) -> dict[str, int]:
+    """Tutti i comuni che il server non legge, uno dopo l'altro: legge dal PC, invia le pagine all'app e manda il rapporto.
+    Si può interrompere (Ctrl+C) e riprendere con --riparti: i comuni già fatti sono ricordati in un file della cartella."""
+    cartella.mkdir(parents=True, exist_ok=True)
+    stato_file = cartella / f"stato_{re.sub(r'[^A-Za-z0-9]+', '_', regione)}.json"
+    fatti: set[str] = set(json.loads(stato_file.read_text())) if riparti and stato_file.exists() else set()
+    lista = [c for c in app.comuni_da_pc(regione, tutti) if c["id"] not in fatti]
+    if limite:
+        lista = lista[:limite]
+    print(f"Comuni da leggere dal PC: {len(lista)}" + (f" (già fatti e saltati: {len(fatti)})" if fatti else ""))
+    esiti = {"ok": 0, "non_riconosciuto": 0, "errore": 0}
+    for i, c in enumerate(lista, 1):
+        print(f"[{i}/{len(lista)}] {c['ente']} — {c.get('motivo', '')}")
+        pagine_c: dict[str, dict] = {}
+        rapporti: list[dict] = []
+        for url in c["siti"][:3]:
+            try:
+                pg, rap = scarica_con_rapporto(url, massimo, pausa, dettagli, max_sezioni, max_pagine_lista, parole, silenzioso=True)
+            except PortaleNonRaggiungibile as exc:
+                rapporti.append({"stato": "errore", "pagine": 0, "sezioni": 0, "ricerche": [], "errori": [str(exc)[:200]],
+                                 "note": "la pagina di partenza non si apre nemmeno dal PC"})
+                continue
+            rapporti.append(rap)
+            for p in pg:
+                pagine_c.setdefault(p["url"], p)
+        rap = unisci_rapporti(rapporti)
+        inviate = 0
+        if pagine_c:
+            sotto = cartella / "serie" / re.sub(r"[^A-Za-z0-9]+", "_", c["ente"])
+            for f in scrivi(list(pagine_c.values()), c["siti"][0], sotto, per_file):
+                try:
+                    inviate += int(app.invia(regione, c["ente"], f, item_id=c["id"]).get("pagine", 0))
+                except RuntimeError as exc:
+                    rap["errori"] = [*rap["errori"], f"invio: {exc}"][:10]
+        esiti[rap["stato"]] += 1
+        print(f"      {rap['stato']}: {rap['pagine']} pagine lette, {inviate} inviate. {rap['note'][:110]}")
+        app.rapporto(regione, [{"id": c["id"], **rap}])
+        fatti.add(c["id"])
+        stato_file.write_text(json.dumps(sorted(fatti)))
+    return esiti
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("url", help="una pagina del portale (es. https://dgegovpa.it/Arluno/Albo/Albo)")
+    ap.add_argument("url", nargs="?", help="una pagina del portale (es. https://dgegovpa.it/Arluno/Albo/Albo); non serve con --bloccati")
+    ap.add_argument("--bloccati", action="store_true",
+                    help="legge dal PC TUTTI i comuni della regione che il server non riesce a leggere (serve --app); invia e manda il rapporto")
+    ap.add_argument("--tutti", action="store_true", help="con --bloccati: anche i comuni che il server legge bene")
+    ap.add_argument("--riparti", action="store_true", help="con --bloccati: salta i comuni già fatti in una esecuzione interrotta")
+    ap.add_argument("--limite", type=int, help="con --bloccati: solo i primi N comuni (per una prova)")
     ap.add_argument("--out", default="monitor_pagine", help="cartella dei file da caricare nell'app")
     ap.add_argument("--max", type=int, default=400, help="massimo di pagine in tutto")
     ap.add_argument("--pausa", type=float, default=0.5, help="secondi tra una richiesta e l'altra")
@@ -464,7 +579,11 @@ def main() -> None:
     ap.add_argument("--github-token", default=os.environ.get("MONITOR_GITHUB_TOKEN"),
                     help="token personale GitHub, se la porta 8000 del Codespace è privata")
     a = ap.parse_args()
-    if bool(a.app) != bool(a.comune):
+    if a.bloccati and not a.app:
+        ap.error("--bloccati richiede --app (l'elenco dei comuni è nell'app)")
+    if not a.bloccati and not a.url:
+        ap.error("indica l'indirizzo del portale, oppure usa --bloccati")
+    if not a.bloccati and bool(a.app) != bool(a.comune):
         ap.error("per l'invio diretto servono insieme --app e --comune")
     app = None
     if a.app:  # prima di scaricare: se l'accesso non va, lo si scopre subito e non dopo dieci minuti
@@ -473,7 +592,18 @@ def main() -> None:
         app.login(a.email or input("Email dell'app: ").strip(), a.password or chiedi("Password dell'app: "))
         print("Accesso all'app riuscito.")
     parole = [x.strip() for x in a.cerca.split(",") if x.strip()] if a.cerca else None
-    pagine = scarica(a.url, a.max, a.pausa, not a.senza_dettagli, a.max_sezioni, a.max_pagine_lista, parole)
+    if a.bloccati:
+        assert app is not None
+        esiti = lavora_elenco(app, a.regione, Path(a.out), tutti=a.tutti, riparti=a.riparti, limite=a.limite, massimo=a.max, pausa=a.pausa,
+                              dettagli=not a.senza_dettagli, max_sezioni=a.max_sezioni, max_pagine_lista=a.max_pagine_lista,
+                              per_file=a.per_file, parole=parole)
+        print(f"\nFinito: {esiti['ok']} letti, {esiti['non_riconosciuto']} con portale non riconosciuto, {esiti['errore']} non raggiungibili."
+              "\nL'analisi continua nell'app (scheda Raccolta); l'esito di ogni comune è nella scheda Siti.")
+        return
+    try:
+        pagine = scarica(a.url, a.max, a.pausa, not a.senza_dettagli, a.max_sezioni, a.max_pagine_lista, parole)
+    except PortaleNonRaggiungibile as exc:
+        sys.exit(f"Non riesco ad aprire la pagina di partenza ({exc}): controlla l'indirizzo e la connessione.")
     files = scrivi(pagine, a.url, Path(a.out), a.per_file)
     print(f"\nScritti {len(files)} file in «{Path(a.out).resolve()}»:")
     for f in files:

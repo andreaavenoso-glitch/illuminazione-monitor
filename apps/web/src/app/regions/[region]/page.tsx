@@ -809,7 +809,14 @@ export default function RegionPage() {
                     <td>
                       <span className={`rounded-full px-2 py-0.5 text-xs ${STATO_CLASS[c.stato]}`}>{STATO_LABEL[c.stato]}</span>
                       {c.stato === "failing" && <div className="mt-0.5 text-xs text-red-700 dark:text-red-300">{c.last_error ? (ERROR_LABELS[c.last_error] ?? c.last_error) : "errore"} · {c.consecutive_failures}× di fila</div>}
-                      {c.stato === "failing" && isBlockingPortal(c.siti) && (
+                      {c.pc && (
+                        <div className={`mt-0.5 text-xs ${c.pc.stato === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
+                          {c.pc.stato === "ok" && <>Letto dal PC il {fmt(c.pc.il)}: {c.pc.pagine} pagine.</>}
+                          {c.pc.stato === "non_riconosciuto" && <>Letto dal PC il {fmt(c.pc.il)} ma il portale non è riconosciuto: serve un lettore dedicato. {c.pc.note}</>}
+                          {c.pc.stato === "errore" && <>Non raggiungibile nemmeno dal PC ({fmt(c.pc.il)}). {c.pc.errori?.[0] ?? c.pc.note}</>}
+                        </div>
+                      )}
+                      {c.stato === "failing" && !c.pc && isBlockingPortal(c.siti) && (
                         <div className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400">
                           Portale che rifiuta il server: leggilo con il tuo browser (scheda Raccolta → «Leggilo con il tuo browser»).
                         </div>

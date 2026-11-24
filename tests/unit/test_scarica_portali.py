@@ -118,6 +118,8 @@ def test_the_api_address_comes_from_the_address_of_the_app():
 
 class _FakeApp(BaseHTTPRequestHandler):
     visti: list[dict] = []
+    comuni: list[dict] = []
+    rapporti: list[dict] = []
 
     def log_message(self, *a): ...
 
@@ -132,12 +134,17 @@ class _FakeApp(BaseHTTPRequestHandler):
         if self.path == "/auth/login":
             d = json.loads(body)
             return self._json(200, {"access_token": "T0K"}) if d["password"] == "giusta123" else self._json(401, {"detail": "Invalid credentials"})
+        if self.path == "/regions/Lombardia/rapporto-pc":
+            self.rapporti.extend(json.loads(body)["comuni"])
+            return self._json(200, {"salvati": 1})
         if self.path == "/regions/Lombardia/import-pagine":
             self.visti.append({"auth": self.headers.get("Authorization"), "gh": self.headers.get("X-Github-Token"), "body": body})
             return self._json(200, {"status": "dispatched", "pagine": 2, "task_id": "x"})
         self._json(404, {})
 
     def do_GET(self):
+        if self.path.startswith("/regions/Lombardia/comuni-da-pc"):
+            return self._json(200, {"comuni": self.comuni})
         self._json(200, {"status": "done", "items": [{"records_found": 3}]}) if self.path == "/regions/Lombardia/scan" else self._json(404, {})
 
 
@@ -184,3 +191,40 @@ def test_a_short_or_empty_password_is_explained_before_calling_the_app():
     with pytest.raises(SystemExit) as e:
         sp.App("http://127.0.0.1:1").login("non-una-email", "password-lunga")
     assert "email" in str(e.value).lower()
+
+
+def test_serial_mode_reads_every_blocked_comune_sends_pages_and_reports_each_one(tmp_path, monkeypatch):
+    import time as _t
+
+    monkeypatch.setattr(_t, "sleep", lambda s: None)
+    portal = HTTPServer(("127.0.0.1", 0), H)
+    fake = HTTPServer(("127.0.0.1", 0), _FakeApp)
+    for srv in (portal, fake):
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{portal.server_port}"
+    _FakeApp.visti.clear()
+    _FakeApp.rapporti.clear()
+    _FakeApp.comuni = [
+        {"id": "id-ok", "ente": "Comune Uno", "siti": [f"{base}/P/Albo.aspx"], "motivo": "portale che rifiuta il server"},
+        {"id": "id-strano", "ente": "Comune Due", "siti": [f"{base}/P/Personale.aspx"], "motivo": "sito non raggiungibile dal server (reset)"},
+        {"id": "id-giu", "ente": "Comune Tre", "siti": ["http://127.0.0.1:1/x"], "motivo": "portale che rifiuta il server"},
+    ]
+    try:
+        app = sp.App(f"http://127.0.0.1:{fake.server_port}")
+        app.login("a@b.it", "giusta123")
+        kw = dict(tutti=False, riparti=False, limite=None, massimo=100, pausa=0, dettagli=True, max_sezioni=10, max_pagine_lista=60,
+                  per_file=60, parole=None)
+        esiti = sp.lavora_elenco(app, "Lombardia", tmp_path, **kw)
+        # a second run with --riparti skips what is done
+        assert sp.lavora_elenco(app, "Lombardia", tmp_path, **{**kw, "riparti": True}) == {"ok": 0, "non_riconosciuto": 0, "errore": 0}
+    finally:
+        portal.shutdown()
+        fake.shutdown()
+    assert esiti == {"ok": 1, "non_riconosciuto": 1, "errore": 1}
+    per_id = {r["id"]: r for r in _FakeApp.rapporti}
+    assert per_id["id-ok"]["stato"] == "ok" and per_id["id-ok"]["pagine"] >= 8
+    assert per_id["id-strano"]["stato"] == "non_riconosciuto" and "lettore dedicato" in per_id["id-strano"]["note"]
+    assert per_id["id-giu"]["stato"] == "errore" and per_id["id-giu"]["errori"]
+    # the pages were sent knowing the exact comune (no name to guess)
+    assert any(b'name="item_id"\r\n\r\nid-ok' in v["body"] for v in _FakeApp.visti)
+    assert not any(b"id-giu" in v["body"] for v in _FakeApp.visti)  # nothing to send for an unreachable comune

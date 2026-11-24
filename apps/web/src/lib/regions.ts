@@ -35,6 +35,8 @@ export interface RegionComune {
   consecutive_failures: number;
   last_scan_at: string | null;
   last_success_at: string | null;
+  /** Report of the reading made from the user's PC (portals that refuse the server). */
+  pc?: { il: string; stato: "ok" | "non_riconosciuto" | "errore"; pagine: number; sezioni: number; note?: string; errori?: string[] } | null;
   active: boolean;
 }
 

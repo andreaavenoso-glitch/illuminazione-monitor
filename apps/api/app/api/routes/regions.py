@@ -273,6 +273,7 @@ async def region_detail(
             "consecutive_failures": item.consecutive_failures or 0,
             "last_scan_at": item.last_scan_at,
             "last_success_at": item.last_success_at,
+            "pc": {"il": item.pc_letto_il, **item.pc_esito} if item.pc_letto_il and item.pc_esito else None,
             "active": item.active,
         }
         for item, ent in rows
@@ -677,6 +678,7 @@ async def import_pagine_script(region: str, _: User = Depends(require_role("admi
 async def import_pagine(
     region: str,
     comune: str = Form(...),
+    item_id: str | None = Form(None),
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_role("admin")),
@@ -690,7 +692,13 @@ async def import_pagine(
 
     region = _canonical(region)
     rows = (await session.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id))).all()
-    item, others = pick_comune([(i, e.name) for i, e in rows if normalize_region(e.region) == region], comune)
+    if item_id:  # the PC script knows the exact comune: no name to guess
+        item = next((i for i, e in rows if str(i.id) == item_id and normalize_region(e.region) == region), None)
+        others: list[str] = []
+        if item is None:
+            raise HTTPException(status_code=404, detail="Comune non trovato in questa regione")
+    else:
+        item, others = pick_comune([(i, e.name) for i, e in rows if normalize_region(e.region) == region], comune)
     if item is None:
         raise HTTPException(
             status_code=404,
@@ -704,6 +712,57 @@ async def import_pagine(
         msg = str(exc) if isinstance(exc, ImportError_) else "Il file non è un JSON valido."
         raise HTTPException(status_code=400, detail=msg) from exc
     return {"status": "dispatched", "pagine": len(pagine), "task_id": dispatch_import_pagine(str(item.id), pagine)}
+
+
+@router.get("/{region}/comuni-da-pc")
+async def comuni_da_pc(
+    region: str,
+    tutti: bool = Query(False, description="Also the comuni the server reads fine"),
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_role("admin")),
+) -> dict:
+    """The comuni to read from the user's PC: portals that refuse the server, or whose last readings failed like a block."""
+    from app.services.pc_collect import motivo_pc
+
+    region = _canonical(region)
+    rows = (await session.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id).order_by(Entity.name))).all()
+    out = []
+    for item, ent in rows:
+        if normalize_region(ent.region) != region or not item.active:
+            continue
+        urls = [u for u in (item.url_trasparenza, item.url_albo) if u]
+        motivo = motivo_pc(urls, item.last_error, item.consecutive_failures or 0)
+        if urls and (motivo or tutti):
+            out.append({"id": str(item.id), "ente": ent.name, "siti": urls, "motivo": motivo or "richiesto", "letto_il": item.pc_letto_il})
+    return {"region": region, "comuni": out}
+
+
+class RapportoPc(BaseModel):
+    comuni: list[dict]
+
+
+@router.post("/{region}/rapporto-pc")
+async def rapporto_pc(
+    region: str,
+    payload: RapportoPc,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_role("admin")),
+) -> dict:
+    """The report of the reading made from the PC, one per comune (``id`` + stato, pagine, sezioni, ricerche, errori, note)."""
+    from app.services.pc_collect import pulisci_rapporto
+
+    region = _canonical(region)
+    rows = {str(i.id): (i, e) for i, e in (await session.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id))).all()
+            if normalize_region(e.region) == region}
+    saved = 0
+    for r in payload.comuni[:2000]:
+        found = rows.get(str(r.get("id")))
+        if found:
+            found[0].pc_letto_il = datetime.now(tz=UTC)
+            found[0].pc_esito = pulisci_rapporto(r)
+            saved += 1
+    await session.commit()
+    return {"salvati": saved}
 
 
 @router.post("/{region}/verify")

@@ -41,6 +41,10 @@ class WatchlistItem(Base):
     # url -> fingerprint of what was last sent to Claude for that page: an
     # unchanged page is not analysed again (see app.collectors.page_gate).
     content_hashes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Sites the server cannot read (portals that refuse its address) are read from the user's PC: when, and the report of
+    # that reading (pages, sections, searches, errors, "portale non riconosciuto").
+    pc_letto_il: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pc_esito: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
