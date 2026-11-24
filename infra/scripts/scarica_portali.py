@@ -174,14 +174,37 @@ def campi_del_form(p: Pagina) -> list[tuple[str, str]]:
     return out
 
 
-def invia_form(b: Browser, pagina_url: str, html: str, target: str | None = None, bottone: tuple[str, str] | None = None) -> tuple[str, str] | None:
+def invia_form(b: Browser, pagina_url: str, html: str, target: str | None = None, bottone: tuple[str, str] | None = None,
+               modifiche: dict[str, str] | None = None) -> tuple[str, str] | None:
     """Ripete ciò che fa il browser quando si preme un pulsante della pagina: stessa form, stesso stato."""
     p = leggi_html(html)
     dati = dict(campi_del_form(p))
+    dati.update(modifiche or {})
     dati["__EVENTTARGET"] = target or ""
     dati["__EVENTARGUMENT"] = ""
     pairs = list(dati.items()) + ([bottone] if bottone else [])
     return b.post(assoluto(pagina_url, p.action or pagina_url) or pagina_url, pairs)
+
+
+def campo_ricerca(p: Pagina) -> tuple[str, str] | None:
+    """(campo «Oggetto», pulsante «Cerca») di una pagina di ricerca del portale, se c'è."""
+    oggetto = next((n for n, _, t, _ in p.campi if n.endswith("TxtOggetto") and t == "text"), None)
+    cerca = next((n for n, v, t, _ in p.campi if n.endswith("btnFiltra") and t == "submit"), None)
+    return (oggetto, cerca) if oggetto and cerca else None
+
+
+def senza_risultati(html: str) -> bool:
+    """La pagina di ricerca appena aperta non mostra ancora nessun elenco («Trovati N …» assente) o ne mostra zero."""
+    m = re.search(r"Trovat[ie]\s+(\d+)", html)
+    return m is None or int(m.group(1)) == 0
+
+
+PAROLE = ["illuminazione", "manifestazione di interesse", "finanza di progetto", "partenariato pubblico privato", "supporto al RUP"]
+
+
+def con_ricerca(url: str, parola: str) -> str:
+    base = re.sub(r"[?&]_q=[^&]*", "", url)
+    return f"{base}{'&' if '?' in base else '?'}_q={urllib.parse.quote(parola)}"
 
 
 def pulsante_successiva(p: Pagina) -> str | None:
@@ -207,8 +230,10 @@ def righe_bandi(html: str) -> list[dict]:
 
 
 # --- il lavoro --------------------------------------------------------------------------------------------------------
-def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: int, max_pagine_lista: int) -> list[dict]:
+def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: int, max_pagine_lista: int,
+            parole: list[str] | None = None) -> list[dict]:
     b = Browser(pausa)
+    parole = PAROLE if parole is None else parole
     pagine: dict[str, str] = {}
 
     def aggiungi(url: str, html: str) -> bool:
@@ -238,15 +263,12 @@ def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: 
         print("  -", u)
 
     dettagli_url: list[str] = []
-    for lu in liste:
-        if len(pagine) >= massimo:
-            break
-        r = (html0, url0) if lu == url0 else b.get(lu)
-        if not r:
-            continue
-        html, url = r
+
+    def percorri(nome: str, url: str, html: str) -> None:
+        """Registra la pagina e tutte le successive dell'elenco (pulsante «successiva»), aprendo i dettagli utili.
+        `nome` è l'indirizzo con cui la pagina viene salvata, `url` quello a cui il portale va scritto."""
         n = 1
-        aggiungi(con_pagina(url, n), html)
+        aggiungi(con_pagina(nome, n), html)
         while True:
             p = leggi_html(html)
             # i bandi sull'illuminazione: si apre il «Dettaglio» dalla pagina in cui compaiono
@@ -255,7 +277,7 @@ def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: 
                     if riga["bottone"] and LUCE.search(riga["oggetto"]):
                         d = invia_form(b, url, html, bottone=(riga["bottone"], "Dettaglio"))
                         if d:
-                            aggiungi(con_cig(url, riga["cig"]), d[0])
+                            aggiungi(con_cig(nome, riga["cig"]), d[0])
             for a in p.links:  # siti senza pulsanti ASP.NET: i collegamenti ai dettagli
                 u = assoluto(url, a["href"])
                 if stesso_sito(u) and (KW.search(a["text"]) or KW.search(u)) and not POSTBACK.search(a["href"]) and u not in dettagli_url:
@@ -269,7 +291,27 @@ def scarica(inizio: str, massimo: int, pausa: float, dettagli: bool, max_liste: 
                 break
             html = nxt[0]
             n += 1
-            aggiungi(con_pagina(url, n), html)
+            aggiungi(con_pagina(nome, n), html)
+
+    for lu in liste:
+        if len(pagine) >= massimo:
+            break
+        r = (html0, url0) if lu == url0 else b.get(lu)
+        if not r:
+            continue
+        html, url = r
+        percorri(url, url, html)
+        # le pagine di ricerca (es. «Atti Amministrativi»: delibere, decreti…) si aprono vuote: si cerca per parole chiave
+        ric = campo_ricerca(leggi_html(html))
+        if ric and senza_risultati(html):
+            print(f"  ricerca in {url}")
+            for parola in parole:
+                if len(pagine) >= massimo:
+                    break
+                res = invia_form(b, url, html, bottone=(ric[1], "Cerca"), modifiche={ric[0]: parola})
+                if res and not senza_risultati(res[0]):
+                    print(f"    «{parola}»: " + (PAGINA.search(res[0]).group(0) if PAGINA.search(res[0]) else "risultati trovati"))
+                    percorri(con_ricerca(url, parola), url, res[0])
 
     for u in dettagli_url:  # collegamenti ai dettagli (non ASP.NET), un livello
         if len(pagine) >= massimo:
@@ -411,6 +453,8 @@ def main() -> None:
     ap.add_argument("--max-sezioni", type=int, default=30)
     ap.add_argument("--per-file", type=int, default=60)
     ap.add_argument("--senza-dettagli", action="store_true", help="non aprire il «Dettaglio» dei bandi")
+    ap.add_argument("--cerca", help="parole da cercare nelle pagine di ricerca (delibere, atti…), separate da virgola; "
+                                     "di default: " + ", ".join(PAROLE))
     ap.add_argument("--app", help="indirizzo dell'app (quello con cui la apri nel browser): invia le pagine direttamente")
     ap.add_argument("--comune", help="nome del comune, come nell'app (es. Arluno)")
     ap.add_argument("--regione", default="Lombardia")
@@ -428,7 +472,8 @@ def main() -> None:
         chiedi = input if a.mostra_password else getpass.getpass
         app.login(a.email or input("Email dell'app: ").strip(), a.password or chiedi("Password dell'app: "))
         print("Accesso all'app riuscito.")
-    pagine = scarica(a.url, a.max, a.pausa, not a.senza_dettagli, a.max_sezioni, a.max_pagine_lista)
+    parole = [x.strip() for x in a.cerca.split(",") if x.strip()] if a.cerca else None
+    pagine = scarica(a.url, a.max, a.pausa, not a.senza_dettagli, a.max_sezioni, a.max_pagine_lista, parole)
     files = scrivi(pagine, a.url, Path(a.out), a.per_file)
     print(f"\nScritti {len(files)} file in «{Path(a.out).resolve()}»:")
     for f in files:

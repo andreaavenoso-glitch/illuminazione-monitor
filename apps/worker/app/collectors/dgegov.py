@@ -21,12 +21,13 @@ from bs4 import BeautifulSoup
 _ALBO_ITEM = re.compile(r"RptAlbo_ctl(\d+)_divFirst$")
 _DATE = re.compile(r"\d{1,2}/\d{1,2}/\d{4}")
 PAGE_PARAM = "_mpag"  # added by the browser script to tell the pages of a list apart
+SEARCH_PARAM = "_q"  # ... and the searches (keyword) made on a search page
 
 
 def clean_url(url: str) -> str:
     """The address of the page without the page marker and the fragment: what a person can open."""
     parts = urlsplit(url)
-    query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != PAGE_PARAM])
+    query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k not in (PAGE_PARAM, SEARCH_PARAM)])
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
 

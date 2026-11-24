@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from infra.scripts import scarica_portali as sp
 
-NAV = '<nav><a href="/P/Albo.aspx">Albo Pretorio</a><a href="/P/Bandi.aspx">Bandi di gara e contratti</a><a href="/P/Personale.aspx">Personale</a></nav>'
+NAV = '<nav><a href="/P/Albo.aspx">Albo Pretorio</a><a href="/P/Bandi.aspx">Bandi di gara e contratti</a><a href="/P/Atti.aspx">Atti Amministrativi</a><a href="/P/Personale.aspx">Personale</a></nav>'
 FORM = '<form method="post" action="./{page}" id="aspnetForm"><input type="hidden" name="__VIEWSTATE" value="{vs}" /><input type="hidden" name="__EVENTTARGET" value="" /><input type="hidden" name="pagina" value="{n}" /><select name="ord"><option value="a">A</option><option value="b" selected>B</option></select>'
 PAD = "<p>" + "testo " * 60 + "</p>"
 SEEN_POSTS: list[dict] = []
@@ -31,6 +31,24 @@ def bandi(n: int) -> str:
     return f'<html><body>{NAV}{FORM.format(page="Bandi.aspx", vs="Y" * 50, n=n)}<span>Pag. {n} su 2</span>{nxt}<table id="tblbandi">{righe}</table>{PAD}</form></body></html>'
 
 
+def _search(q: str = "") -> str:
+    """The search box of the portal keeps the text that was searched (as every ASP.NET page does)."""
+    return f'<input type="text" name="ctl00$TxtOggetto" value="{q}" /><input type="submit" name="ctl00$btnFiltra" value="Cerca" />'
+
+
+def atti(n: int, q: str) -> str:
+    """Search page: empty when opened, the acts that match once «Cerca» is pressed (2 pages for «illuminazione», none otherwise)."""
+    if not q:
+        return f"<html><body>{NAV}{FORM.format(page='Atti.aspx', vs='Z' * 50, n=1)}{_search()}{PAD}</form></body></html>"
+    if q != "illuminazione":
+        return f"<html><body>{NAV}{FORM.format(page='Atti.aspx', vs='Z' * 50, n=1)}{_search(q)}<p>Trovati 0 Atti</p>{PAD}</form></body></html>"
+    title = "DELIBERA DI GIUNTA: INCARICO DI SUPPORTO AL RUP E AVVIO MANIFESTAZIONE DI INTERESSE PER LA PUBBLICA ILLUMINAZIONE" if n == 2 else "ALTRO ATTO"
+    item = (f'<div class="row"><div><span class="h5"><div id="ctl00_RepAffissioniAlbo_RptAlbo_ctl00_divFirst">N. {n}</div></span></div>'
+            f'<div class="col-lg-10"><span class="h5">{title}</span><a href="/dati/atto{n}.PDF">atto{n}.PDF</a></div></div>')
+    nxt = '<a id="ctl00_RepAffissioniAlbo_LnkNextTop" href="javascript:__doPostBack(\'ctl00$RepAffissioniAlbo$LnkNextTop\',\'\')">»</a>' if n < 2 else ""
+    return (f"<html><body>{NAV}{FORM.format(page='Atti.aspx', vs='Z' * 50, n=n)}{_search(q)}<span>Trovati 4 Atti</span><span>Pag. {n} su 2</span>{nxt}{item}{PAD}</form></body></html>")
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): ...
 
@@ -41,7 +59,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body.encode())
 
     def do_GET(self):
-        page = {"/P/Albo.aspx": albo(1), "/P/Bandi.aspx": bandi(1), "/P/Personale.aspx": "<html>PERSONALE" + PAD + "</html>"}.get(urllib.parse.urlsplit(self.path).path)
+        page = {"/P/Albo.aspx": albo(1), "/P/Bandi.aspx": bandi(1), "/P/Atti.aspx": atti(1, ""), "/P/Personale.aspx": "<html>PERSONALE" + PAD + "</html>"}.get(urllib.parse.urlsplit(self.path).path)
         self._send(page or "no", 200 if page else 404)
 
     def do_POST(self):
@@ -53,6 +71,8 @@ class H(BaseHTTPRequestHandler):
             return self._send("<html><body><h1>Dettaglio procedura</h1>Importo 100.000 euro scadenza 15/01/2027 ore 12:00" + PAD + "</body></html>")
         if d.get("__EVENTTARGET", "").endswith("LnkNextTop"):
             n += 1
+        if self.path.endswith("Atti.aspx"):
+            return self._send(atti(n, d.get("ctl00$TxtOggetto", "")))
         self._send(albo(n) if self.path.endswith("Albo.aspx") else bandi(n))
 
 
@@ -71,6 +91,11 @@ def test_follows_every_page_of_each_list_and_opens_the_details_of_lighting_proce
     assert not any("cig=CIG21" in u or "cig=CIG10" in u for u in urls)  # the other rows' details are not opened
     assert not any("Personale" in u for u in urls)
     assert all(len(p["html"]) < 5000 and "XXXXX" not in p["html"] for p in pagine)  # state stripped
+    # the search page «Atti Amministrativi» opens empty: the script searches by keyword and follows the results
+    assert not any(u == "/P/Atti.aspx" and "PUBBLICA" in p["html"] for u, p in zip(urls, pagine, strict=False))
+    ricerche = [p for u, p in zip(urls, pagine, strict=False) if "_q=illuminazione" in u]
+    assert len(ricerche) == 2 and any("INCARICO DI SUPPORTO AL RUP" in p["html"] for p in ricerche)
+    assert not any("_q=partenariato" in u or "_q=supporto" in u for u in urls)  # keywords with no result are not saved
     assert any(d.get("ord") == "b" for d in SEEN_POSTS)  # the selected option of a select is sent back
     # the page 3 holds the act about lighting, reachable only by following the pager
     assert any("PUBBLICA ILLUMINAZIONE" in p["html"] and "_mpag=3" in p["url"] for p in pagine)
