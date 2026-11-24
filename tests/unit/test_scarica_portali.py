@@ -148,3 +148,14 @@ def test_wrong_password_stops_before_downloading_anything():
     finally:
         srv.shutdown()
     assert "password" in str(e.value)
+
+
+def test_a_short_or_empty_password_is_explained_before_calling_the_app():
+    import pytest
+
+    with pytest.raises(SystemExit) as e:
+        sp.App("http://127.0.0.1:1").login("admin@example.com", "")
+    assert "almeno 8" in str(e.value) and "0 caratteri" in str(e.value)
+    with pytest.raises(SystemExit) as e:
+        sp.App("http://127.0.0.1:1").login("non-una-email", "password-lunga")
+    assert "email" in str(e.value).lower()

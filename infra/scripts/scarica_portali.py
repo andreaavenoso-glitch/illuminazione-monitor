@@ -348,9 +348,19 @@ class App:
                      "Controlla che il Codespace sia acceso e che la porta 8000 sia pubblica (oppure usa --github-token).")
 
     def login(self, email: str, password: str) -> None:
+        email, password = email.strip(), password.strip("\r\n")
+        if "@" not in email:
+            sys.exit(f"L'email «{email}» non sembra un indirizzo valido.")
+        if len(password) < 8:
+            sys.exit(f"La password che hai scritto ha {len(password)} caratteri, ma l'app ne vuole almeno 8. "
+                     "Nel Prompt dei comandi non si vede cosa scrivi: riprova, oppure usa --mostra-password (la vedi mentre scrivi) "
+                     'oppure --password "LA-TUA-PASSWORD".')
         code, body = self._chiama("POST", "/auth/login", json.dumps({"email": email, "password": password}).encode(), "application/json")
         if code == 401 and body.get("detail") == "Invalid credentials":
             sys.exit("Email o password dell'app non corrette.")
+        if code == 422:
+            sys.exit("L'app ha rifiutato i dati di accesso (formato non valido): controlla email e password, senza spazi in più. "
+                     f"Dettaglio: {json.dumps(body.get('detail'), ensure_ascii=False)[:300]}")
         if code != 200 or "access_token" not in body:
             sys.exit(f"Accesso all'app non riuscito (codice {code}). Se la porta 8000 del Codespace è privata serve --github-token, "
                      "oppure rendila pubblica dalla scheda «Porte» di VS Code.")
@@ -406,6 +416,7 @@ def main() -> None:
     ap.add_argument("--regione", default="Lombardia")
     ap.add_argument("--email", default=os.environ.get("MONITOR_EMAIL"))
     ap.add_argument("--password", default=os.environ.get("MONITOR_PASSWORD"), help="meglio lasciarla vuota: la chiede lo script")
+    ap.add_argument("--mostra-password", action="store_true", help="la password si vede mentre la scrivi (utile se non si capisce se scrive)")
     ap.add_argument("--github-token", default=os.environ.get("MONITOR_GITHUB_TOKEN"),
                     help="token personale GitHub, se la porta 8000 del Codespace è privata")
     a = ap.parse_args()
@@ -414,7 +425,8 @@ def main() -> None:
     app = None
     if a.app:  # prima di scaricare: se l'accesso non va, lo si scopre subito e non dopo dieci minuti
         app = App(a.app, a.github_token)
-        app.login(a.email or input("Email dell'app: ").strip(), a.password or getpass.getpass("Password dell'app: "))
+        chiedi = input if a.mostra_password else getpass.getpass
+        app.login(a.email or input("Email dell'app: ").strip(), a.password or chiedi("Password dell'app: "))
         print("Accesso all'app riuscito.")
     pagine = scarica(a.url, a.max, a.pausa, not a.senza_dettagli, a.max_sezioni, a.max_pagine_lista)
     files = scrivi(pagine, a.url, Path(a.out), a.per_file)
