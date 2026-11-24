@@ -10,7 +10,7 @@ export function ImportaPagine({ region }: { region: string }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [comune, setComune] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -29,33 +29,41 @@ export function ImportaPagine({ region }: { region: string }) {
   };
 
   const send = async () => {
-    if (!file || !comune.trim()) return;
+    if (!files.length || !comune.trim()) return;
     setBusy(true);
     setMsg(null);
-    try {
-      const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const token = getToken();
-      const form = new FormData();
-      form.append("comune", comune.trim());
-      form.append("file", file);
-      const res = await fetch(`${base}/regions/${encodeURIComponent(region)}/import-pagine`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
-      });
-      const body = (await res.json().catch(() => ({}))) as { detail?: string; pagine?: number };
-      if (!res.ok) {
-        setMsg({ ok: false, text: body.detail ?? `Errore ${res.status}` });
-      } else {
-        setMsg({ ok: true, text: `${body.pagine} pagine inviate all'analisi: il risultato compare qui sopra (Raccolta) tra pochi secondi.` });
-        setFile(null);
-        qc.invalidateQueries({ queryKey: ["scan", region] });
+    const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const token = getToken();
+    let pagine = 0;
+    const errori: string[] = [];
+    for (const f of files) {
+      try {
+        const form = new FormData();
+        form.append("comune", comune.trim());
+        form.append("file", f);
+        const res = await fetch(`${base}/regions/${encodeURIComponent(region)}/import-pagine`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        });
+        const body = (await res.json().catch(() => ({}))) as { detail?: string; pagine?: number };
+        if (res.ok) pagine += body.pagine ?? 0;
+        else errori.push(`${f.name}: ${body.detail ?? `errore ${res.status}`}`);
+      } catch (e) {
+        errori.push(`${f.name}: ${(e as Error).message}`);
       }
-    } catch (e) {
-      setMsg({ ok: false, text: (e as Error).message });
-    } finally {
-      setBusy(false);
     }
+    if (pagine) {
+      qc.invalidateQueries({ queryKey: ["scan", region] });
+      setFiles([]);
+    }
+    setMsg({
+      ok: errori.length === 0,
+      text:
+        (pagine ? `${pagine} pagine inviate all'analisi (${files.length - errori.length} file): il risultato compare nella Raccolta tra pochi secondi. ` : "") +
+        errori.join(" · "),
+    });
+    setBusy(false);
   };
 
   return (
@@ -79,16 +87,16 @@ export function ImportaPagine({ region }: { region: string }) {
             <li>Apri in Chrome la pagina del portale con l'elenco (es. Albo Pretorio o Atti del comune).</li>
             <li>
               Premi <b>F12</b>, scheda <b>Console</b>. Se Chrome lo chiede, scrivi <code>allow pasting</code> e Invio. Incolla lo
-              script e premi Invio: si scarica <code>monitor_pagine.json</code>.
+              script e premi Invio: segue da solo le pagine dell'elenco (1, 2, 3…) e i dettagli, fino a 300 pagine, e scarica uno o più file <code>monitor_pagine_01di03.json</code>… Se Chrome chiede di consentire download multipli, accetta.
             </li>
-            <li>Ripeti per le altre pagine utili (Atti amministrativi, Amministrazione trasparente: ogni volta un file).</li>
-            <li>Carica qui il file, con il nome del comune:</li>
+            <li>Ripeti per le altre sezioni utili (ogni tipologia dell'Albo, Atti amministrativi, Amministrazione trasparente).</li>
+            <li>Carica qui tutti i file insieme (selezionali tutti), con il nome del comune:</li>
           </ol>
           <div className="flex flex-wrap items-center gap-2">
             <input value={comune} onChange={(e) => setComune(e.target.value)} placeholder="Comune (es. Arluno)" className="rounded-lg border border-neutral-300 px-2 py-1" />
-            <input type="file" accept=".json,application/json" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            <button onClick={send} disabled={busy || !file || !comune.trim()} className="rounded-lg bg-sky-600 px-3 py-1 text-white disabled:opacity-50">
-              {busy ? "Invio…" : "Analizza"}
+            <input type="file" multiple accept=".json,application/json" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+            <button onClick={send} disabled={busy || !files.length || !comune.trim()} className="rounded-lg bg-sky-600 px-3 py-1 text-white disabled:opacity-50">
+              {busy ? "Invio…" : files.length > 1 ? `Analizza ${files.length} file` : "Analizza"}
             </button>
           </div>
           {msg && <p className={msg.ok ? "text-emerald-700" : "text-red-700"}>{msg.text}</p>}
