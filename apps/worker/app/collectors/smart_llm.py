@@ -20,9 +20,11 @@ from uuid import UUID
 
 import anthropic
 import structlog
-from app.collectors.adaptive_fetch import adaptive_fetch
-from app.collectors.base import BaseCollector, CollectorResult, RawRecordDraft
+from app.collectors.adaptive_fetch import adaptive_fetch_result
+from app.collectors.albo_pretorio_llm import is_fatal_api_error
+from app.collectors.base import BaseCollector, CollectorError, CollectorResult, RawRecordDraft
 from app.config import get_worker_settings
+from app.usage import record_usage
 from shared_models import RawRecord
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -182,7 +184,7 @@ class SmartLLMCollector(BaseCollector):
             )
             return []
 
-        cleaned = await adaptive_fetch(
+        fetched = await adaptive_fetch_result(
             self.search_url,
             timeout=self.timeout,
             max_html_chars=self.settings.smart_collector_max_html_chars,
@@ -192,8 +194,11 @@ class SmartLLMCollector(BaseCollector):
             ),
             label=self.platform_type,
         )
+        cleaned = fetched.text
         if not cleaned:
-            return []
+            # Say so: returning an empty list made an unreachable site look
+            # like "read, nothing found" (status partial, last_checked_at set).
+            raise CollectorError(f"pagina non leggibile ({fetched.error or 'empty'}): {self.search_url}")
 
         records = await self._extract_with_claude(cleaned)
         return [self._to_draft(r) for r in records]
@@ -226,6 +231,9 @@ class SmartLLMCollector(BaseCollector):
                 platform=self.platform_type,
                 error=str(exc),
             )
+            if is_fatal_api_error(exc):
+                # Not "0 records found": the run failed, and the job says why.
+                raise CollectorError(f"Claude non disponibile: {exc}") from exc
             return []
 
         log.info(
@@ -235,6 +243,9 @@ class SmartLLMCollector(BaseCollector):
             output_tokens=response.usage.output_tokens,
             cache_read=getattr(response.usage, "cache_read_input_tokens", 0),
             cache_create=getattr(response.usage, "cache_creation_input_tokens", 0),
+        )
+        await record_usage(
+            response.usage, model=self.settings.anthropic_model, purpose="collector", label=self.platform_type
         )
 
         text = next((b.text for b in response.content if b.type == "text"), "")

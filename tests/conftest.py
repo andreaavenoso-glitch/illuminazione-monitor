@@ -20,3 +20,22 @@ if api_root.exists() and str(api_root) not in sys.path:
     sys.path.insert(0, str(api_root))
 
 os.environ.setdefault("APP_ENV", "test")
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_fetch_retry(monkeypatch):
+    """The tests count requests one by one: the second attempt of adaptive_fetch is switched off (test_fetch_retry
+    switches it on again for itself)."""
+    try:
+        from app.collectors import adaptive_fetch
+    except Exception:  # noqa: BLE001 -- tests that do not need the worker
+        return
+    monkeypatch.setattr(adaptive_fetch, "RETRY_ENABLED", False)
+    monkeypatch.setattr(adaptive_fetch, "HOST_MIN_INTERVAL", 0.0)
+    adaptive_fetch._HOST_NEXT.clear()
+    adaptive_fetch._HOST_INTERVAL.clear()
+    adaptive_fetch._RETRY_AFTER.clear()
+    adaptive_fetch._COOLDOWN_UNTIL.clear()

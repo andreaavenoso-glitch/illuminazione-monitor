@@ -22,16 +22,52 @@ import logging
 from datetime import UTC, datetime
 
 from app.celery_app import celery_app
+from app.config import get_worker_settings
 from app.db import SessionLocal
 from app.domain.classification import classify_stato_procedurale, classify_tipo_novita
 from app.domain.normalization import NormalizerInput, normalize
-from shared_models import JobRun, ProcurementRecord, RawRecord, Source
+from shared_models import Entity, JobRun, ProcurementRecord, RawRecord, Source
+from shared_models.regions import entity_key, infer_region, normalize_region
+from shared_models.services import configure as configure_services
+from shared_models.services import detect_services, parse_enabled
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
 BATCH_SIZE = 200
+
+
+async def _resolve_region(session: AsyncSession, raw: RawRecord, normalized) -> str | None:
+    """Region a record belongs to, so national findings (TED, ANAC, GURI...)
+    land in the right regional box. Strongest signal first: the watchlist
+    entity the record was scraped from, then the record's own region, TED
+    NUTS code, a known entity with the same name, a region named in the text.
+    """
+    if raw.entity_id:
+        entity = await session.get(Entity, raw.entity_id)
+        r = normalize_region(entity.region) if entity else None
+        if r:
+            return r
+    extracted = raw.extracted_json or {}
+    entity_regions: dict[str, str] = {}
+    ente = normalized.ente
+    if ente:
+        row = (
+            await session.execute(
+                select(Entity.region).where(Entity.name.ilike(ente.strip())).limit(1)
+            )
+        ).scalar_one_or_none()
+        r = normalize_region(row)
+        if r:
+            entity_regions[entity_key(ente)] = r
+    return infer_region(
+        regione=normalized.regione,
+        ente=ente,
+        entity_regions=entity_regions,
+        nuts=extracted.get("nuts"),
+        provincia_text=normalized.provincia,
+    )
 
 
 async def _process_batch(session: AsyncSession, job: JobRun) -> None:
@@ -106,8 +142,20 @@ async def _upsert(
         now=now,
     )
 
+    regione = await _resolve_region(session, raw, normalized)
+    extracted_atto_tipo = (raw.extracted_json or {}).get("atto_tipo")
+    servizio = ",".join(
+        detect_services(f"{normalized.descrizione or ''} {raw.raw_title or ''} {raw.raw_body or ''}")
+    ) or None
+
     if existing:
         _merge_fields(existing, normalized, stato=stato, tipo=tipo, now=now)
+        if regione and not existing.regione:
+            existing.regione = regione
+        if extracted_atto_tipo and not existing.atto_tipo:
+            existing.atto_tipo = extracted_atto_tipo
+        if servizio and not existing.servizio:
+            existing.servizio = servizio
         return existing
 
     record = ProcurementRecord(
@@ -117,7 +165,9 @@ async def _upsert(
         cig=normalized.cig,
         data_pubblicazione=normalized.data_pubblicazione,
         scadenza=normalized.scadenza,
-        regione=normalized.regione,
+        regione=regione,
+        atto_tipo=extracted_atto_tipo,
+        servizio=servizio,
         provincia=normalized.provincia,
         comune=normalized.comune,
         tipologia_gara_procedura=normalized.tipologia_gara_procedura,
@@ -211,6 +261,7 @@ MAX_BATCHES_PER_RUN = 100
 
 
 async def _run_normalize() -> dict[str, int]:
+    configure_services(parse_enabled(get_worker_settings().enabled_services))
     async with SessionLocal() as session:
         job = JobRun(job_name="normalize_records", status="running")
         session.add(job)

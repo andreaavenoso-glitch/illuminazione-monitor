@@ -97,11 +97,11 @@ class TestDiscoverSitemapUrls:
         httpx_mock.add_response(url="https://comune.test/sitemap.xml", text=mixed)
         urls = await discover_sitemap_urls("https://comune.test/")
         assert urls[0] == "https://comune.test/amministrazione-trasparente/bandi-di-gara/"
+        # Generic notices pad the list, but election news is dropped outright.
         assert set(urls) == {
             "https://comune.test/news/avviso-pagamento-tari/",
             "https://comune.test/delibera/giunta-123/",
             "https://comune.test/amministrazione-trasparente/bandi-di-gara/",
-            "https://comune.test/news/avviso-elezioni/",
         }
 
     @pytest.mark.asyncio

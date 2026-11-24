@@ -9,7 +9,8 @@ from app.celery_app import celery_app
 from app.collectors import COLLECTOR_REGISTRY, CollectorResult
 from app.collectors.base import BaseCollector
 from app.db import SessionLocal
-from shared_models import JobRun, Source
+from shared_models import JobRun, RegionSettings, Source
+from shared_models.regions import normalize_region
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +74,36 @@ async def _collect_by_type(source_type: str) -> dict[str, int]:
     return totals
 
 
+async def _collect_regional(region: str | None) -> dict[str, int]:
+    """Level 2 regional sites (regional e-procurement, SUA/CUC, regional
+    bando pages): one region, or every enabled region when ``region`` is None."""
+    totals = {"sources_run": 0, "records_valid": 0, "errors": 0}
+    async with SessionLocal() as session:
+        if region:
+            wanted = {normalize_region(region)}
+        else:
+            rows = (await session.execute(select(RegionSettings))).scalars().all()
+            wanted = {r.region for r in rows if r.enabled}
+        stmt = select(Source).where(
+            Source.active.is_(True), Source.source_type == "regional_site", Source.regione.is_not(None)
+        )
+        for source in (await session.execute(stmt.order_by(Source.name))).scalars().all():
+            if normalize_region(source.regione) not in wanted:
+                continue
+            try:
+                result = await _run_single(session, source)
+                totals["sources_run"] += 1
+                totals["records_valid"] += result.valid
+                if result.error:
+                    totals["errors"] += 1
+                    log.warning("collector.error", extra={"source": source.name, "err": result.error})
+            except Exception as exc:  # noqa: BLE001
+                totals["errors"] += 1
+                log.exception("collector.crashed", extra={"source": source.name, "err": str(exc)})
+            await session.commit()
+    return totals
+
+
 async def _collect_one(source_id: UUID) -> dict[str, int]:
     async with SessionLocal() as session:
         source = await session.get(Source, source_id)
@@ -100,3 +131,12 @@ def collect_eproc_portals() -> dict[str, int]:
 @celery_app.task(name="app.tasks.collect_sources.collect_single_source")
 def collect_single_source(source_id: str) -> dict[str, int]:
     return asyncio.run(_collect_one(UUID(source_id)))
+
+
+@celery_app.task(name="app.tasks.collect_sources.collect_regional_sites")
+def collect_regional_sites(region: str | None = None, respect_stop: bool = False) -> dict[str, int]:
+    from app.stop import region_stopped
+
+    if respect_stop and asyncio.run(region_stopped(region)):
+        return {"stopped": 1, "sources_run": 0, "records_valid": 0, "errors": 0}
+    return asyncio.run(_collect_regional(region))

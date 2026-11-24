@@ -28,6 +28,8 @@ class ProcurementRecord(Base):
     tipologia_gara_procedura: Mapped[str | None] = mapped_column(String, nullable=True)
     tipo_strumento: Mapped[str | None] = mapped_column(String, nullable=True)
     scadenza: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Category fixed by the analysis of the documents (see riclassifica.py): beats the wording of the title
+    categoria_analisi: Mapped[str | None] = mapped_column(String, nullable=True)
     criterio: Mapped[str | None] = mapped_column(String, nullable=True)
     cig: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     classifiche: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -58,6 +60,20 @@ class ProcurementRecord(Base):
         nullable=True,
         index=True,
     )
+
+    # Services of the catalog (shared_models.services) the notice is about, comma-separated.
+    servizio: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Claude's label for pre-tender acts (manifestazione_interesse, proposta_ppp...); None for tenders.
+    atto_tipo: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Automatic check of the linked page/PDF (app.tasks.verify_records): when it ran and
+    # what it found: "aperto" (future deadline read), "chiuso" (deadline passed or only
+    # old dates), "non_trovata" (no deadline in the document: stays "da verificare").
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verifica_esito: Mapped[str | None] = mapped_column(String, nullable=True)
+    # What the check tried (pages, PDFs, depth) and why nothing was found: shown in "Da verificare".
+    verifica_nota: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When this record was included in a regional email digest (None = not yet).
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

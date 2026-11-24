@@ -82,12 +82,30 @@ for _ in $(seq 1 90); do
 done
 
 if [ -z "$ready" ]; then
-  echo "L'API non ha risposto in tempo. Controlla i log con: docker compose logs api"
-  exit 1
+  # Niente "exit 1": un postCreateCommand fallito manda il Codespace in
+  # "modalita' di recupero", senza Docker, e allora i log dell'API (la sola
+  # cosa che spiega il problema) non sono piu' raggiungibili. Si stampano qui,
+  # nel log di creazione, e il Codespace resta utilizzabile.
+  echo "======================================================================"
+  echo " ATTENZIONE: l'API non ha risposto in tempo."
+  echo " Stato dei servizi:"
+  docker compose ps || true
+  echo " Ultime righe del log dell'API:"
+  docker compose logs api --tail 80 || true
+  echo " Ultime righe del log del database:"
+  docker compose logs db --tail 15 || true
+  echo " Per riprovare: bash aggiorna.sh   (oppure: docker compose logs api)"
+  echo "======================================================================"
+  exit 0
 fi
 
 echo "==> API pronta. Carico la watchlist (73 comuni lombardi + enti nazionali)..."
 docker compose exec -T api python -m infra.scripts.seed_watchlist
+# Non fatale: se questo passo fallisse, set -e farebbe fallire tutto il
+# postCreateCommand e il Codespace ripartirebbe in "modalita' di recupero"
+# senza Docker. Si puo' rilanciare dopo con: bash aggiorna.sh
+docker compose exec -T api python -m infra.scripts.seed_regions \
+  || echo "ATTENZIONE: seed_regions non riuscito; rilancialo con: bash aggiorna.sh"
 
 echo "==> Creo l'utente amministratore..."
 docker compose exec -T api python -m infra.scripts.seed_admin

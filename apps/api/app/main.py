@@ -2,13 +2,16 @@ from app.api.routes import (
     admin,
     alerts,
     auth,
+    claude_status,
     dashboard,
     documents,
     entities,
     health,
     records,
+    regions,
     reports,
     sources,
+    usage,
     watchlist,
 )
 from app.core.config import get_settings
@@ -48,11 +51,15 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(sources.router, prefix="/sources", tags=["sources"])
 app.include_router(entities.router, prefix="/entities", tags=["entities"])
 app.include_router(watchlist.router, prefix="/watchlist", tags=["watchlist"])
+app.include_router(regions.router, prefix="/regions", tags=["regions"])
+app.include_router(regions.level1_router, prefix="/level1", tags=["level1"])
 app.include_router(records.router, prefix="/records", tags=["records"])
 app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
 app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+app.include_router(usage.router, prefix="/usage", tags=["usage"])
+app.include_router(claude_status.router, prefix="/claude", tags=["claude"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 

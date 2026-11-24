@@ -1,0 +1,1134 @@
+"""Level 2 (one box per region) and Level 1 (national sources overview)."""
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
+from app.auth import current_user, require_role
+from app.core.database import get_session
+from app.services.records_export import records_csv
+from app.services.scan_view import scan_summary
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from pydantic import BaseModel
+from shared_models import (
+    AnalisiRecord,
+    ApiUsage,
+    Entity,
+    JobRun,
+    Lavorazione,
+    ProcurementRecord,
+    RawRecord,
+    Referente,
+    RegionSettings,
+    RicercaReferenti,
+    ScanItem,
+    ScanRun,
+    Source,
+    User,
+    WatchlistItem,
+)
+from shared_models.categories import CATEGORIES, categorize_record
+from shared_models.pregara import pregara_tipi
+from shared_models.referenti_logic import affidabilita, azione, press_search_url
+from shared_models.regions import REGIONS, normalize_region
+from shared_models.relevance import (
+    APERTO,
+    DA_VERIFICARE,
+    SCADUTO,
+    act_signature,
+    collapse_duplicates,
+    record_state,
+    today_utc,
+)
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+router = APIRouter()
+level1_router = APIRouter()
+
+RECENT_DAYS = 60
+
+
+class SiteUpdate(BaseModel):
+    active: bool
+
+
+class RegionSettingsUpdate(BaseModel):
+    enabled: bool | None = None
+    recipients: str | None = None
+
+
+def _health(item: WatchlistItem) -> str:
+    if item.last_scan_at is None:
+        return "unchecked"
+    if (item.consecutive_failures or 0) > 0:
+        return "failing"
+    # Scanned before health tracking existed: nothing confirms it was readable.
+    return "ok" if item.last_success_at else "unchecked"
+
+
+def _canonical(region: str) -> str:
+    r = normalize_region(region)
+    if r is None:
+        raise HTTPException(status_code=404, detail="Regione sconosciuta")
+    return r
+
+
+async def _settings_map(session: AsyncSession) -> dict[str, RegionSettings]:
+    rows = (await session.execute(select(RegionSettings))).scalars().all()
+    return {r.region: r for r in rows}
+
+
+async def _get_or_create_settings(session: AsyncSession, region: str) -> RegionSettings:
+    rs = await session.get(RegionSettings, region)
+    if rs is None:
+        rs = RegionSettings(region=region, enabled=False)
+        session.add(rs)
+        await session.flush()
+    return rs
+
+
+def _record_category(r: ProcurementRecord) -> str | None:
+    return categorize_record(r)
+
+
+def _state(r: ProcurementRecord, cat: str | None, today) -> tuple[str, bool]:
+    return record_state(cat, r.scadenza, r.data_pubblicazione, r.link_bando, r.verifica_esito, today, r.cig)
+
+
+def _open(r: ProcurementRecord, cat: str | None, today) -> bool:
+    return _state(r, cat, today)[0] == APERTO
+
+
+def _sintesi(ente: str, people: list[dict]) -> dict:
+    pct, label = affidabilita(people)
+    return {"affidabilita_pct": pct, "etichetta": label, "azione": azione(people), "stampa_url": press_search_url(ente)}
+
+
+def _referenti_table(records, da_verificare, ref_by_ente, ricerche, pec_by_ente) -> list[dict]:
+    """One row per comune that has a notice (or a search done): sindaco, assessore, tecnico, PEC."""
+    enti = {r["ente"] for r in records} | {r["ente"] for r in da_verificare} | set(ref_by_ente)
+    rows = []
+    for ente in sorted(enti):
+        ppl = ref_by_ente.get(ente, [])
+        best: dict[str, list[dict]] = {}
+        for p in ppl:
+            best.setdefault(p["ruolo"], []).append(p)
+        s = _sintesi(ente, [p for p in ppl if p["ruolo"] != "ente"])
+        rows.append({
+            "ente": ente,
+            "sindaco": best.get("sindaco", []),
+            "assessore": best.get("assessore", []),
+            "tecnico": best.get("responsabile_tecnico", []) + best.get("rup", []),
+            "pec": pec_by_ente.get(ente) or next((p["email"] for p in best.get("ente", []) if p.get("email")), None),
+            "affidabilita_pct": s["affidabilita_pct"], "etichetta": s["etichetta"], "azione": s["azione"],
+            "stampa_url": s["stampa_url"],
+            "cercato": ente in ricerche,
+            "passi_ok": (ricerche.get(ente) or {}).get("passi_ok"),
+            "mandato_scadenza": (ricerche.get(ente) or {}).get("mandato_scadenza"),
+        })
+    return rows
+
+
+def _dedupe(records: list) -> list:
+    """One record per act: the same determina listed on the albo, the transparency
+    page and the news feed counts once. Prefers the copy with a deadline, then the
+    longest description."""
+    return collapse_duplicates(
+        records,
+        lambda r: act_signature(r.ente, r.descrizione),
+        lambda r: (r.scadenza is not None, len(r.descrizione or "")),
+    )
+
+
+async def _recent_records(session: AsyncSession, region: str | None = None):
+    since = datetime.now(tz=UTC) - timedelta(days=RECENT_DAYS)
+    stmt = select(ProcurementRecord).where(
+        ProcurementRecord.first_seen_at >= since,
+        ProcurementRecord.master_record_id.is_(None),
+    )
+    if region:
+        stmt = stmt.where(ProcurementRecord.regione == region)
+    else:
+        stmt = stmt.where(ProcurementRecord.regione.is_not(None))
+    rows = (await session.execute(stmt.order_by(ProcurementRecord.first_seen_at.desc()))).scalars().all()
+    return _dedupe(list(rows))
+
+
+@router.get("")
+async def list_regions(
+    _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> list[dict]:
+    settings = await _settings_map(session)
+    items = (
+        await session.execute(
+            select(WatchlistItem, Entity.region).outerjoin(Entity, WatchlistItem.entity_id == Entity.id)
+        )
+    ).all()
+    sources = (
+        await session.execute(
+            select(Source.regione, func.count()).where(Source.regione.is_not(None)).group_by(Source.regione)
+        )
+    ).all()
+    src_count = {r: n for r, n in sources}
+
+    per: dict[str, dict] = {
+        r: {
+            "region": r,
+            "enabled": settings[r].enabled if r in settings else False,
+            "recipients": settings[r].recipients if r in settings else None,
+            "last_digest_at": settings[r].last_digest_at if r in settings else None,
+            "comuni": 0, "ok": 0, "failing": 0, "unchecked": 0,
+            "regional_sites": src_count.get(r, 0),
+            "pre_gara": 0, "manifestazione_interesse": 0, "gara": 0, "da_notificare": 0,
+            "confermate": 0, "da_verificare": 0,
+        }
+        for r in REGIONS
+    }
+    for item, region in items:
+        r = normalize_region(region)
+        if r:
+            per[r]["comuni"] += 1
+            per[r][_health(item)] += 1
+    today = today_utc()
+    for rec in await _recent_records(session):
+        r = normalize_region(rec.regione)
+        cat = _record_category(rec)
+        if not (r and cat):
+            continue
+        state, _ = _state(rec, cat, today)
+        if state == SCADUTO:
+            continue
+        # Every candidate counts (wide net); "confermate" says how many have a confirmed deadline / date.
+        per[r][cat] += 1
+        if state == APERTO:
+            per[r]["confermate"] += 1
+            if rec.notified_at is None:
+                per[r]["da_notificare"] += 1  # e-mails only ever carry confirmed notices
+        else:
+            per[r]["da_verificare"] += 1
+    # Active regions first, then alphabetical.
+    return sorted(per.values(), key=lambda x: (not x["enabled"], x["region"]))
+
+
+@router.get("/scans/active")
+async def active_scans(
+    _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> list[dict]:
+    """Scans running right now (heartbeat within 10 minutes), for the header badge:
+    leaving a region page must not make a running scan invisible."""
+    from app.services.scan_view import STALE_AFTER_S
+
+    now = datetime.now(tz=UTC)
+    runs = (
+        await session.execute(select(ScanRun).where(ScanRun.status == "running", ScanRun.ended_at.is_(None)))
+    ).scalars().all()
+    out: list[dict] = []
+    for run in runs:
+        beat = run.heartbeat_at or run.started_at
+        if (now - beat).total_seconds() > STALE_AFTER_S:
+            continue
+        done = (
+            await session.execute(
+                select(func.count()).select_from(ScanItem).where(
+                    ScanItem.run_id == run.id, ScanItem.status.in_(("done", "error", "skipped"))
+                )
+            )
+        ).scalar_one()
+        out.append({"region": run.region, "total": run.total, "done": done})
+    return out
+
+
+@router.get("/{region}")
+async def region_detail(
+    region: str,
+    scadute: bool = Query(False, description="Also list notices whose deadline has passed"),
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    region = _canonical(region)
+    rs = await session.get(RegionSettings, region)
+    rows = (
+        await session.execute(
+            select(WatchlistItem, Entity)
+            .join(Entity, WatchlistItem.entity_id == Entity.id)
+            .order_by(Entity.name)
+        )
+    ).all()
+    comuni = [
+        {
+            "id": str(item.id),
+            "ente": ent.name,
+            "provincia": ent.province,
+            "tipo": ent.entity_type,
+            "siti": [
+                {"ruolo": ruolo, "url": url}
+                for ruolo, url in (
+                    ("albo", item.url_albo), ("trasparenza", item.url_trasparenza),
+                    ("gare", item.url_gare), ("esiti", item.url_esiti),
+                    ("determine", item.url_determine),
+                )
+                if url
+            ],
+            "stato": _health(item),
+            "last_error": item.last_error,
+            "consecutive_failures": item.consecutive_failures or 0,
+            "last_scan_at": item.last_scan_at,
+            "last_success_at": item.last_success_at,
+            "pc": {"il": item.pc_letto_il, **item.pc_esito} if item.pc_letto_il and item.pc_esito else None,
+            "active": item.active,
+        }
+        for item, ent in rows
+        if normalize_region(ent.region) == region
+    ]
+    # Problems first, then the ones already read, then the rest (stable, so
+    # each group stays alphabetical): the trial run touches a few comuni out
+    # of hundreds and they would otherwise be lost in the list.
+    order = {"failing": 0, "ok": 1, "unchecked": 2}
+    comuni.sort(key=lambda c: order[c["stato"]])
+    sources = (
+        await session.execute(select(Source).where(Source.regione == region).order_by(Source.name))
+    ).scalars().all()
+    last_runs: dict = {}
+    for s in sources:
+        j = (
+            await session.execute(
+                select(JobRun).where(JobRun.source_id == s.id).order_by(JobRun.started_at.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+        if j:
+            last_runs[s.id] = {
+                "status": j.status, "errore": j.error_message, "found": j.records_found, "at": j.started_at,
+            }
+    last_scan = (
+        await session.execute(
+            select(JobRun).where(JobRun.job_name == "collect_watchlist_albo")
+            .order_by(JobRun.started_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    ref_rows = (await session.execute(select(Referente).where(Referente.regione == region))).scalars().all()
+    ref_by_ente: dict[str, list[dict]] = {}
+    for p in sorted(ref_rows, key=lambda x: (x.stato != "verificato", x.ruolo)):
+        ref_by_ente.setdefault(p.ente, []).append({
+            "nome": p.nome, "ruolo": p.ruolo, "qualifica": p.qualifica, "email": p.email,
+            "telefono": p.telefono, "fonte_url": p.fonte_url, "citazione": p.citazione,
+            "stato": p.stato, "verified_at": p.verified_at,
+            "data_fonte": p.data_fonte, "elezione_data": p.elezione_data, "motivo": p.motivo,
+        })
+    ricerche = {
+        r.ente: {
+            "metodo": r.metodo,
+            "passi": (r.checklist or {}).get("passi", []),
+            "passi_ok": sum(1 for x in (r.checklist or {}).get("passi", []) if x.get("ok")),
+            "lacune": r.lacune or [],
+            "stampa": r.stampa,
+            "elezione_data": r.elezione_data,
+            "mandato_scadenza": r.mandato_scadenza,
+            "eseguita_il": r.eseguita_il,
+        }
+        for r in (await session.execute(select(RicercaReferenti).where(RicercaReferenti.regione == region))).scalars().all()
+    }
+    pec_by_ente = {
+        e.name: e.pec
+        for e in (await session.execute(select(Entity).where(Entity.region == region, Entity.pec.is_not(None)))).scalars().all()
+    }
+    analisi = {
+        a.procurement_record_id: {
+            "documenti": a.documenti or [], "campi": a.campi or {}, "eseguita_il": a.eseguita_il,
+            "profondita": a.profondita,
+        }
+        for a in (await session.execute(select(AnalisiRecord))).scalars().all()
+    }
+    lavorazioni = {
+        lv.procurement_record_id: {
+            "stato": lv.stato, "note": lv.note, "decisa_il": lv.decisa_il, "email_il": lv.email_il,
+            "sintesi_il": lv.sintesi_il,
+        }
+        for lv in (await session.execute(select(Lavorazione))).scalars().all()
+    }
+    records = []
+    da_verificare: list[dict] = []
+    hidden = 0
+    today = today_utc()
+    for rec in await _recent_records(session, region):
+        cat = _record_category(rec)
+        if cat is None:
+            continue
+        state, no_date = _state(rec, cat, today)
+        valid = state == APERTO
+        if state == DA_VERIFICARE:
+            # the work queue of the "Da verificare" tab; the notice also stays in its category list, flagged
+            da_verificare.append({
+                "id": str(rec.id), "categoria": cat, "ente": rec.ente, "descrizione": rec.descrizione,
+                "link": rec.link_bando, "first_seen_at": rec.first_seen_at,
+                "verificato": rec.verifica_esito == "non_trovata",
+                "nota": rec.verifica_nota,
+                "scadenza": rec.scadenza,
+                "servizi": [k for k in (rec.servizio or "").split(",") if k],
+            })
+            valid = True  # shown, but not confirmed
+        if not valid:
+            hidden += 1
+            if not scadute:
+                continue
+        records.append({
+            "confermato": state == APERTO,
+            "verifica_nota": rec.verifica_nota,
+            "scaduto": not valid,
+            "data_non_verificata": no_date,
+            "id": str(rec.id), "categoria": cat, "ente": rec.ente,
+            "descrizione": rec.descrizione, "link": rec.link_bando,
+            "scadenza": rec.scadenza, "stato": rec.stato_procedurale,
+            "first_seen_at": rec.first_seen_at, "notificato": rec.notified_at is not None,
+            "score": rec.score_commerciale,
+            "servizi": [k for k in (rec.servizio or "").split(",") if k],
+            "referenti": ref_by_ente.get(rec.ente, []),
+            "referenti_sintesi": _sintesi(rec.ente, ref_by_ente.get(rec.ente, [])),
+            "ricerca": ricerche.get(rec.ente),
+            "analisi": analisi.get(rec.id),
+            "lavorazione": lavorazioni.get(rec.id),
+            "pregara_tipi": pregara_tipi(rec.descrizione) if cat == "pre_gara" else [],
+            "riclassificato": rec.categoria_analisi is not None,
+        })
+    # Deadlines first (the soonest to expire on top), then the rest, newest first
+    # (the sort is stable, so the order of arrival is kept inside each group).
+    far = datetime(9999, 12, 31, tzinfo=UTC)
+    records.sort(key=lambda r: (r["scadenza"] is None, r["scadenza"] or far))
+    return {
+        "region": region,
+        "enabled": rs.enabled if rs else False,
+        "recipients": rs.recipients if rs else None,
+        "last_digest_at": rs.last_digest_at if rs else None,
+        "scadute_nascoste": 0 if scadute else hidden,
+        "da_verificare": da_verificare,
+        "referenti_comuni": _referenti_table(records, da_verificare, ref_by_ente, ricerche, pec_by_ente),
+        "ultimo_scan": None if last_scan is None else {
+            "status": last_scan.status, "errore": last_scan.error_message,
+            "at": last_scan.started_at, "trovati": last_scan.records_found,
+        },
+        "comuni": comuni,
+        "siti_regionali": [
+            {"id": str(s.id), "nome": s.name, "url": s.base_url, "ruolo": s.ruolo,
+             "active": s.active, "last_checked_at": s.last_checked_at,
+             "scoperto_da": s.discovered_from,
+             "ultimo_run": last_runs.get(s.id)}
+            for s in sources
+        ],
+        "records": records[:300],
+        "categorie": list(CATEGORIES),
+    }
+
+
+@router.get("/{region}/referenti.xlsx")
+async def region_referenti_xlsx(
+    region: str,
+    interno: bool = Query(False, description="Add the working columns (reliability, action, sources)"),
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Referenti of the region's enti in a workbook: an index and one sheet per province,
+    ready to share. ``interno=true`` adds the working columns."""
+    from app.services.referenti_export import referenti_workbook
+
+    region = _canonical(region)
+    rows = (await session.execute(select(Referente).where(Referente.regione == region))).scalars().all()
+    provs = {
+        e.name: e.province
+        for e in (await session.execute(select(Entity).where(Entity.region == region))).scalars().all()
+    }
+    by_ente: dict[str, list[dict]] = {}
+    for p in rows:
+        by_ente.setdefault(p.ente, []).append({
+            "ruolo": p.ruolo, "nome": p.nome, "stato": p.stato, "email": p.email, "telefono": p.telefono,
+            "fonte_url": p.fonte_url, "motivo": p.motivo, "verified_at": p.verified_at,
+        })
+    ric = {
+        r.ente: r
+        for r in (await session.execute(select(RicercaReferenti).where(RicercaReferenti.regione == region))).scalars().all()
+    }
+    entries = [
+        {
+            "ente": e, "provincia": provs.get(e), "people": ppl,
+            "ricerca": (
+                {
+                    "passi": (ric[e].checklist or {}).get("passi", []), "lacune": ric[e].lacune or [],
+                    "stampa": ric[e].stampa, "mandato_scadenza": ric[e].mandato_scadenza,
+                    "elezione_data": ric[e].elezione_data,
+                }
+                if e in ric else None
+            ),
+        }
+        for e, ppl in by_ente.items()
+    ]
+    return Response(
+        content=referenti_workbook(entries, interno=interno),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="referenti_{region}.xlsx"'},
+    )
+
+
+@router.get("/{region}/records.csv")
+async def region_records_csv(
+    region: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> Response:
+    """Every recent record of the region (expired ones included, flagged), as CSV."""
+    region = _canonical(region)
+    today = today_utc()
+    rows = []
+    for rec in await _recent_records(session, region):
+        cat = _record_category(rec)
+        if cat is None:
+            continue
+        rows.append({
+            "regione": region, "categoria": cat, "servizi": (rec.servizio or "").replace(",", " + "),
+            "ente": rec.ente, "descrizione": (rec.descrizione or "").replace("\n", " "),
+            "data_pubblicazione": rec.data_pubblicazione.date().isoformat() if rec.data_pubblicazione else "",
+            "scadenza": rec.scadenza.date().isoformat() if rec.scadenza else "",
+            "ancora_valido": "si" if _open(rec, cat, today) else "no",
+            "stato_verifica": {APERTO: "confermato", DA_VERIFICARE: "da verificare", SCADUTO: "scaduto"}[_state(rec, cat, today)[0]],
+            "stato": rec.stato_procedurale, "atto_tipo": rec.atto_tipo or "", "link": rec.link_bando,
+            "visto_il": rec.first_seen_at.date().isoformat() if rec.first_seen_at else "",
+        })
+    return Response(
+        content=records_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="record_{region}.csv"'},
+    )
+
+
+@router.patch("/{region}")
+async def update_region(
+    region: str,
+    payload: RegionSettingsUpdate,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    region = _canonical(region)
+    rs = await _get_or_create_settings(session, region)
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("enabled") is not None:
+        rs.enabled = data["enabled"]
+    if "recipients" in data:
+        rs.recipients = (data["recipients"] or "").strip() or None
+    await session.commit()
+    return {"region": region, "enabled": rs.enabled, "recipients": rs.recipients}
+
+
+@router.get("/{region}/scan")
+async def region_scan(
+    region: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> dict | None:
+    """Per-comune progress of the latest scan that covered this region: the
+    region's own run, or the latest all-regions run (daily), whichever is newer."""
+    region = _canonical(region)
+    own = (
+        await session.execute(
+            select(ScanRun).where(ScanRun.region == region).order_by(ScanRun.started_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    general = (
+        await session.execute(
+            select(ScanRun).where(ScanRun.region.is_(None)).order_by(ScanRun.started_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    run = max((r for r in (own, general) if r is not None), key=lambda r: r.started_at, default=None)
+    if run is None:
+        return None
+    items = list((await session.execute(select(ScanItem).where(ScanItem.run_id == run.id))).scalars().all())
+    if run.region is None:
+        # An all-regions run: keep this region's comuni only.
+        rows = (
+            await session.execute(
+                select(ScanItem.id, Entity.region)
+                .join(WatchlistItem, ScanItem.item_id == WatchlistItem.id)
+                .join(Entity, WatchlistItem.entity_id == Entity.id)
+                .where(ScanItem.run_id == run.id)
+            )
+        ).all()
+        keep = {i for i, r in rows if normalize_region(r) == region}
+        items = [i for i in items if i.id in keep]
+    cost_rows = (
+        await session.execute(
+            select(ApiUsage.scan_item_id, func.coalesce(func.sum(ApiUsage.cost_usd), 0))
+            .where(ApiUsage.run_id == run.id)
+            .group_by(ApiUsage.scan_item_id)
+        )
+    ).all()
+    costs = {sid: float(c) for sid, c in cost_rows if sid is not None}
+    run_cost = sum(float(c) for _, c in cost_rows)
+    return scan_summary(run, items, datetime.now(tz=UTC), costs=costs, run_cost=run_cost)
+
+
+async def _items_of_run(session: AsyncSession, run: ScanRun, region: str) -> list:
+    """The comuni of a run that belong to ``region`` (an all-regions run is cut down to it)."""
+    items = list((await session.execute(select(ScanItem).where(ScanItem.run_id == run.id))).scalars().all())
+    if run.region is not None:
+        return items
+    rows = (
+        await session.execute(
+            select(ScanItem.id, Entity.region)
+            .join(WatchlistItem, ScanItem.item_id == WatchlistItem.id)
+            .join(Entity, WatchlistItem.entity_id == Entity.id)
+            .where(ScanItem.run_id == run.id)
+        )
+    ).all()
+    keep = {i for i, r in rows if normalize_region(r) == region}
+    return [i for i in items if i.id in keep]
+
+
+@router.get("/{region}/scans")
+async def region_scan_history(
+    region: str,
+    limit: int = Query(30, ge=1, le=100),
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """History: the last runs that covered this region with their metrics (pages, depth, records, cost) and
+    the settings they used, to compare them."""
+    from app.services.scan_history import run_summary
+
+    region = _canonical(region)
+    runs = (
+        await session.execute(
+            select(ScanRun).where((ScanRun.region == region) | (ScanRun.region.is_(None)))
+            .order_by(ScanRun.started_at.desc()).limit(limit)
+        )
+    ).scalars().all()
+    costs = dict(
+        (await session.execute(
+            select(ApiUsage.run_id, func.coalesce(func.sum(ApiUsage.cost_usd), 0))
+            .where(ApiUsage.run_id.in_([r.id for r in runs])).group_by(ApiUsage.run_id)
+        )).all()
+    ) if runs else {}
+    out = []
+    for r in runs:
+        items = await _items_of_run(session, r, region)
+        if not items:
+            continue
+        out.append(run_summary(r, items, costs.get(r.id)))
+    return out
+
+
+@router.get("/{region}/scans/compare")
+async def compare_region_scans(
+    region: str,
+    a: UUID,
+    b: UUID,
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Two runs side by side, comune by comune: pages read, depth reached, records found."""
+    from app.services.scan_history import compare_runs, describe_config_diff
+
+    region = _canonical(region)
+    ra, rb = await session.get(ScanRun, a), await session.get(ScanRun, b)
+    if ra is None or rb is None:
+        raise HTTPException(status_code=404, detail="Raccolta non trovata")
+    out = compare_runs(await _items_of_run(session, ra, region), await _items_of_run(session, rb, region))
+    out["config_diff"] = describe_config_diff(ra.config or {}, rb.config or {})
+    out["a"] = {"id": str(ra.id), "started_at": ra.started_at, "config": ra.config or {}}
+    out["b"] = {"id": str(rb.id), "started_at": rb.started_at, "config": rb.config or {}}
+    return out
+
+
+@router.patch("/{region}/sites/{source_id}")
+async def update_site(
+    region: str,
+    source_id: UUID,
+    payload: SiteUpdate,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Approve (activate) or switch off a regional site, e.g. one the crawl of
+    the comuni discovered."""
+    region = _canonical(region)
+    src = await session.get(Source, source_id)
+    if src is None or src.regione != region:
+        raise HTTPException(status_code=404, detail="Sito non trovato in questa regione")
+    src.active = payload.active
+    await session.commit()
+    return {"id": str(src.id), "active": src.active}
+
+
+@router.post("/{region}/collect")
+async def collect_region(
+    region: str,
+    limit: int | None = Query(None, ge=1, le=500, description="Trial run: scan at most this many comuni"),
+    resume: bool = Query(False, description="Skip the comuni already read in the last 24 hours"),
+    _: User = Depends(require_role("admin")),
+) -> dict:
+    from app.services.admin_service import dispatch_region_scan
+
+    region = _canonical(region)
+    hours = 24.0 if resume else None
+    return {
+        "status": "dispatched", "region": region, "limit": limit, "resume": resume,
+        **dispatch_region_scan(region, limit, hours),
+    }
+
+
+@router.get("/{region}/import-pagine/script")
+async def import_pagine_script(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    """The script to paste in the browser console on a portal the server cannot reach."""
+    from app.services.browser_import import SCRIPT
+
+    _canonical(region)
+    return {"script": SCRIPT}
+
+
+@router.post("/{region}/import-pagine")
+async def import_pagine(
+    region: str,
+    comune: str = Form(...),
+    item_id: str | None = Form(None),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_role("admin")),
+) -> dict:
+    """Pages read by the user's browser (monitor_pagine.json) for one comune: analysed like a scan of that comune."""
+    import json
+
+    from app.services.admin_service import dispatch_import_pagine
+    from app.services.browser_import import pick_comune
+    from shared_models.import_pagine import MAX_TOTALE, ImportError_, valida_pagine
+
+    region = _canonical(region)
+    rows = (await session.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id))).all()
+    if item_id:  # the PC script knows the exact comune: no name to guess
+        item = next((i for i, e in rows if str(i.id) == item_id and normalize_region(e.region) == region), None)
+        others: list[str] = []
+        if item is None:
+            raise HTTPException(status_code=404, detail="Comune non trovato in questa regione")
+    else:
+        item, others = pick_comune([(i, e.name) for i, e in rows if normalize_region(e.region) == region], comune)
+    if item is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"Più comuni corrispondono a «{comune}»: {', '.join(others)}. Scrivi il nome completo." if others
+                    else f"Comune «{comune}» non trovato in {region}."),
+        )
+    raw = await file.read(MAX_TOTALE + 1_000_000)
+    try:
+        pagine = valida_pagine(json.loads(raw))
+    except (ValueError, UnicodeDecodeError) as exc:  # ImportError_ is a ValueError; so is bad JSON
+        msg = str(exc) if isinstance(exc, ImportError_) else "Il file non è un JSON valido."
+        raise HTTPException(status_code=400, detail=msg) from exc
+    return {"status": "dispatched", "pagine": len(pagine), "task_id": dispatch_import_pagine(str(item.id), pagine)}
+
+
+@router.get("/{region}/comuni-da-pc")
+async def comuni_da_pc(
+    region: str,
+    tutti: bool = Query(False, description="Also the comuni the server reads fine"),
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_role("admin")),
+) -> dict:
+    """The comuni to read from the user's PC: portals that refuse the server, or whose last readings failed like a block."""
+    from app.services.pc_collect import motivo_pc
+
+    region = _canonical(region)
+    rows = (await session.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id).order_by(Entity.name))).all()
+    out = []
+    for item, ent in rows:
+        if normalize_region(ent.region) != region or not item.active:
+            continue
+        urls = [u for u in (item.url_trasparenza, item.url_albo) if u]
+        motivo = motivo_pc(urls, item.last_error, item.consecutive_failures or 0)
+        if urls and (motivo or tutti):
+            out.append({"id": str(item.id), "ente": ent.name, "siti": urls, "motivo": motivo or "richiesto", "letto_il": item.pc_letto_il})
+    return {"region": region, "comuni": out}
+
+
+class RapportoPc(BaseModel):
+    comuni: list[dict]
+
+
+@router.post("/{region}/rapporto-pc")
+async def rapporto_pc(
+    region: str,
+    payload: RapportoPc,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_role("admin")),
+) -> dict:
+    """The report of the reading made from the PC, one per comune (``id`` + stato, pagine, sezioni, ricerche, errori, note)."""
+    from app.services.pc_collect import pulisci_rapporto
+
+    region = _canonical(region)
+    rows = {str(i.id): (i, e) for i, e in (await session.execute(select(WatchlistItem, Entity).join(Entity, WatchlistItem.entity_id == Entity.id))).all()
+            if normalize_region(e.region) == region}
+    saved = 0
+    for r in payload.comuni[:2000]:
+        found = rows.get(str(r.get("id")))
+        if found:
+            found[0].pc_letto_il = datetime.now(tz=UTC)
+            found[0].pc_esito = pulisci_rapporto(r)
+            saved += 1
+    await session.commit()
+    return {"salvati": saved}
+
+
+@router.post("/{region}/verify")
+async def verify_region_endpoint(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    """Open the link of every gara / manifestazione without a deadline and read it."""
+    from app.services.admin_service import dispatch_verify
+
+    region = _canonical(region)
+    return {"status": "dispatched", "region": region, "task_id": dispatch_verify(region)}
+
+
+@router.post("/{region}/records/{record_id}/referenti")
+async def find_referenti_endpoint(
+    region: str,
+    record_id: UUID,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Look for the political and technical contacts of this record's ente (one ente,
+    a few cents). The result shows up in the record card when the task finishes."""
+    from app.services.admin_service import dispatch_find_referenti
+
+    region = _canonical(region)
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    return {"status": "dispatched", "ente": rec.ente, "task_id": dispatch_find_referenti(record_id)}
+
+
+@router.get("/{region}/records/{record_id}/email")
+async def record_email(
+    region: str,
+    record_id: UUID,
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Draft of a standard e-mail with the main elements of this notice (editable before sending)."""
+    from app.services.email_template import build_email
+
+    region = _canonical(region)
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    cat = _record_category(rec) or "gara"
+    people = (
+        await session.execute(select(Referente).where(Referente.ente == rec.ente, Referente.regione == region))
+    ).scalars().all()
+    ent = (
+        await session.execute(select(Entity).where(Entity.name == rec.ente, Entity.region == region))
+    ).scalar_one_or_none()
+    an = (
+        await session.execute(select(AnalisiRecord).where(AnalisiRecord.procurement_record_id == rec.id))
+    ).scalar_one_or_none()
+    pec = ent.pec if ent and ent.pec else next((p.email for p in people if p.ruolo == "ente" and p.email), None)
+    draft = build_email(
+        categoria=cat, ente=rec.ente, descrizione=rec.descrizione, link=rec.link_bando, scadenza=rec.scadenza,
+        visto_il=rec.first_seen_at, servizi=[k for k in (rec.servizio or "").split(",") if k],
+        provincia=ent.province if ent else None, campi=an.campi if an else None,
+        referenti=[
+            {"ruolo": p.ruolo, "nome": p.nome, "qualifica": p.qualifica, "email": p.email, "telefono": p.telefono,
+             "stato": p.stato}
+            for p in people if p.ruolo != "ente"
+        ],
+        pec=pec, today=today_utc(),
+    )
+    await _stamp(session, rec.id, "email_il")
+    return draft
+
+
+@router.get("/{region}/records/{record_id}/slide.pptx")
+async def record_slides(
+    region: str,
+    record_id: UUID,
+    generica: bool = Query(False, description="Standard presentation instead of the A2A model (only if asked)"),
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """The standard presentation (PPTX) of this opportunity, built from what the app knows."""
+    from app.core.config import get_settings
+    from app.services.gate_deck import NO_MODEL, GateConfig, build_gate, find_gate_template, gate_filename
+    from app.services.slide_deck import build_deck, deck_filename
+
+    region = _canonical(region)
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    people = (
+        await session.execute(select(Referente).where(Referente.ente == rec.ente, Referente.regione == region))
+    ).scalars().all()
+    ent = (
+        await session.execute(select(Entity).where(Entity.name == rec.ente, Entity.region == region))
+    ).scalar_one_or_none()
+    an = (
+        await session.execute(select(AnalisiRecord).where(AnalisiRecord.procurement_record_id == rec.id))
+    ).scalar_one_or_none()
+    pec = ent.pec if ent and ent.pec else next((p.email for p in people if p.ruolo == "ente" and p.email), None)
+    today = today_utc()
+    cfg = get_settings()
+    payload = {
+        "categoria": _record_category(rec) or "gara", "ente": rec.ente, "provincia": ent.province if ent else None,
+        "descrizione": rec.descrizione, "link": rec.link_bando, "scadenza": rec.scadenza,
+        "scadenza_nota": rec.verifica_nota, "verifica_esito": rec.verifica_esito, "visto_il": rec.first_seen_at,
+        "servizi": [k for k in (rec.servizio or "").split(",") if k],
+        "campi": an.campi if an else None, "documenti": an.documenti if an else None,
+        "metodo": an.metodo if an else None, "analisi_il": an.eseguita_il if an else None,
+        "referenti": [
+            {"ruolo": p.ruolo, "nome": p.nome, "qualifica": p.qualifica, "email": p.email,
+             "telefono": p.telefono, "stato": p.stato}
+            for p in people if p.ruolo != "ente"
+        ],
+        "pec": pec, "today": today,
+    }
+    template = find_gate_template(cfg.ppt_template_path or None)
+    if template:
+        data = build_gate(payload, template, GateConfig(
+            citta=cfg.ppt_citta, autore=cfg.ppt_autore,
+            resp_commerciale=cfg.ppt_resp_commerciale, resp_tecnico=cfg.ppt_resp_tecnico))
+        filename = gate_filename(rec.ente, today)
+    elif generica:
+        data = build_deck(payload)
+        filename = deck_filename(rec.ente, today)
+    else:
+        # the sheet must correspond to the A2A document: no other design is produced without being asked
+        raise HTTPException(status_code=409, detail=NO_MODEL)
+    await _stamp(session, rec.id, "sintesi_il")
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+async def _stamp(session: AsyncSession, record_id: UUID, column: str) -> None:
+    """Note on the notice's work row that the e-mail / the summary sheet was produced (only if it is being worked)."""
+    row = (
+        await session.execute(select(Lavorazione).where(Lavorazione.procurement_record_id == record_id))
+    ).scalar_one_or_none()
+    if row is not None:
+        setattr(row, column, datetime.now(UTC))
+        await session.commit()
+
+
+async def _record_in_region(session: AsyncSession, region: str, record_id: UUID) -> ProcurementRecord:
+    rec = await session.get(ProcurementRecord, record_id)
+    if rec is None or normalize_region(rec.regione) != region:
+        raise HTTPException(status_code=404, detail="Record non trovato in questa regione")
+    return rec
+
+
+@router.post("/{region}/records/{record_id}/analizza")
+async def analyze_record_endpoint(
+    region: str,
+    record_id: UUID,
+    profondita: str = Query("base", pattern="^(base|approfondita)$"),
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Read the documentation of this notice and extract the fields: ``base`` = the page and the documents it
+    links; ``approfondita`` = also the documents those link (delibere, reports), more levels and time."""
+    from app.services.admin_service import dispatch_analyze_record
+
+    region = _canonical(region)
+    rec = await _record_in_region(session, region, record_id)
+    return {"status": "dispatched", "ente": rec.ente, "profondita": profondita,
+            "task_id": dispatch_analyze_record(record_id, profondita)}
+
+
+@router.post("/{region}/records/{record_id}/pacchetto")
+async def prepare_package(
+    region: str,
+    record_id: UUID,
+    profondita: str | None = Query(None, pattern="^(base|approfondita)$"),
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Prepare what the e-mail and the summary sheet need: the documents (deep for a manifestazione di interesse
+    and a gara, a first look for a pre-gara unless asked) and the referenti of the comune. The notice is
+    selected for the work if nobody decided yet."""
+    from app.services.admin_service import dispatch_pacchetto
+
+    region = _canonical(region)
+    rec = await _record_in_region(session, region, record_id)
+    cat = _record_category(rec) or "gara"
+    level = profondita or ("base" if cat == "pre_gara" else "approfondita")
+    if (await session.execute(select(Lavorazione).where(Lavorazione.procurement_record_id == rec.id))).scalar_one_or_none() is None:
+        session.add(Lavorazione(procurement_record_id=rec.id, stato="selezionata"))
+        await session.commit()
+    return {"status": "dispatched", "ente": rec.ente, "profondita": level, **dispatch_pacchetto(record_id, level)}
+
+
+class LavorazioneIn(BaseModel):
+    stato: str  # selezionata | scartata | nessuna (back to "not looked at yet")
+    note: str | None = None
+
+
+@router.post("/{region}/records/{record_id}/lavorazione")
+async def set_lavorazione(
+    region: str,
+    record_id: UUID,
+    body: LavorazioneIn,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Select a notice for the work, leave it, or put it back among the ones not looked at yet."""
+    from shared_models.lavorazione import STATI
+
+    region = _canonical(region)
+    rec = await _record_in_region(session, region, record_id)
+    if body.stato not in (*STATI, "nessuna"):
+        raise HTTPException(status_code=422, detail="stato non valido")
+    row = (
+        await session.execute(select(Lavorazione).where(Lavorazione.procurement_record_id == rec.id))
+    ).scalar_one_or_none()
+    if body.stato == "nessuna":
+        if row is not None:
+            await session.delete(row)
+        await session.commit()
+        return {"stato": None}
+    if row is None:
+        row = Lavorazione(procurement_record_id=rec.id, stato=body.stato)
+        session.add(row)
+    else:
+        if row.stato != body.stato:
+            row.decisa_il = datetime.now(UTC)
+        row.stato = body.stato
+    if body.note is not None:
+        row.note = body.note.strip() or None
+    await session.commit()
+    return {"stato": row.stato, "note": row.note}
+
+
+@router.post("/{region}/referenti/ente")
+async def find_referenti_for_ente(
+    region: str, ente: str = Query(..., min_length=3), _: User = Depends(require_role("admin"))
+) -> dict:
+    """Referenti of one comune, without needing one of its notices."""
+    from app.services.admin_service import dispatch_find_referenti_ente
+
+    region = _canonical(region)
+    return {"status": "dispatched", "ente": ente, "task_id": dispatch_find_referenti_ente(ente, region)}
+
+
+@router.post("/{region}/referenti/run")
+async def find_referenti_for_region(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    """Referenti of every comune of the region that has a notice (free in the default script mode)."""
+    from app.services.admin_service import dispatch_find_referenti_region
+
+    region = _canonical(region)
+    return {"status": "dispatched", "region": region, "task_id": dispatch_find_referenti_region(region)}
+
+
+class SelectedScan(BaseModel):
+    ids: list[UUID]
+
+
+@router.post("/{region}/collect-selected")
+async def collect_selected(
+    region: str,
+    payload: SelectedScan,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Targeted collection: exactly the comuni chosen on the page (watchlist ids of this region)."""
+    from app.services.admin_service import dispatch_region_scan
+
+    region = _canonical(region)
+    if not payload.ids or len(payload.ids) > 3000:
+        raise HTTPException(status_code=400, detail="Seleziona da 1 a 3000 comuni")
+    rows = (
+        await session.execute(
+            select(WatchlistItem.id, Entity.region)
+            .join(Entity, WatchlistItem.entity_id == Entity.id)
+            .where(WatchlistItem.id.in_(payload.ids))
+        )
+    ).all()
+    ok = [str(i) for i, r in rows if normalize_region(r) == region]
+    if not ok:
+        raise HTTPException(status_code=404, detail="Nessuno dei comuni scelti e' di questa regione")
+    return {"status": "dispatched", "region": region, "comuni": len(ok), **dispatch_region_scan(region, None, None, ok)}
+
+
+@router.post("/{region}/stop")
+async def stop_collection(
+    region: str,
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """"Ferma raccolta": the running scan of this region (or an all-regions one) skips the comuni not yet
+    started, the slow steps after it are skipped, and what was already collected is still processed."""
+    region = _canonical(region)
+    now = datetime.now(tz=UTC)
+    runs = (
+        await session.execute(
+            select(ScanRun).where(ScanRun.status == "running", ScanRun.ended_at.is_(None))
+            .where((ScanRun.region == region) | (ScanRun.region.is_(None)))
+        )
+    ).scalars().all()
+    live = [r for r in runs if r.heartbeat_at is None or (now - r.heartbeat_at).total_seconds() <= 600]
+    for r in live:
+        r.stop_requested = True
+    await session.commit()
+    return {"stopped": bool(live), "runs": len(live)}
+
+
+@router.post("/{region}/process")
+async def process_region(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    """Normalize and score what has been collected so far (no new reading)."""
+    from app.services.admin_service import dispatch_process
+
+    region = _canonical(region)
+    return {"status": "dispatched", "region": region, **dispatch_process()}
+
+
+@router.post("/{region}/send-digest")
+async def send_digest(region: str, _: User = Depends(require_role("admin"))) -> dict:
+    from app.services.admin_service import dispatch_region_digest
+
+    region = _canonical(region)
+    return {"status": "dispatched", "region": region, "task_id": dispatch_region_digest(region)}
+
+
+@level1_router.get("")
+async def level1_overview(
+    _: User = Depends(current_user), session: AsyncSession = Depends(get_session)
+) -> dict:
+    """Level 1: what the national portals gave us and whether to trust it.
+    Analysis only: it does not own any tender list (those live per region)."""
+    since = datetime.now(tz=UTC) - timedelta(days=7)
+    sources = (
+        await session.execute(
+            select(Source)
+            .where(Source.regione.is_(None), Source.source_type == "official")
+            .order_by(Source.name)
+        )
+    ).scalars().all()
+    raw_counts = dict(
+        (
+            await session.execute(
+                select(RawRecord.source_id, func.count())
+                .where(RawRecord.fetched_at >= since)
+                .group_by(RawRecord.source_id)
+            )
+        ).all()
+    )
+    out = []
+    for s in sources:
+        last = (
+            await session.execute(
+                select(JobRun).where(JobRun.source_id == s.id).order_by(JobRun.started_at.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+        out.append({
+            "id": str(s.id), "nome": s.name, "url": s.base_url, "active": s.active,
+            "affidabilita": float(s.reliability_score), "last_checked_at": s.last_checked_at,
+            "raw_7gg": raw_counts.get(s.id, 0),
+            "ultimo_run": None if last is None else {
+                "status": last.status, "found": last.records_found, "valid": last.records_valid,
+                "errore": last.error_message, "at": last.started_at,
+            },
+        })
+    routed = len(await _recent_records(session))
+    unrouted = (
+        await session.execute(
+            select(func.count()).select_from(ProcurementRecord).where(
+                ProcurementRecord.regione.is_(None), ProcurementRecord.master_record_id.is_(None)
+            )
+        )
+    ).scalar_one()
+    return {"fonti": out, "record_assegnati_a_regione": routed, "record_senza_regione": unrouted}

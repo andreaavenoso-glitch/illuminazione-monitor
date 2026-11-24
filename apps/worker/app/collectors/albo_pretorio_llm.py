@@ -14,13 +14,16 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 from uuid import UUID
 
 import anthropic
 import structlog
+from app.collectors.page_gate import safe_join
 from app.config import WorkerSettings
+from app.usage import record_usage
 from bs4 import BeautifulSoup
+from shared_models.services import prompt_block
 
 log = structlog.get_logger(__name__)
 
@@ -52,7 +55,7 @@ def find_bandi_link(html: str, *, base_url: str) -> str | None:
         if any(pattern in text for pattern in BANDI_LINK_PATTERNS):
             href = a["href"].strip()
             if href and not href.startswith("#") and not href.lower().startswith("javascript:"):
-                return urljoin(base_url, href)
+                return safe_join(base_url, href)
     return None
 
 
@@ -72,8 +75,8 @@ def extract_links(html: str, *, base_url: str, limit: int = 200) -> list[tuple[s
             continue
         if href.startswith("#") or href.lower().startswith("javascript:"):
             continue
-        url = urljoin(base_url, href)
-        if url in seen:
+        url = safe_join(base_url, href)
+        if url is None or url in seen:
             continue
         seen.add(url)
         out.append((text, url))
@@ -140,6 +143,7 @@ async def select_relevant_links(
     except anthropic.APIError as exc:
         log.warning("albo_pretorio.link_selection_error", label=label, error=str(exc))
         return []
+    await record_usage(response.usage, model=settings.anthropic_model, purpose="links", label=label)
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text:
@@ -158,10 +162,10 @@ async def select_relevant_links(
     offered = {url for _, url in links}
     return [u for u in urls if isinstance(u, str) and u in offered]
 
-ALBO_SYSTEM_PROMPT = """Sei un assistente specializzato nell'individuare segnali pre-gara per il settore dell'illuminazione pubblica italiana.
+ALBO_SYSTEM_PROMPT = """Sei un assistente specializzato nell'individuare segnali pre-gara per l'illuminazione pubblica italiana e per i servizi collegati elencati sotto.
 
 # CONTESTO
-Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "determine"/"avvisi" di un ente pubblico), che elenca atti amministrativi eterogenei: delibere, determine, ordinanze, bandi, avvisi, ecc. Devi individuare SOLO gli atti che segnalano una FUTURA procedura di affidamento nel perimetro "illuminazione pubblica", NON i bandi di gara già pubblicati (quelli sono raccolti altrove).
+Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "determine"/"avvisi" di un ente pubblico), che elenca atti amministrativi eterogenei: delibere, determine, ordinanze, bandi, avvisi, ecc. Devi individuare gli atti che segnalano una FUTURA procedura di affidamento nel perimetro "illuminazione pubblica" e dei servizi collegati, e i bandi di gara GIA' PUBBLICATI con scadenza per le offerte ancora futura. NON gli atti di contratti gia' in corso o gia' assegnati.
 
 # COSA CERCARE (perimetro "segnale pre-gara" + illuminazione pubblica)
 - Manifestazioni di interesse per affidamento di servizi/lavori di illuminazione pubblica, relamping LED, telegestione, riqualificazione energetica impianti IP
@@ -169,11 +173,21 @@ Stai analizzando l'HTML della pagina di un Albo Pretorio comunale (o pagina "det
 - Indagini di mercato / indagini conoscitive per affidamenti di illuminazione pubblica
 - Avvisi esplorativi per la ricerca di operatori economici nel settore illuminazione pubblica
 - Determine a contrarre che avviano formalmente una procedura di affidamento nel settore illuminazione pubblica
+- Avvisi / manifestazioni di interesse / indagini di mercato per MANUTENZIONE (ordinaria, straordinaria, conduzione), SOSTITUZIONE di corpi illuminanti o apparecchi, retrofit LED, relamping, efficientamento o riqualificazione energetica, servizio luce / gestione del servizio di illuminazione pubblica (anche se l'importo e' piccolo o si procede con affidamento diretto o procedura negoziata)
+- Proposte di finanza di progetto / project financing / partenariato pubblico-privato (PPP) sull'illuminazione pubblica: proposta di un privato, dichiarazione di pubblico interesse, avviso per la sollecitazione di proposte (art. 193 d.lgs. 36/2023), delibere di giunta su queste proposte
+- Incarichi collegati a un PPP o a una futura gara di illuminazione pubblica: advisor tecnico-finanziario o legale, supporto al RUP, valutatore/commissione per la valutazione delle proposte, verifica del PFTE o del progetto di fattibilita'
+- Gli stessi tipi di atto (manifestazioni di interesse, avvisi, indagini di mercato, determine a contrarre, proposte PPP, incarichi) relativi a questi ALTRI SERVIZI collegati:
+{{SERVIZI}}
+- Bandi di gara / procedure aperte o negoziate GIA' PUBBLICATI per questi servizi, con scadenza per le offerte ancora futura (atto_tipo bando_gara)
+- Incarichi tecnici preparatori: piano regolatore dell'illuminazione comunale (PRIC), censimento degli impianti, diagnosi/audit energetico, studio di fattibilita', progettazione di impianti di illuminazione pubblica
 
 NON includere:
-- Bandi di gara già in pubblicazione con scadenza di presentazione offerte (categoria raccolta da altre fonti)
-- Esiti di gara / aggiudicazioni
-- Atti che non riguardano l'illuminazione pubblica (delibere di bilancio, nomine, ordinanze di viabilità generiche, ecc.)
+- Atti con una scadenza GIA' TRASCORSA rispetto alla data corrente (la scadenza e' vincolante: un avviso scaduto non interessa)
+- Atti di un contratto GIA' IN CORSO: liquidazioni, pagamenti, fatture, canoni mensili, impegni di spesa, rendicontazioni, direttore dell'esecuzione
+- Affidamenti diretti gia' effettuati, esiti di gara, aggiudicazioni, revoche, verbali
+- Ordinanze, avvisi ai cittadini, segnalazioni di guasti, protocolli d'intesa, pagine o menu senza un atto preciso
+- Atti di enti che non sono stazioni appaltanti (ANAC, ministeri) e contributi o finanziamenti ricevuti
+- Atti che non riguardano l'illuminazione pubblica ne' nessuno dei servizi elencati sopra (delibere di bilancio, nomine, ordinanze di viabilità generiche, ecc.)
 
 # FORMATO OUTPUT
 Restituisci SOLO un JSON con questa struttura:
@@ -184,8 +198,8 @@ Restituisci SOLO un JSON con questa struttura:
       "title": "Titolo dell'atto (max 500 char)",
       "body": "Descrizione/oggetto dell'atto (max 2000 char)",
       "url": "URL assoluto dell'atto (se solo relativo, lascia null)",
-      "date": "Data pubblicazione formato ISO YYYY-MM-DD oppure null",
-      "atto_tipo": "manifestazione_interesse | avviso_preinformazione | indagine_mercato | determina_a_contrarre",
+      "date": "Data di pubblicazione ISO YYYY-MM-DD COPIATA dal testo; se non e' scritta, null. MAI la data corrente",
+      "atto_tipo": "manifestazione_interesse | avviso_preinformazione | indagine_mercato | determina_a_contrarre | proposta_ppp | incarico_ppp | incarico_tecnico | bando_gara",
       "ente": "Nome dell'ente pubblico",
       "scadenza": "YYYY-MM-DD o null (scadenza per manifestare interesse, se presente)"
     }
@@ -226,13 +240,39 @@ ALBO_RECORDS_SCHEMA: dict[str, Any] = {
 }
 
 
+class ClaudeUnavailable(RuntimeError):
+    """The API refuses every call (spending limit reached, no credit, bad or
+    revoked key): going on only wastes time, since each page would fail the
+    same way. Raised so the scan stops instead of reporting "0 records"."""
+
+
+_FATAL_HINTS = ("usage limit", "credit balance", "billing", "insufficient", "spend limit", "quota")
+
+
+def is_fatal_api_error(exc: BaseException) -> bool:
+    """Errors that no retry on another page can fix."""
+    if isinstance(exc, anthropic.AuthenticationError | anthropic.PermissionDeniedError):
+        return True
+    return any(h in str(exc).lower() for h in _FATAL_HINTS)
+
+
+def albo_system_prompt() -> str:
+    """The extraction prompt with the currently active services listed."""
+    return ALBO_SYSTEM_PROMPT.replace("{{SERVIZI}}", prompt_block())
+
+
 async def extract_albo_records(
     html: str,
     *,
     url: str,
     settings: WorkerSettings,
     label: str,
+    status: dict | None = None,
 ) -> list[dict[str, Any]]:
+    """``status["ok"]`` is set False when the call failed (API error, bad
+    JSON), so a caller can tell "nothing relevant" from "could not analyse";
+    then ``status["error"]`` has the message and ``status["fatal"]`` says whether
+    every other call will fail too (see ClaudeUnavailable)."""
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     user_msg = (
         f"Fonte: {label}\n"
@@ -247,7 +287,7 @@ async def extract_albo_records(
             system=[
                 {
                     "type": "text",
-                    "text": ALBO_SYSTEM_PROMPT,
+                    "text": albo_system_prompt(),
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
@@ -256,6 +296,10 @@ async def extract_albo_records(
         )
     except anthropic.APIError as exc:
         log.warning("albo_pretorio.claude_error", label=label, error=str(exc))
+        if status is not None:
+            status["ok"] = False
+            status["error"] = str(exc)
+            status["fatal"] = is_fatal_api_error(exc)
         return []
 
     log.info(
@@ -266,14 +310,19 @@ async def extract_albo_records(
         cache_read=getattr(response.usage, "cache_read_input_tokens", 0),
         cache_create=getattr(response.usage, "cache_creation_input_tokens", 0),
     )
+    await record_usage(response.usage, model=settings.anthropic_model, purpose="extract", label=label)
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text:
+        if status is not None:
+            status["ok"] = False
         return []
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         log.warning("albo_pretorio.bad_json", label=label)
+        if status is not None:
+            status["ok"] = False
         return []
     records = data.get("records", [])
     return records if isinstance(records, list) else []
@@ -355,6 +404,7 @@ async def extract_bando_detail(
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
     )
+    await record_usage(response.usage, model=settings.anthropic_model, purpose="detail", label=label)
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text:
@@ -427,7 +477,7 @@ def build_raw_record_kwargs(
             "ente": record.get("ente"),
             "scadenza": record.get("scadenza"),
             "atto_tipo": record.get("atto_tipo"),
-            "extracted_by": "claude-haiku-4-5-albo",
+            "extracted_by": record.get("extracted_by") or "claude-haiku-4-5-albo",
             "perimeter_prevalidated": True,
         },
         "checksum": _checksum(url, title, raw_date),

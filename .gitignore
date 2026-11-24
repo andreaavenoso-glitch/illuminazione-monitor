@@ -25,3 +25,11 @@ next-env.d.ts
 playwright-report/
 test-results/
 tsconfig.tsbuildinfo
+infra/samples/
+
+.worker_requirements.sha
+
+# Modelli PowerPoint aziendali (riservati): si tengono nel Codespace, non nel repository
+infra/modelli/
+*.pptx
+!tests/fixtures/*.pptx

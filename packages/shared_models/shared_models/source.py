@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, DateTime, Numeric, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from shared_models.base import Base
@@ -17,6 +17,11 @@ class Source(Base):
     source_type: Mapped[str] = mapped_column(String, nullable=False)
     platform_type: Mapped[str | None] = mapped_column(String, nullable=True)
     base_url: Mapped[str] = mapped_column(String, nullable=False)
+    # Region this source belongs to (Level 2); None for national sources (Level 1).
+    regione: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    ruolo: Mapped[str | None] = mapped_column(String, nullable=True)
+    # For sites found by the crawl of comuni: {"comuni": [names], "count": n}.
+    discovered_from: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     sector_scope: Mapped[str | None] = mapped_column(String, nullable=True)
     priority: Mapped[str] = mapped_column(String, nullable=False, default="B")
     frequency: Mapped[str] = mapped_column(String, nullable=False, default="daily")

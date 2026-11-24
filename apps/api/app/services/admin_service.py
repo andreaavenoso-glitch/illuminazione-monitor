@@ -97,3 +97,123 @@ def dispatch_backfill(days: int) -> str:
     app = _celery_app()
     result = app.send_task("app.tasks.backfill.run_backfill", kwargs={"days": days})
     return str(result.id)
+
+
+def region_scan_steps(
+    region: str,
+    limit: int | None = None,
+    skip_scanned_hours: float | None = None,
+    item_ids: list[str] | None = None,
+) -> list[tuple[str, dict]]:
+    """The steps of a region run, in order: (task name, kwargs). The comuni come
+    first, because they are what the progress view shows and what the user waits
+    for; the regional sites (some of which take minutes to time out) follow, and
+    only then normalize and score, so nothing is normalized before everything that
+    feeds it has finished."""
+    return [
+        (
+            "app.tasks.collect_watchlist.collect_watchlist_albo",
+            {"region": region, "limit": limit, "skip_scanned_hours": skip_scanned_hours, "item_ids": item_ids},
+        ),
+        # both skipped when the user stopped the collection ("Ferma raccolta")
+        ("app.tasks.collect_sources.collect_regional_sites", {"region": region, "respect_stop": True}),
+        ("app.tasks.normalize_records.normalize_records", {}),
+        ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
+        # Last: open the link of every gara / manifestazione without a deadline.
+        # automatic run: only gare and manifestazioni (where a false positive hurts); pre-gare on demand
+        ("app.tasks.verify_records.verify_region_records", {"region": region, "respect_stop": True, "only_strict": True}),
+    ]
+
+
+def dispatch_verify(region: str) -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.verify_records.verify_region_records", kwargs={"region": region, "force": True})
+    return str(result.id)
+
+
+def dispatch_import_pagine(item_id: str, pagine: list[dict]) -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.collect_watchlist.import_pagine", kwargs={"item_id": item_id, "pagine": pagine})
+    return str(result.id)
+
+
+def dispatch_find_referenti(record_id: UUID) -> str:
+    app = _celery_app()
+    result = app.send_task("app.tasks.find_referenti.find_referenti", kwargs={"record_id": str(record_id)})
+    return str(result.id)
+
+
+def dispatch_analyze_record(record_id: UUID, profondita: str = "base") -> str:
+    app = _celery_app()
+    return str(app.send_task(
+        "app.tasks.analyze_record.analyze_record", kwargs={"record_id": str(record_id), "profondita": profondita}
+    ).id)
+
+
+def pacchetto_steps(record_id: UUID, profondita: str) -> list[tuple[str, dict]]:
+    """What "prepare the package" runs for one notice, in order: read the documents at the given depth, then
+    look for the referenti of the comune. The e-mail and the summary sheet are built on demand from the result."""
+    return [
+        ("app.tasks.analyze_record.analyze_record", {"record_id": str(record_id), "profondita": profondita}),
+        ("app.tasks.find_referenti.find_referenti", {"record_id": str(record_id)}),
+    ]
+
+
+def dispatch_pacchetto(record_id: UUID, profondita: str) -> dict[str, str]:
+    from celery import chain
+
+    app = _celery_app()
+    result = chain(*[app.signature(n, kwargs=k, immutable=True) for n, k in pacchetto_steps(record_id, profondita)]).apply_async()
+    return {"task_id": str(result.id)}
+
+
+def dispatch_find_referenti_ente(ente: str, region: str | None) -> str:
+    app = _celery_app()
+    return str(app.send_task("app.tasks.find_referenti.find_referenti_ente", kwargs={"ente": ente, "regione": region}).id)
+
+
+def dispatch_find_referenti_region(region: str) -> str:
+    app = _celery_app()
+    return str(app.send_task("app.tasks.find_referenti.find_referenti_region", kwargs={"region": region}).id)
+
+
+def dispatch_region_scan(
+    region: str,
+    limit: int | None = None,
+    skip_scanned_hours: float | None = None,
+    item_ids: list[str] | None = None,
+) -> dict[str, str]:
+    """One region end to end, strictly in order (see ``region_scan_steps``).
+    ``task_id`` is the last step: when it is SUCCESS the whole run is done."""
+    from celery import chain
+
+    app = _celery_app()
+    result = chain(
+        *[app.signature(name, kwargs=kwargs, immutable=True) for name, kwargs in region_scan_steps(region, limit, skip_scanned_hours, item_ids)]
+    ).apply_async()
+    return {"task_id": str(result.id)}
+
+
+def process_steps() -> list[tuple[str, dict]]:
+    """Normalize what has been collected, then score: the end of every run, on its
+    own. For records collected by a run that was cut short."""
+    return [
+        ("app.tasks.normalize_records.normalize_records", {}),
+        ("app.tasks.score_and_dedupe.score_and_dedupe", {}),
+    ]
+
+
+def dispatch_process() -> dict[str, str]:
+    from celery import chain
+
+    app = _celery_app()
+    result = chain(*[app.signature(n, kwargs=k, immutable=True) for n, k in process_steps()]).apply_async()
+    return {"task_id": str(result.id)}
+
+
+def dispatch_region_digest(region: str) -> str:
+    app = _celery_app()
+    result = app.send_task(
+        "app.tasks.send_region_digests.send_region_digests", kwargs={"region": region}
+    )
+    return str(result.id)

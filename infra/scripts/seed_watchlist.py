@@ -317,9 +317,25 @@ async def seed_comuni_lombardia(
     return created_entities, created_watchlist
 
 
+def seed_comuni_enabled(env: dict | None = None) -> bool:
+    """The comuni of the seed lists (the baseline 38 and the Lombardia CSV, with plain names such as
+    "Arluno") are OFF by default: they duplicated the IPA comuni every time ``aggiorna.sh`` ran. Comuni come
+    from the IPA file (``import_ipa``). Set SEED_COMUNI=1 to load the old lists anyway."""
+    import os
+
+    return (env if env is not None else os.environ).get("SEED_COMUNI") == "1"
+
+
 async def main() -> None:
     async with SessionLocal() as session:
         source_ids = await seed_sources(session)
+        if not seed_comuni_enabled():
+            await session.commit()
+            print(
+                f"seed complete — sources={len(source_ids)}; comuni NON caricati dal seed "
+                "(arrivano solo dal file IPA: import_ipa; per le vecchie liste: SEED_COMUNI=1)"
+            )
+            return
         created_entities, created_watchlist = await seed_entities_and_watchlist(
             session, source_ids
         )

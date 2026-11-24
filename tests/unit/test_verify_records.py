@@ -1,0 +1,87 @@
+"""Lettura automatica della scadenza dai documenti (pagina o PDF)."""
+from __future__ import annotations
+
+from datetime import date
+
+import pytest
+from app.tasks.verify_records import html_to_text, judge
+from shared_models.relevance import deadline_from_text
+
+TODAY = date(2026, 11, 22)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Le offerte devono pervenire entro il 15/12/2026 ore 12:00", date(2026, 12, 15)),
+        ("Scadenza: 05-01-2027", date(2027, 1, 5)),
+        ("termine ultimo per la presentazione delle manifestazioni: 10 dicembre 2026", date(2026, 12, 10)),
+        ("Pubblicato il 01/03/2023. Nessun altro termine", None),
+        ("Scadenza 10/12/2026 e poi entro il 20/12/2026", date(2026, 12, 20)),
+        ("", None),
+    ],
+)
+def test_deadline_from_text(text, expected):
+    assert deadline_from_text(text) == expected
+
+
+def test_first_date_after_the_cue_wins():
+    t = "scadenza presentazione offerte 12/12/2026 (bando pubblicato il 30/11/2026)"
+    assert deadline_from_text(t) == date(2026, 12, 12)
+
+
+def test_judge_open_closed_and_unknown():
+    assert judge("termine per la presentazione delle offerte: 15/12/2026", TODAY) == ("aperto", date(2026, 12, 15), None)
+    assert judge("scadenza 10/03/2023", TODAY) == ("chiuso", date(2023, 3, 10), None)
+    assert judge("Avviso di appalto aggiudicato pubblicato il 01/03/2023", TODAY) == ("chiuso", None, None)
+    assert judge("", TODAY) == ("non_trovata", None, None)
+    assert judge("Il comune intende avviare una indagine. Termine da definire.", TODAY)[0] == "claude"
+    assert judge("pagina senza date ne parole chiave", TODAY) == ("non_trovata", None, None)
+
+
+def test_judge_pregara_reads_the_date_of_the_act():
+    assert judge("Delibera di giunta del 18/08/2026 - proposta di finanza di progetto", TODAY, "pre_gara") == (
+        "recente", None, date(2026, 8, 18),
+    )
+    assert judge("Delibera del 16/08/2017 approvazione progetto", TODAY, "pre_gara")[0] == "chiuso"
+    assert judge("Atto di indirizzo senza alcuna data", TODAY, "pre_gara") == ("non_trovata", None, None)
+    # a pre-gara never goes to Claude
+    assert judge("termini da definire, scadenza prossima", TODAY, "pre_gara")[0] == "non_trovata"
+
+
+def test_html_to_text_strips_tags_so_cue_and_date_meet():
+    html = "<p><b>Scadenza:</b> </p><span>05/12/2026</span><script>var x=1</script>"
+    assert deadline_from_text(html_to_text(html)) == date(2026, 12, 5)
+
+
+def test_attachment_links_follow_the_notice_own_documents():
+    from app.tasks.verify_records import attachment_links
+
+    html = (
+        '<a href="/files/avviso.pdf">AVVISO PUBBLICO</a>'
+        '<a href="/download/123">Allegati tecnici</a><a href="/files/tecnici.zip">Allegati tecnici</a>'
+        '<a href="https://altro.it/x.pdf">Avviso</a><a href="/chi-siamo">Chi siamo</a>'
+        '<a href="/img/logo.png">Avviso</a>'
+    )
+    links = attachment_links(html, base_url="https://www.comune.esempio.it/novita/n1.html")
+    assert links[0] == "https://www.comune.esempio.it/files/avviso.pdf"
+    assert "https://www.comune.esempio.it/download/123" in links
+    assert "https://www.comune.esempio.it/files/tecnici.zip" in links  # the technical attachments (zip) are read
+    assert all("altro.it" not in u and not u.endswith(".png") for u in links)
+
+
+def test_dash_dates_in_the_page_are_read():
+    from shared_models.relevance import dates_in_text
+
+    assert date(2026, 11, 19) in dates_in_text("Determinazione Dirigenziale n. 217 del 19-11-2026")
+
+
+def test_deadline_prefers_the_proposals_deadline_over_the_regional_one():
+    # Scanzano Jonico, avviso art. 193 (PDF): two dates after "scadenza"/"entro".
+    t = (
+        "12. Termini e modalita di presentazione. Le proposte devono pervenire entro 60 giorni dalla data di "
+        "pubblicazione del presente avviso, avvero, entro le ore 12:00 del 20-01-2027. L'invio avviene via PEC. "
+        "Il sopralluogo tecnico puo essere concordato con il RUP mediante richiesta entro il 10/12/2026. "
+        "14. Fasi successive. La scadenza ufficialmente indicata per la domanda regionale e 15/02/2027, ore 12:00."
+    )
+    assert deadline_from_text(t) == date(2027, 1, 20)

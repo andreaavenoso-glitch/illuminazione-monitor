@@ -12,6 +12,7 @@ structlog==24.4.0
 httpx==0.28.0
 beautifulsoup4==4.12.3
 lxml==5.3.0
+pypdf==5.1.0
 feedparser==6.0.11
 boto3==1.35.71
 redis==5.2.0
@@ -20,3 +21,4 @@ playwright==1.49.1
 pytest==8.3.3
 pytest-asyncio==0.24.0
 pytest-httpx==0.35.0
+openpyxl==3.1.5
