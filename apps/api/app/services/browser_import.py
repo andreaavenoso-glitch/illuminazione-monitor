@@ -9,9 +9,10 @@ import re
 import unicodedata
 
 SCRIPT = r"""(async () => {
-  const O = Object.assign({ MAX: 300, CHUNK: 60, PAUSA: 400, LISTE: 40 }, window.MONITOR_OPZIONI || {});
+  const O = Object.assign({ MAX: 300, CHUNK: 60, PAUSA: 400, LISTE: 80, SEZIONI: 30 }, window.MONITOR_OPZIONI || {});
   const KW = /illumin|luce|energia|ppp|partenariato|finanza.?di.?progetto|project.?financing|concession|manifestazion|avviso|delibera|determina|bando|gara|proposta|esito|affidament|procedura|contratt/i;
   const NO = /\.(pdf|jpe?g|png|gif|zip|docx?|xlsx?|p7m)(\?|$)|login|logout|mailto:|tel:|javascript:/i;
+  const SEZ = /albo|trasparen|atti|bandi|gar[ae]|delibere|determin|avvis|contratti|concession|appalti|manifestazion/i;
   const PAG = /^(\d{1,3}|succ(essiv[oa])?|avanti|prossim[oa]|next|»|›|>|>>)$/i;
   const origin = location.origin, seen = new Set(), pagine = [];
   const norm = u => { try { const x = new URL(u, location.href); x.hash = ''; return x.href; } catch (e) { return null; } };
@@ -30,7 +31,10 @@ SCRIPT = r"""(async () => {
   aggiungi(inizio, document.documentElement.outerHTML);
   // 1) le pagine dell'elenco (1, 2, 3, successiva…), una dopo l'altra
   const liste = [{ u: inizio, html: pagine[0].html }];
-  const codaListe = sfoglia(pagine[0].html, inizio).map(x => x.u);
+  // le sezioni del portale (Albo, Trasparenza, Atti, Bandi…) dal menu della pagina in cui sei: ognuna è un elenco da scorrere
+  const sezioni = ancore(pagine[0].html, inizio).filter(x => !NO.test(x.u) && SEZ.test(x.u) && percorso(x.u) !== percorso(inizio)).map(x => x.u);
+  const codaListe = [...new Set([...sfoglia(pagine[0].html, inizio).map(x => x.u), ...sezioni.slice(0, O.SEZIONI)])];
+  console.log('Monitor: ' + codaListe.length + ' sezioni/pagine di elenco trovate nel menu.');
   while (codaListe.length && liste.length < O.LISTE && pagine.length < O.MAX) {
     const u = codaListe.shift();
     if (seen.has(u)) continue;
