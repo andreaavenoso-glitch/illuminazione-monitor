@@ -83,3 +83,68 @@ def test_files_are_written_in_groups_that_the_app_accepts(tmp_path):
     from shared_models.import_pagine import valida_pagine
 
     assert sum(len(valida_pagine(json.loads(f.read_text()))) for f in files) == 7
+
+
+def test_the_api_address_comes_from_the_address_of_the_app():
+    assert sp.indirizzo_api("https://abc-3000.app.github.dev/regions/Lombardia".split("/regions")[0]) == "https://abc-8000.app.github.dev"
+    assert sp.indirizzo_api("http://localhost:3000/") == "http://localhost:8000"
+    assert sp.indirizzo_api("https://abc-8000.app.github.dev") == "https://abc-8000.app.github.dev"
+
+
+class _FakeApp(BaseHTTPRequestHandler):
+    visti: list[dict] = []
+
+    def log_message(self, *a): ...
+
+    def _json(self, code, obj):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(obj).encode())
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.path == "/auth/login":
+            d = json.loads(body)
+            return self._json(200, {"access_token": "T0K"}) if d["password"] == "giusta123" else self._json(401, {"detail": "Invalid credentials"})
+        if self.path == "/regions/Lombardia/import-pagine":
+            self.visti.append({"auth": self.headers.get("Authorization"), "gh": self.headers.get("X-Github-Token"), "body": body})
+            return self._json(200, {"status": "dispatched", "pagine": 2, "task_id": "x"})
+        self._json(404, {})
+
+    def do_GET(self):
+        self._json(200, {"status": "done", "items": [{"records_found": 3}]}) if self.path == "/regions/Lombardia/scan" else self._json(404, {})
+
+
+def test_pages_are_sent_straight_to_the_app_with_login(tmp_path, monkeypatch, capsys):
+    import time as _t
+
+    monkeypatch.setattr(_t, "sleep", lambda s: None)
+    f = tmp_path / "monitor_pagine_01di01.json"
+    f.write_text(json.dumps({"pagine": [{"url": "https://x.it/a", "html": "<p>" + "a" * 300 + "</p>"}]}))
+    srv = HTTPServer(("127.0.0.1", 0), _FakeApp)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        app = sp.App(f"http://127.0.0.1:{srv.server_port}", github_token="ghp_x")
+        app.login("a@b.it", "giusta123")
+        n = sp.invia_all_app([f], app, "Lombardia", "Arluno")
+    finally:
+        srv.shutdown()
+    assert n == 2
+    v = _FakeApp.visti[-1]
+    assert v["auth"] == "Bearer T0K" and v["gh"] == "ghp_x"
+    assert b'name="comune"\r\n\r\nArluno' in v["body"] and b'filename="monitor_pagine_01di01.json"' in v["body"] and b"https://x.it/a" in v["body"]
+    assert "3 record trovati" in capsys.readouterr().out
+
+
+def test_wrong_password_stops_before_downloading_anything():
+    import pytest
+
+    srv = HTTPServer(("127.0.0.1", 0), _FakeApp)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(SystemExit) as e:
+            sp.App(f"http://127.0.0.1:{srv.server_port}").login("a@b.it", "sbagliata1")
+    finally:
+        srv.shutdown()
+    assert "password" in str(e.value)

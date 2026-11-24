@@ -11,15 +11,26 @@ Cosa fa, da solo:
   2. di ogni elenco legge TUTTE le pagine («successiva», «Pag. 1 su 34»), come farebbe una persona che le sfoglia;
   3. per i bandi che parlano di illuminazione / PPP apre anche il «Dettaglio»;
   4. scrive i file monitor_pagine_01diNN.json nella cartella indicata (--out, di default «monitor_pagine»).
-Poi carica i file nell'app (Raccolta -> riquadro «Portale che blocca il server») con il nome del comune.
+Poi li carica nell'app, oppure li lasci tu nel riquadro «Portale che blocca il server» della scheda Raccolta.
+
+COLLEGAMENTO DIRETTO ALL'APP (niente file da caricare a mano): indica dove sta l'app e il comune, e lo script fa il login come
+faresti tu dalla pagina e invia le pagine all'analisi:
+
+    python scarica_portali.py https://dgegovpa.it/Arluno/Albo/Albo --app https://NOME-3000.app.github.dev --comune Arluno
+
+--app è l'indirizzo con cui apri l'app nel browser (va bene anche quello della porta 3000: lo script usa la porta 8000 dell'API).
+Chiede email e password dell'app (o: variabili MONITOR_EMAIL e MONITOR_PASSWORD). Se la porta 8000 del Codespace è privata
+serve anche --github-token (un token personale GitHub), oppure rendi pubblica la porta 8000 (l'API ha comunque il suo login).
 
 Gentile col portale: una richiesta alla volta, con una pausa (--pausa, di default 0,5 s) e un limite di pagine (--max).
 """
 from __future__ import annotations
 
 import argparse
+import getpass
 import http.cookiejar
 import json
+import os
 import re
 import sys
 import time
@@ -293,6 +304,93 @@ def scrivi(pagine: list[dict], origine: str, cartella: Path, per_file: int) -> l
     return out
 
 
+# --- collegamento con l'app -----------------------------------------------------------------------------------------
+def indirizzo_api(app: str) -> str:
+    """L'indirizzo dell'API dall'indirizzo con cui si apre l'app (nei Codespaces la pagina è sulla porta 3000, l'API sulla 8000)."""
+    app = app.strip().rstrip("/")
+    return re.sub(r"-3000\.app\.github\.dev", "-8000.app.github.dev", app).replace("localhost:3000", "localhost:8000")
+
+
+def multipart(campi: dict[str, str], nome_file: str, contenuto: bytes) -> tuple[bytes, str]:
+    conf = "----monitorportali" + str(int(time.time() * 1000))
+    parti = [f'--{conf}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in campi.items()]
+    parti.append(f'--{conf}\r\nContent-Disposition: form-data; name="file"; filename="{nome_file}"\r\n'
+                 f"Content-Type: application/json\r\n\r\n".encode() + contenuto + b"\r\n")
+    parti.append(f"--{conf}--\r\n".encode())
+    return b"".join(parti), f"multipart/form-data; boundary={conf}"
+
+
+class App:
+    """L'app vista dallo script: login e invio delle pagine, con le stesse regole della pagina web (utente amministratore)."""
+
+    def __init__(self, indirizzo: str, github_token: str | None = None) -> None:
+        self.api = indirizzo_api(indirizzo)
+        self.extra = {"X-Github-Token": github_token} if github_token else {}
+        self.token: str | None = None
+
+    def _chiama(self, metodo: str, percorso: str, corpo: bytes | None = None, tipo: str | None = None) -> tuple[int, dict]:
+        h = dict(self.extra)
+        if tipo:
+            h["Content-Type"] = tipo
+        if self.token:
+            h["Authorization"] = f"Bearer {self.token}"
+        req = urllib.request.Request(self.api + percorso, data=corpo, headers=h, method=metodo)
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                return r.status, json.loads(r.read().decode() or "{}")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read().decode() or "{}")
+            except ValueError:
+                return e.code, {}
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            sys.exit(f"Non riesco a raggiungere l'app ({self.api}): {exc}\n"
+                     "Controlla che il Codespace sia acceso e che la porta 8000 sia pubblica (oppure usa --github-token).")
+
+    def login(self, email: str, password: str) -> None:
+        code, body = self._chiama("POST", "/auth/login", json.dumps({"email": email, "password": password}).encode(), "application/json")
+        if code == 401 and body.get("detail") == "Invalid credentials":
+            sys.exit("Email o password dell'app non corrette.")
+        if code != 200 or "access_token" not in body:
+            sys.exit(f"Accesso all'app non riuscito (codice {code}). Se la porta 8000 del Codespace è privata serve --github-token, "
+                     "oppure rendila pubblica dalla scheda «Porte» di VS Code.")
+        self.token = body["access_token"]
+
+    def invia(self, regione: str, comune: str, file: Path) -> dict:
+        corpo, tipo = multipart({"comune": comune}, file.name, file.read_bytes())
+        code, body = self._chiama("POST", f"/regions/{urllib.parse.quote(regione)}/import-pagine", corpo, tipo)
+        if code != 200:
+            raise RuntimeError(str(body.get("detail") or f"errore {code}"))
+        return body
+
+    def esito(self, regione: str) -> dict | None:
+        return self._chiama("GET", f"/regions/{urllib.parse.quote(regione)}/scan")[1] or None
+
+
+def invia_all_app(files: list[Path], app: App, regione: str, comune: str, attesa: int = 180) -> int:
+    inviate = 0
+    for f in files:
+        try:
+            r = app.invia(regione, comune, f)
+            inviate += int(r.get("pagine", 0))
+            print(f"  inviato {f.name}: {r.get('pagine')} pagine")
+        except RuntimeError as exc:
+            print(f"  ! {f.name}: {exc}", file=sys.stderr)
+    if not inviate:
+        return 0
+    print("Analisi in corso nell'app…")
+    fine = time.time() + attesa
+    while time.time() < fine:
+        time.sleep(5)
+        run = app.esito(regione)
+        if run and run.get("status") != "running":
+            trovati = sum(int(i.get("records_found") or 0) for i in run.get("items", []))
+            print(f"Analisi conclusa ({run.get('status')}): {trovati} record trovati. Li vedi nell'app, nelle schede Pre-gare / Manifestazioni / Gare / Da verificare.")
+            return inviate
+    print("L'analisi continua: guarda l'avanzamento nella scheda Raccolta dell'app.")
+    return inviate
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("url", help="una pagina del portale (es. https://dgegovpa.it/Arluno/Albo/Albo)")
@@ -303,13 +401,32 @@ def main() -> None:
     ap.add_argument("--max-sezioni", type=int, default=30)
     ap.add_argument("--per-file", type=int, default=60)
     ap.add_argument("--senza-dettagli", action="store_true", help="non aprire il «Dettaglio» dei bandi")
+    ap.add_argument("--app", help="indirizzo dell'app (quello con cui la apri nel browser): invia le pagine direttamente")
+    ap.add_argument("--comune", help="nome del comune, come nell'app (es. Arluno)")
+    ap.add_argument("--regione", default="Lombardia")
+    ap.add_argument("--email", default=os.environ.get("MONITOR_EMAIL"))
+    ap.add_argument("--password", default=os.environ.get("MONITOR_PASSWORD"), help="meglio lasciarla vuota: la chiede lo script")
+    ap.add_argument("--github-token", default=os.environ.get("MONITOR_GITHUB_TOKEN"),
+                    help="token personale GitHub, se la porta 8000 del Codespace è privata")
     a = ap.parse_args()
+    if bool(a.app) != bool(a.comune):
+        ap.error("per l'invio diretto servono insieme --app e --comune")
+    app = None
+    if a.app:  # prima di scaricare: se l'accesso non va, lo si scopre subito e non dopo dieci minuti
+        app = App(a.app, a.github_token)
+        app.login(a.email or input("Email dell'app: ").strip(), a.password or getpass.getpass("Password dell'app: "))
+        print("Accesso all'app riuscito.")
     pagine = scarica(a.url, a.max, a.pausa, not a.senza_dettagli, a.max_sezioni, a.max_pagine_lista)
     files = scrivi(pagine, a.url, Path(a.out), a.per_file)
     print(f"\nScritti {len(files)} file in «{Path(a.out).resolve()}»:")
     for f in files:
         print(f"  {f.name}  ({f.stat().st_size // 1024} KB)")
-    print("\nOra caricali nell'app: Raccolta -> «Portale che blocca il server» -> scegli TUTTI i file, scrivi il comune, Analizza.")
+    if app:
+        print("\nInvio all'app…")
+        if not invia_all_app(files, app, a.regione, a.comune):
+            sys.exit("Nessuna pagina è stata accettata dall'app: i file restano nella cartella, puoi caricarli a mano.")
+    else:
+        print("\nOra caricali nell'app: Raccolta -> «Portale che blocca il server» -> scegli TUTTI i file, scrivi il comune, Analizza.")
 
 
 if __name__ == "__main__":
